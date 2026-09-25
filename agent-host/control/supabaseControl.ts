@@ -187,10 +187,10 @@ export class ControlPlane implements ScopePackStore {
   }
 
   /** Find the completed create_plan request that produced a plan id (same org). */
-  async findPlanByPlanId(planId: string): Promise<{ result: Record<string, unknown> } | null> {
+  async findPlanByPlanId(planId: string): Promise<{ result: Record<string, unknown>; payload: Record<string, unknown> | null } | null> {
     const { data, error } = await this.client
       .from('agent_control_requests')
-      .select('result')
+      .select('result, payload')
       .eq('organization_id', this.config.organizationId)
       .eq('repo_key', this.config.repoKey)
       .eq('request_type', 'create_plan')
@@ -200,8 +200,9 @@ export class ControlPlane implements ScopePackStore {
     if (error) {
       throw new Error(`Failed to look up plan ${planId}: ${error.message}`);
     }
-    const first = (data ?? [])[0] as { result: Record<string, unknown> } | undefined;
-    return first ?? null;
+    const first = (data ?? [])[0] as { result: Record<string, unknown>; payload?: Record<string, unknown> | null } | undefined;
+    if (!first) return null;
+    return { result: first.result, payload: first.payload ?? null };
   }
 
   /** Upsert the safe run snapshot (§29). Local Host store stays the authority. */

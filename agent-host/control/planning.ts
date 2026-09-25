@@ -27,6 +27,7 @@ import {
   type PlanValidationCode,
   type PlanValidationIssue,
 } from './types.ts';
+import { CREATE_PLAN_MAX_PAYLOAD_BYTES } from './capacity.ts';
 import { parseCreatePlanScopePackFields } from './scopePack.ts';
 import { isEffortLevel } from '../providers/effort.ts';
 import type { ExecutionResult, PermissionProfile, ProviderId } from '../providers/types.ts';
@@ -447,9 +448,16 @@ export function extractPlanJsonObject(finalText: string): Record<string, unknown
 /* Task prompt synthesis (host-side, from validated plan fields)               */
 /* -------------------------------------------------------------------------- */
 
+function appendOwnerScope(lines: string[], plan: ControlPlan): void {
+  if (!plan.ownerScope) return;
+  lines.push('');
+  lines.push(`OWNER SCOPE:\n${plan.ownerScope}`);
+}
+
 export function buildImplementerPrompt(task: PlanTask, plan: ControlPlan): string {
   const lines: string[] = [];
   lines.push(`You are the Implementer for task "${task.title}".`);
+  appendOwnerScope(lines, plan);
   lines.push('');
   lines.push(`GOAL:\n${task.goal}`);
   if (plan.constraints.length > 0) {
@@ -470,6 +478,7 @@ export function buildVerifierPrompt(task: PlanTask, plan: ControlPlan): string {
   const lines: string[] = [];
   lines.push(`You are the Verifier for task "${task.title}".`);
   lines.push('You are read-only. This working directory is the isolated implementer candidate. Verify that tree. Do not modify anything.');
+  appendOwnerScope(lines, plan);
   lines.push('');
   lines.push(`VERIFICATION GOAL:\n${task.goal}`);
   if (task.validationRequirements.length > 0) {
@@ -502,6 +511,7 @@ export function buildVerifierPrompt(task: PlanTask, plan: ControlPlan): string {
 export function buildReviewerPrompt(task: PlanTask, plan: ControlPlan): string {
   const lines: string[] = [];
   lines.push(`You are a read-only reviewer for task "${task.title}".`);
+  appendOwnerScope(lines, plan);
   lines.push('');
   lines.push(`GOAL:\n${task.goal}`);
   lines.push('You are read-only: report findings only. Do not modify anything.');
@@ -630,8 +640,8 @@ function boundText(value: string, maxChars: number): string {
 
 export type CreatePlanPayloadFailureCode =
   | 'PAYLOAD_NOT_OBJECT'
+  | 'PAYLOAD_TOO_LARGE'
   | 'SCOPE_MISSING'
-  | 'SCOPE_TOO_LONG'
   | 'CONSTRAINTS_INVALID'
   | 'ROUTING_INVALID'
   | 'SCOPE_PACK_ID_INVALID'
@@ -643,13 +653,23 @@ export function parseCreatePlanPayload(raw: unknown): { ok: true; payload: Creat
     return { ok: false, code: 'PAYLOAD_NOT_OBJECT', message: 'create_plan payload must be a JSON object.' };
   }
   const record = raw as Record<string, unknown>;
+  let rawBytes = Number.POSITIVE_INFINITY;
+  try {
+    rawBytes = Buffer.byteLength(JSON.stringify(raw), 'utf8');
+  } catch {
+    return { ok: false, code: 'PAYLOAD_NOT_OBJECT', message: 'create_plan payload must be a JSON object.' };
+  }
+  if (rawBytes > CREATE_PLAN_MAX_PAYLOAD_BYTES) {
+    return {
+      ok: false,
+      code: 'PAYLOAD_TOO_LARGE',
+      message: `create_plan payload is ${rawBytes} UTF-8 bytes and exceeds the ${CREATE_PLAN_MAX_PAYLOAD_BYTES}-byte safety envelope.`,
+    };
+  }
 
   const scope = typeof record.scope === 'string' ? record.scope.trim() : '';
   if (!scope) {
     return { ok: false, code: 'SCOPE_MISSING', message: 'create_plan payload requires a non-empty scope.' };
-  }
-  if (scope.length > 8_000) {
-    return { ok: false, code: 'SCOPE_TOO_LONG', message: 'create_plan scope exceeds the 8000-character limit.' };
   }
 
   let constraints: string[] = [];

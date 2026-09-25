@@ -9,11 +9,22 @@ import { parseHandoffDocument, rejectScopePackSource } from '@/features/control-
 import { sha256Hex } from '@/features/control-tower/scopePack/hash'
 import { SCOPE_PACK_MAX_SOURCE_BYTES } from '@/features/control-tower/scopePack/bounds'
 import { isPreviewScopePackId, PREVIEW_SCOPE_PACK, PREVIEW_SCOPE_PACK_LABEL } from '@/features/control-tower/scopePack/preview'
-import { EMPTY_NEXT_RUN_ROUTING, toRequestedRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
+import { EMPTY_NEXT_RUN_ROUTING, formatRoutingSummaryLines, toRequestedRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
+import { approximateTokenCount, CREATE_PLAN_MAX_PAYLOAD_BYTES, createPlanPayloadBytes, estimateArchitectContextTokens } from '@/features/control-tower/capacity'
+import type { ProviderCapabilityView } from './controlTowerTypes'
 import NextRunRoutingControls from './intelligence/NextRunRoutingControls'
 import { PREVIEW_PROVIDER_FLEET } from '@/features/control-tower/previewFleet'
 
-export const SCOPE_MAX_CHARS = 8_000
+function reportedArchitectContext(fleet: ProviderCapabilityView[], routing: NextRunRouting): string {
+  const provider = fleet.find(entry => entry.providerId === routing.architect.providerId)
+  const modelId = routing.architect.customModel || routing.architect.modelId
+  const model = provider?.models.find(entry => entry.modelId === modelId)
+  if (typeof model?.contextWindow === 'number' && Number.isFinite(model.contextWindow) && model.contextWindow > 0) {
+    return `Provider context: ${model.contextWindow.toLocaleString()} tokens`
+  }
+  return 'Provider limit not reported'
+}
+
 export const CONSTRAINT_MAX_CHARS = 1_000
 export const CONSTRAINTS_MAX = 16
 export const PLAN_PROVIDER_OPTIONS = ['claude', 'codex', 'ollama'] as const
@@ -125,7 +136,25 @@ export default function NewRunComposer({
     : selectedRow ? rowToContract(selectedRow) : null
   const selectedList = visiblePacks.find(pack => pack.packId === selectedPackId) ?? null
   const constraints = constraintsText.split('\n').map(line => line.trim()).filter(line => line.length > 0)
-  const scopeError = scope.trim().length === 0 ? 'Describe the work you want done.' : scope.length > SCOPE_MAX_CHARS ? `Scope is limited to ${SCOPE_MAX_CHARS} characters.` : null
+  const requestedRouting = toRequestedRouting(nextRouting)
+  const draftPayload = {
+    scope: scope.trim(),
+    constraints,
+    ...(requestedRouting ? { requestedRouting } : {}),
+    ...(selectedPack
+      ? {
+          scopePackId: selectedPack.packId,
+          scopePackVersion: selectedPack.version,
+          scopePackPhaseId: selectedPhaseId || selectedPack.currentPhaseId || undefined,
+          ...(staleAck ? { staleAcknowledged: true } : {}),
+        }
+      : {}),
+  }
+  const payloadBytes = scope.trim() ? createPlanPayloadBytes(draftPayload) : 0
+  const payloadError = payloadBytes > CREATE_PLAN_MAX_PAYLOAD_BYTES
+    ? `create_plan payload is ${payloadBytes} UTF-8 bytes and exceeds the ${CREATE_PLAN_MAX_PAYLOAD_BYTES}-byte safety envelope.`
+    : null
+  const scopeError = scope.trim().length === 0 ? 'Describe the work you want done.' : payloadError
   const constraintsError = constraints.length > CONSTRAINTS_MAX ? `At most ${CONSTRAINTS_MAX} constraints.` : constraints.some(line => line.length > CONSTRAINT_MAX_CHARS) ? `Each constraint is limited to ${CONSTRAINT_MAX_CHARS} characters.` : null
   const phaseRequired = Boolean(selectedPackId) && !selectedPhaseId
   const canSubmit = !scopeError && !constraintsError && !busy && !phaseRequired && surface === 'live'
@@ -135,7 +164,7 @@ export default function NewRunComposer({
     onSubmit({
       scope: scope.trim(),
       constraints,
-      requestedRouting: toRequestedRouting(nextRouting),
+      requestedRouting,
       ...(selectedPack
         ? {
             scopePackId: selectedPack.packId,
@@ -269,8 +298,11 @@ export default function NewRunComposer({
       </section>
       <label className="ct-composer-field">
         <span className="ct-eyebrow">Owner scope</span>
-        <textarea aria-label="Owner scope" value={scope} onChange={event => setScope(event.target.value)} rows={5} maxLength={SCOPE_MAX_CHARS + 1} placeholder="Example: Create a candidate file at agent-host/smoke/control-tower-ui-e2e.txt with exact contents CONTROL_TOWER_UI_E2E_OK v1. Do not modify any other file." />
-        <span className="ct-field-note">{scopeError ?? `${scope.length}/${SCOPE_MAX_CHARS} characters`}</span>
+        <textarea className="ct-composer-scope" aria-label="Owner scope" value={scope} onChange={event => setScope(event.target.value)} rows={8} placeholder="Example: Create a candidate file at agent-host/smoke/control-tower-ui-e2e.txt with exact contents CONTROL_TOWER_UI_E2E_OK v1. Do not modify any other file." />
+        <span className="ct-field-note">Owner input: {scope.length} chars · ~{approximateTokenCount(scope)} tokens</span>
+        <span className="ct-field-note">Estimated Architect context: ~{estimateArchitectContextTokens(scope, constraints)} tokens</span>
+        <span className="ct-field-note">{reportedArchitectContext(surface === 'preview' ? PREVIEW_PROVIDER_FLEET : presence.providerFleet, nextRouting)}</span>
+        {scopeError && <p className="ct-scope-error" role="alert">{scopeError}</p>}
       </label>
       <label className="ct-composer-field">
         <span className="ct-eyebrow">Constraints · one per line (optional)</span>
@@ -294,7 +326,12 @@ export default function NewRunComposer({
         </div>
       </div>
       <details className="ct-composer-advanced" open={advancedOpen} onToggle={event => setAdvancedOpen((event.target as HTMLDetailsElement).open)}>
-        <summary>Advanced · Next Run Routing</summary>
+        <summary>
+          Advanced · Next Run Routing
+          <span className="ct-routing-summary">
+            {formatRoutingSummaryLines(nextRouting).map(line => <span key={line}>{line}</span>)}
+          </span>
+        </summary>
         <div className="ct-composer-advanced-body">
           <NextRunRoutingControls
             fleet={surface === 'preview' ? PREVIEW_PROVIDER_FLEET : presence.providerFleet}
@@ -304,6 +341,7 @@ export default function NewRunComposer({
         </div>
       </details>
       <div className="ct-composer-actions">
+        {payloadError && <p className="ct-scope-error" role="alert">{payloadError}</p>}
         <button type="button" className="ct-primary" disabled={!canSubmit} onClick={submit} aria-label="Request plan"><Plus size={14} aria-hidden="true" />Request plan</button>
         <span className="ct-field-note">{presence.state === 'connected' ? (selectedPackId ? 'Reconcile / Continue to plan using the selected Scope Pack.' : 'Sent to the local Host as a typed create_plan request.') : 'Waiting for a connected local Host.'}</span>
       </div>

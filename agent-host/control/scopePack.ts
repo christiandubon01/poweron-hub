@@ -667,32 +667,68 @@ export function resolveScopePackForPlan(options: {
   return { ok: true, phase };
 }
 
+/**
+ * UTF-8 budget for a Scope Pack filled to every inherited field maximum.
+ * Separators are included so a valid maximum contract fits without clipping.
+ */
+export function scopePackInheritanceMaxBytes(): number {
+  const bounds = SCOPE_PACK_BOUNDS;
+  const prefixed = (count: number, prefix: string, chars: number) => count * (prefix.length + chars + 1);
+  return (
+    prefixed(bounds.maxLockedRules, 'LOCKED: ', bounds.ruleMaxChars)
+    + prefixed(bounds.maxDoNotTouch, 'DO_NOT_TOUCH: ', bounds.ruleMaxChars)
+    + prefixed(bounds.maxOwnerDecisions, 'OWNER_DECISION: ', bounds.decisionMaxChars)
+    + prefixed(1, 'Selected phase: ', bounds.phaseTitleMaxChars + 3 + bounds.phaseGoalMaxChars)
+    + prefixed(bounds.maxAcceptanceCriteria, '', bounds.acceptanceMaxChars)
+    + 'Owner-visible runtime verification is required.'.length
+    + 1
+    + 16 * (1_000 + 1)
+  );
+}
+
+export type ScopePackInheritanceResult =
+  | {
+      ok: true;
+      constraints: string[];
+      validationRequirements: string[];
+      doNotTouchPaths: string[];
+      scopePackRef: ScopePackRef;
+    }
+  | { ok: false; code: 'SCOPE_PACK_INHERITANCE_TOO_LARGE'; message: string };
+
 export function inheritScopePackConstraints(options: {
   ownerConstraints: readonly string[];
   pack: ScopePackContract;
   phase: ScopePackPhase;
-}): { constraints: string[]; validationRequirements: string[]; doNotTouchPaths: string[]; scopePackRef: ScopePackRef } {
+}): ScopePackInheritanceResult {
   const constraints: string[] = [];
   const push = (value: string) => {
-    if (value && !constraints.includes(value) && constraints.length < 16) {
-      constraints.push(value.slice(0, 1_000));
-    }
+    if (value && !constraints.includes(value)) constraints.push(value);
   };
   for (const constraint of options.ownerConstraints) push(constraint);
   for (const rule of options.pack.lockedRules) push(`LOCKED: ${rule}`);
   for (const rule of options.pack.doNotTouch) push(`DO_NOT_TOUCH: ${rule}`);
+  for (const decision of options.pack.ownerDecisions) push(`OWNER_DECISION: ${decision}`);
   const validationRequirements: string[] = [];
   const pushCheck = (value: string) => {
-    if (value && !validationRequirements.includes(value) && validationRequirements.length < 16) {
-      validationRequirements.push(value.slice(0, 1_000));
-    }
+    if (value && !validationRequirements.includes(value)) validationRequirements.push(value);
   };
   pushCheck(`Selected phase: ${options.phase.title} — ${options.phase.goal}`);
   for (const item of options.pack.acceptanceCriteria) pushCheck(item);
   if (options.pack.runtimeAcceptanceRequired) {
     pushCheck('Owner-visible runtime verification is required.');
   }
+  const bytes = Buffer.byteLength(`${constraints.join('\n')}\n${validationRequirements.join('\n')}`, 'utf8');
+  const maxBytes = scopePackInheritanceMaxBytes();
+  if (bytes > maxBytes) {
+    return {
+      ok: false,
+      code: 'SCOPE_PACK_INHERITANCE_TOO_LARGE',
+      message: `Inherited Scope Pack contract is ${bytes} UTF-8 bytes and exceeds the ${maxBytes}-byte envelope. Locked rules, acceptance checks, constraints, and owner decisions were not shortened.`,
+    };
+  }
   return {
+    ok: true,
     constraints,
     validationRequirements,
     doNotTouchPaths: extractDoNotTouchPaths(options.pack.doNotTouch),

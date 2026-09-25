@@ -6,6 +6,9 @@ import NewRunComposer from '../app-brain/control-tower/NewRunComposer'
 import ScopePackReview from '../app-brain/control-tower/ScopePackReview'
 import ControlTower from '../app-brain/control-tower/ControlTower'
 import { PREVIEW_SCOPE_PACK, PREVIEW_SCOPE_PACK_LABEL, isPreviewScopePackId } from '@/features/control-tower/scopePack/preview'
+import { approximateTokenCount, CREATE_PLAN_MAX_PAYLOAD_BYTES, estimateArchitectContextTokens } from '@/features/control-tower/capacity'
+import { PREVIEW_PROVIDER_FLEET } from '@/features/control-tower/previewFleet'
+import type { NextRunRouting } from '@/features/control-tower/nextRunRouting'
 import { QBO_HANDOFF_FIXTURE, parseHandoffDocument } from '@/features/control-tower/scopePack/handoffParser'
 import type { HostPresenceView } from '@/features/control-tower/controlTowerAdapter'
 import type { ScopePackRow } from '@/features/control-tower/controlTowerService'
@@ -182,5 +185,82 @@ describe('ATB-5 parser fixture still proves the QBO handoff shape', () => {
     if (!parsed.ok) return
     expect(parsed.draft.roadmapPhases[0]?.executionIntent).toBe('audit')
     expect(JSON.stringify(parsed.draft)).not.toContain('must never be stored')
+  })
+})
+
+function setArea(label: string, value: string) {
+  const area = container.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label}"]`)
+  if (!area) throw new Error(`Missing textarea: ${label}`)
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    setter.call(area, value)
+    area.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+describe('CT-LIVE-0A composer capacity', () => {
+  it('accepts text beyond 8000 characters and shows approximate tokens', () => {
+    const submitted: Array<{ scope: string }> = []
+    const scope = `BEGIN ${'A'.repeat(9_000)} END`
+    render(React.createElement(NewRunComposer, {
+      presence, busy: false, draft: { scope: '', constraints: [], requestedRouting: null },
+      onSubmit: (draft) => submitted.push(draft), onCancel: () => {},
+    }))
+    setArea('Owner scope', scope)
+    expect(container.textContent).not.toMatch(/\/\s*8000/)
+    expect(container.querySelector('textarea[aria-label="Owner scope"]')?.getAttribute('maxlength')).toBeNull()
+    expect(container.querySelector('textarea.ct-composer-scope')).not.toBeNull()
+    expect(container.textContent).toContain(`Owner input: ${scope.length} chars · ~${approximateTokenCount(scope)} tokens`)
+    expect(container.textContent).toContain(`Estimated Architect context: ~${estimateArchitectContextTokens(scope, [])} tokens`)
+    expect(container.textContent).toContain('Provider limit not reported')
+    expect((button('Request plan') as HTMLButtonElement).disabled).toBe(false)
+    act(() => button('Request plan').click())
+    expect(submitted[0]?.scope).toBe(scope)
+    expect(submitted[0]?.scope.startsWith('BEGIN ')).toBe(true)
+    expect(submitted[0]?.scope.endsWith(' END')).toBe(true)
+  })
+
+  it('counts multibyte characters separately from the approximate token estimate', () => {
+    render(React.createElement(NewRunComposer, {
+      presence, busy: false, draft: { scope: '你你', constraints: [], requestedRouting: null },
+      onSubmit: () => {}, onCancel: () => {},
+    }))
+    expect(container.textContent).toContain('Owner input: 2 chars · ~2 tokens')
+  })
+
+  it('blocks Request Plan when the create_plan payload exceeds the envelope', () => {
+    const submitted: unknown[] = []
+    render(React.createElement(NewRunComposer, {
+      presence, busy: false, draft: { scope: '', constraints: [], requestedRouting: null },
+      onSubmit: (draft) => submitted.push(draft), onCancel: () => {},
+    }))
+    setArea('Owner scope', 'A'.repeat(CREATE_PLAN_MAX_PAYLOAD_BYTES))
+    expect(container.textContent).toContain('safety envelope')
+    expect(container.textContent).toContain('UTF-8 bytes')
+    expect((button('Request plan') as HTMLButtonElement).disabled).toBe(true)
+    act(() => button('Request plan').click())
+    expect(submitted).toEqual([])
+  })
+
+  it('shows a reported model context only when the fleet provides one', () => {
+    const fleet = structuredClone(PREVIEW_PROVIDER_FLEET)
+    fleet[0].models[0].contextWindow = 123456
+    const routing: NextRunRouting = {
+      architect: { providerId: 'claude', modelId: fleet[0].models[0].modelId, effort: 'high', customModel: null },
+      implementer: { providerId: 'codex', modelId: 'gpt-test', effort: 'medium', customModel: null },
+      verifier: { providerId: 'ollama', modelId: null, effort: null, customModel: null },
+    }
+    render(React.createElement(NewRunComposer, {
+      presence: { ...presence, providerFleet: fleet },
+      busy: false,
+      draft: { scope: 'Create a file', constraints: [], requestedRouting: null },
+      routing,
+      onSubmit: () => {},
+      onCancel: () => {},
+    }))
+    expect(container.textContent).toContain('Provider context: 123,456 tokens')
+    expect(container.textContent).toContain('Architect: claude · claude-sonnet-5 · high')
+    expect(container.textContent).toContain('Implementer: codex · gpt-test · medium')
+    expect(container.textContent).toContain('Verifier: ollama · unset · default')
   })
 })

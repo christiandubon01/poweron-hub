@@ -1,5 +1,6 @@
 import { type DatabaseSync } from 'node:sqlite';
 
+import { TASK_SPEC_MAX_BYTES } from '../control/capacity.ts';
 import { openOrchestrationWriterDatabase } from './schema.ts';
 import { assertAttemptTransition, assertRunTransition, assertTaskTransition } from './transitions.ts';
 import {
@@ -178,25 +179,33 @@ function assertOptionalTextBytes(value: string | null | undefined, fieldName: st
   return value;
 }
 
-function serializeOptionalJson(value: JsonValue | null | undefined, fieldName: string): string | null {
+function serializeOptionalJson(
+  value: JsonValue | null | undefined,
+  fieldName: string,
+  maxBytes: number = TEXT_FIELD_MAX_BYTES,
+): string | null {
   if (value === undefined || value === null) {
     return null;
   }
 
   const canonicalValue = toCanonicalJsonValue(value, fieldName);
   const serialized = stableStringify(canonicalValue);
-  if (Buffer.byteLength(serialized, 'utf8') > TEXT_FIELD_MAX_BYTES) {
+  if (Buffer.byteLength(serialized, 'utf8') > maxBytes) {
     throw new OrchestrationError(
       'PAYLOAD_TOO_LARGE',
-      `${fieldName} exceeds ${TEXT_FIELD_MAX_BYTES} UTF-8 bytes.`,
+      `${fieldName} exceeds ${maxBytes} UTF-8 bytes.`,
     );
   }
   return serialized;
 }
 
 /** Same byte check createTask uses, so approval can reject an oversized spec before any run is written. */
-export function assertOptionalJsonWithinLimit(value: JsonValue, fieldName: string): void {
-  serializeOptionalJson(value, fieldName);
+export function assertOptionalJsonWithinLimit(
+  value: JsonValue,
+  fieldName: string,
+  maxBytes: number = TEXT_FIELD_MAX_BYTES,
+): void {
+  serializeOptionalJson(value, fieldName, maxBytes);
 }
 
 function parseJsonText(value: string | null): JsonValue | null {
@@ -674,13 +683,13 @@ export function openOrchestrationStore(options: OpenOrchestrationStoreOptions): 
       const runId = ensureNonEmptyString(input.runId, 'runId');
       const title = ensureNonEmptyString(input.title, 'title');
       const goal = assertOptionalTextBytes(input.goal, 'goal');
-      const specText = serializeOptionalJson(input.spec, 'spec');
+      const specText = serializeOptionalJson(input.spec, 'spec', TASK_SPEC_MAX_BYTES);
       assertTitle(title);
 
       const existing = this.getTask(taskId);
       if (existing) {
         const samePosition = input.position == null ? true : existing.position === input.position;
-        const existingSpecText = serializeOptionalJson(existing.spec, 'spec');
+        const existingSpecText = serializeOptionalJson(existing.spec, 'spec', TASK_SPEC_MAX_BYTES);
         if (
           existing.runId === runId &&
           existing.title === title &&

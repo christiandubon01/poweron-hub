@@ -97,3 +97,18 @@ export function toRequestedRouting(routing: NextRunRouting): { provider?: string
 export function resolveRoleModel(choice: RoleNextRunChoice): string | null {
   return choice.customModel || choice.modelId
 }
+
+export function formatRoleRoutingSummary(label: string, choice: RoleNextRunChoice): string {
+  const provider = choice.providerId ?? 'unset'
+  const model = choice.customModel?.trim() || choice.modelId || 'unset'
+  const effort = choice.effort ?? 'default'
+  return `${label}: ${provider} · ${model} · ${effort}`
+}
+
+export function formatRoutingSummaryLines(routing: NextRunRouting): string[] {
+  return [
+    formatRoleRoutingSummary('Architect', routing.architect),
+    formatRoleRoutingSummary('Implementer', routing.implementer),
+    formatRoleRoutingSummary('Verifier', routing.verifier),
+  ]
+}

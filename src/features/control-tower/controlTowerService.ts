@@ -18,6 +18,7 @@
  *     land on the existing row instead of planning twice.
  */
 import { supabase } from '@/lib/supabase'
+import { assertPersistableCreatePlanPayload } from './capacity'
 import { assertPersistableImportScopePackPayload } from './scopePack/importPayload'
 
 export type ControlRequestType = 'create_plan' | 'approve_plan' | 'cancel_run' | 'import_scope_pack'
@@ -129,6 +130,12 @@ export async function insertControlRequest(input: {
   clientRequestId: string
   payload: Record<string, unknown>
 }): Promise<ControlRequestRow> {
+  if (input.requestType === 'create_plan') {
+    const verdict = assertPersistableCreatePlanPayload(input.payload)
+    if (!verdict.ok) {
+      throw new ControlTowerServiceError('payload_rejected', verdict.message)
+    }
+  }
   if (input.requestType === 'import_scope_pack') {
     const verdict = assertPersistableImportScopePackPayload(input.payload)
     if (!verdict.ok) {

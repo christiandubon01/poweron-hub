@@ -9,6 +9,7 @@ import { openOrchestrationStore } from './lib/store.ts';
 import { inspectOrchestrationDatabase } from './lib/schema.ts';
 import { resolveStatePaths } from './lib/statePaths.ts';
 import { getStatusReport } from './status.ts';
+import { TASK_SPEC_MAX_BYTES } from './control/capacity.ts';
 import { OrchestrationError, TEXT_FIELD_MAX_BYTES, type OrchestrationEventRecord } from './lib/orchestrationTypes.ts';
 
 async function createTempDbPath(prefix: string): Promise<{ tempDir: string; dbPath: string }> {
@@ -648,13 +649,34 @@ test('oversize payloads are rejected, foreign keys enforce integrity, close and 
       (error: unknown) => expectCode(error, 'PAYLOAD_TOO_LARGE'),
     );
 
+    const aboveLegacy = store.createTask({
+      taskId: 'task-above-legacy',
+      runId: run.runId,
+      title: 'Spec above the old 8192 cap',
+      spec: { text: `BEGIN\n${'你'.repeat(3_000)}\nEND`, checks: ['acceptance-one'], paths: ['agent-host/smoke/example.txt'] },
+    });
+    const stored = aboveLegacy.spec as { text: string; checks: string[]; paths: string[] };
+    assert.ok(Buffer.byteLength(JSON.stringify(stored), 'utf8') > TEXT_FIELD_MAX_BYTES);
+    assert.equal(stored.text, `BEGIN\n${'你'.repeat(3_000)}\nEND`);
+    assert.deepEqual(stored.checks, ['acceptance-one']);
+    assert.deepEqual(stored.paths, ['agent-host/smoke/example.txt']);
+
+    const largeText = `FIRST\n${'é'.repeat(40_000)}\nFINAL`;
+    const large = store.createTask({
+      taskId: 'task-large-spec',
+      runId: run.runId,
+      title: 'Large spec task',
+      spec: { text: largeText },
+    });
+    assert.equal((large.spec as { text: string }).text, largeText);
+
     assert.throws(
       () =>
         store.createTask({
           taskId: 'task-big-spec',
           runId: run.runId,
           title: 'Big spec task',
-          spec: { text: 'x'.repeat(TEXT_FIELD_MAX_BYTES) },
+          spec: { text: 'x'.repeat(TASK_SPEC_MAX_BYTES) },
         }),
       (error: unknown) => expectCode(error, 'PAYLOAD_TOO_LARGE'),
     );

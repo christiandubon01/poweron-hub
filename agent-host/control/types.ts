@@ -68,6 +68,12 @@ export interface ControlPlan {
   riskSummary: string | null;
   /** ATB-5: omitted or 'implementation' preserves the existing implementer+verifier contract. */
   executionIntent?: PhaseExecutionIntent;
+  /**
+   * Accepted owner scope copied from the create_plan request at execution time.
+   * Not part of the published plan hash. Absent on plans that only carry the
+   * Architect's structured fields.
+   */
+  ownerScope?: string;
   scopePack?: {
     packId: string;
     version: number;
@@ -177,7 +183,6 @@ export interface ApprovePlanPayload {
   planHash: string;
 }
 
-export const SCOPE_MAX_CHARS = 8_000;
 export const CONSTRAINTS_MAX = 16;
 export const CONSTRAINT_MAX_CHARS = 1_000;
 

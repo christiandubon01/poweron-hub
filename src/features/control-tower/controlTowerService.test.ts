@@ -13,6 +13,7 @@ vi.mock('../../lib/supabase', () => ({
 
 import { ControlTowerServiceError, fetchScopePackRows, insertControlRequest, resolveControlTowerContext } from './controlTowerService'
 import type { ControlRequestRow } from './controlTowerService'
+import { CREATE_PLAN_MAX_PAYLOAD_BYTES } from './capacity'
 import { IMPORT_SCOPE_PACK_MAX_PAYLOAD_BYTES } from './scopePack/bounds'
 import { parseHandoffDocument, QBO_HANDOFF_FIXTURE } from './scopePack/handoffParser'
 import { createHash } from 'node:crypto'
@@ -251,6 +252,29 @@ describe('ATB-5 import_scope_pack request + Scope Pack list', () => {
     })
     expect(inserted[0].request_type).toBe('create_plan')
     expect(inserted[0].payload).toEqual({ scope: 'Create the smoke marker file', note: 'existing shape' })
+  })
+
+  it('rejects an oversized create_plan payload before insert', async () => {
+    const inserted: Record<string, unknown>[] = []
+    holder.client = {
+      from: () => ({
+        insert: (values: Record<string, unknown>) => {
+          inserted.push(values)
+          return { select: () => ({ single: async () => ({ data: EXISTING_ROW, error: null }) }) }
+        },
+      }),
+    }
+    const payload = { scope: '你'.repeat(80_000), constraints: [] }
+    await expect(insertControlRequest({
+      organizationId: 'org-1',
+      repoKey: 'repo-key-1',
+      requestType: 'create_plan',
+      clientRequestId: 'plan-large',
+      payload,
+    })).rejects.toBeInstanceOf(ControlTowerServiceError)
+    expect(inserted).toHaveLength(0)
+    expect(new TextEncoder().encode(JSON.stringify(payload)).length).toBeGreaterThan(CREATE_PLAN_MAX_PAYLOAD_BYTES)
+    expect(payload.scope.length).toBeLessThan(CREATE_PLAN_MAX_PAYLOAD_BYTES)
   })
 
   it('lists Scope Packs for the current org and repo only', async () => {

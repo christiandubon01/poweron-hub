@@ -24,6 +24,7 @@ import {
   inspectHistoricalCheckpoint,
   mapArchitectVerdict,
   IMPORT_SCOPE_PACK_MAX_PAYLOAD_BYTES,
+  scopePackInheritanceMaxBytes,
   materializeImportedPack,
   parseCreatePlanScopePackFields,
   parseImportScopePackPayload,
@@ -454,6 +455,8 @@ test('ATB-5 verifier prompt inherits Scope Pack reference', () => {
     pack,
     phase: pack.roadmapPhases[0],
   });
+  assert.equal(inherited.ok, true);
+  if (!inherited.ok) return;
   const plan = {
     planId: 'plan-1',
     objective: 'audit',
@@ -507,4 +510,42 @@ test('ATB-5 audit-like validatePlan allows empty tasks and rejects implementer w
   }, { executionIntent: 'audit' });
   assert.ok(!withImplementer.ok);
   assert.ok(withImplementer.errors.includes('AUDIT_WRITE_FORBIDDEN'));
+});
+
+test('Scope Pack inheritance keeps locked rules, checks, and owner decisions intact', () => {
+  const pack = packFromDraft();
+  const longRule = `LOCKED-RULE-${'r'.repeat(1_200)}`;
+  pack.lockedRules = [longRule, ...Array.from({ length: 20 }, (_, index) => `locked-rule-${index}`)];
+  pack.ownerDecisions = ['Keep the audit read-only', `decision-${'d'.repeat(900)}`];
+  pack.acceptanceCriteria = ['acceptance-begin', 'acceptance-end'];
+  const inherited = inheritScopePackConstraints({
+    ownerConstraints: ['owner-constraint-exact'],
+    pack,
+    phase: pack.roadmapPhases[0],
+  });
+  assert.equal(inherited.ok, true);
+  if (!inherited.ok) return;
+  assert.ok(inherited.constraints.includes('owner-constraint-exact'));
+  assert.ok(inherited.constraints.includes(`LOCKED: ${longRule}`));
+  assert.equal(inherited.constraints.filter((item) => item.startsWith('LOCKED: ')).length, 21);
+  assert.ok(inherited.constraints.includes('OWNER_DECISION: Keep the audit read-only'));
+  assert.ok(inherited.constraints.some((item) => item.includes('d'.repeat(900))));
+  assert.ok(inherited.validationRequirements.includes('acceptance-begin'));
+  assert.ok(inherited.validationRequirements.includes('acceptance-end'));
+  assert.ok(!inherited.constraints.some((item) => item.length === 1_000 && item.startsWith('LOCKED: LOCKED-RULE-')));
+});
+
+test('Scope Pack inheritance rejects a contract that cannot fit without shortening it', () => {
+  const pack = packFromDraft();
+  pack.lockedRules = [`rule-${'x'.repeat(scopePackInheritanceMaxBytes())}`];
+  const inherited = inheritScopePackConstraints({
+    ownerConstraints: [],
+    pack,
+    phase: pack.roadmapPhases[0],
+  });
+  assert.equal(inherited.ok, false);
+  if (inherited.ok) return;
+  assert.equal(inherited.code, 'SCOPE_PACK_INHERITANCE_TOO_LARGE');
+  assert.match(inherited.message, /were not shortened/);
+  assert.ok(scopePackInheritanceMaxBytes() > 0);
 });

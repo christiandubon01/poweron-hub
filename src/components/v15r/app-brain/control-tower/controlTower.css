@@ -284,6 +284,9 @@ body:has(.app-brain-destinations.ct-active) .app-brain-shell-metrics { display: 
 .ct-composer-panel > div { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .ct-composer-intro { color: var(--ct-muted); font-size: 12px; }
 .ct-composer-field { display: flex; flex-direction: column; gap: 6px; }
+.ct-composer-scope { min-height: 120px; max-height: 240px; overflow: auto; resize: vertical; width: 100%; }
+.ct-composer-actions { position: sticky; bottom: 0; z-index: 2; padding: 10px 0 4px; background: var(--ct-col, #0f141c); }
+.ct-routing-summary { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; color: var(--ct-muted); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .ct-shell textarea, .ct-shell input { border: 1px solid var(--ct-border); border-radius: 8px; background: var(--ct-well); color: var(--ct-text); font: inherit; font-size: 13px; padding: 10px 12px; resize: vertical; min-height: 44px; }
 .ct-composer-rogrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .ct-composer-readonly, .ct-composer-team { border: 1px dashed var(--ct-border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }

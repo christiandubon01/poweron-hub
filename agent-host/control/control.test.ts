@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { CREATE_PLAN_MAX_PAYLOAD_BYTES, TASK_SPEC_MAX_BYTES } from './capacity.ts';
 import { openOrchestrationStore, type OrchestrationStore } from '../lib/store.ts';
 import {
   validatePlan,
@@ -170,10 +171,13 @@ test('parseCreatePlanPayload accepts a valid payload and trims scope', () => {
   assert.equal(parsed.payload.requestedRouting?.provider, 'claude');
 });
 
-test('parseCreatePlanPayload rejects missing scope, oversized scope, and bad routing', () => {
+test('parseCreatePlanPayload rejects missing scope, an oversized payload, and bad routing', () => {
   assert.ok(!parseCreatePlanPayload({}).ok);
   assert.ok(!parseCreatePlanPayload({ scope: '' }).ok);
-  assert.ok(!parseCreatePlanPayload({ scope: 'x'.repeat(8_001) }).ok);
+  assert.equal(parseCreatePlanPayload({ scope: 'x'.repeat(8_001) }).ok, true);
+  const oversized = parseCreatePlanPayload({ scope: 'x'.repeat(CREATE_PLAN_MAX_PAYLOAD_BYTES) });
+  assert.equal(oversized.ok, false);
+  if (!oversized.ok) assert.equal(oversized.code, 'PAYLOAD_TOO_LARGE');
   assert.ok(!parseCreatePlanPayload({ scope: 'ok', constraints: 'not-an-array' }).ok);
   assert.ok(!parseCreatePlanPayload({ scope: 'ok', requestedRouting: { provider: 'bash' } }).ok);
   assert.ok(!parseCreatePlanPayload({ scope: 'ok', requestedRouting: { requestedModel: '' } }).ok);
@@ -917,9 +921,11 @@ class FakeControlPlane {
     this.completions.push({ id, error: safeError, result: result ?? null });
   }
 
-  async findPlanByPlanId(planId: string): Promise<{ result: Record<string, unknown> } | null> {
+  readonly planPayloads = new Map<string, Record<string, unknown>>();
+
+  async findPlanByPlanId(planId: string): Promise<{ result: Record<string, unknown>; payload: Record<string, unknown> | null } | null> {
     const stored = this.storedPlans.get(planId);
-    return stored ? { result: stored } : null;
+    return stored ? { result: stored, payload: this.planPayloads.get(planId) ?? null } : null;
   }
 
   asControlPlane(): ControlPlane {
@@ -1292,7 +1298,7 @@ test('handleApprovePlan rejects an oversized task spec before creating a run', a
     const planId = created.planId as string;
     const planHash = created.planHash as string;
     const storedPlan = created.plan as { tasks: Array<{ goal: string }> };
-    storedPlan.tasks[0].goal = 'x'.repeat(8_000);
+    storedPlan.tasks[0].goal = 'x'.repeat(TASK_SPEC_MAX_BYTES);
 
     const outcome = await handleApprovePlan({
       store,
@@ -1305,7 +1311,66 @@ test('handleApprovePlan rejects an oversized task spec before creating a run', a
     assert.equal(outcome.safeError, 'TASK_SPEC_TOO_LARGE');
     assert.equal(store.listRuns().length, 0);
     assert.match(String(controlPlane.completions.at(-1)?.error), /TASK_SPEC_TOO_LARGE/u);
-    assert.match(String(controlPlane.completions.at(-1)?.error), /spec exceeds 8192 UTF-8 bytes/u);
+    assert.match(String(controlPlane.completions.at(-1)?.error), new RegExp(`spec exceeds ${TASK_SPEC_MAX_BYTES} UTF-8 bytes`, 'u'));
+  });
+});
+
+test('a large owner scope survives approval into the exact execution prompt', async () => {
+  await withStore(async (store) => {
+    const controlPlane = new FakeControlPlane();
+    const scope = `BEGIN-MARKER\n${'A'.repeat(20_000)}\nMIDDLE-MARKER\n你你你\nEND-MARKER`;
+    const constraints = ['Do not commit.', 'Keep the marker 你'];
+    const adapter = {
+      execute: async () => buildExecutionResult({
+        finalText: `\`\`\`json\n${JSON.stringify(architectPlanObject())}\n\`\`\``,
+      }),
+    };
+    await handleCreatePlan({
+      store,
+      registry: new Map([['claude', adapter as never]]) as never,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({ scope, constraints }),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    const created = controlPlane.completions[0].result as Record<string, unknown>;
+    assert.equal(created.error, undefined);
+    const planId = created.planId as string;
+    const planHash = created.planHash as string;
+    assert.ok(!JSON.stringify(created).includes('BEGIN-MARKER'), 'owner scope stays on the request payload, not the published plan');
+    controlPlane.planPayloads.set(planId, { scope, constraints });
+
+    const outcome = await handleApprovePlan({
+      store,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({ planId, planHash }, 'approve_plan'),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    assert.equal(outcome.ok, true, String(controlPlane.completions.at(-1)?.error));
+    assert.equal(store.listRuns().length, 1);
+    const tasks = store.listTasks(outcome.runId!);
+    assert.equal(tasks.length, 2);
+    const implementer = tasks.find((task) => task.title === 'Create the file');
+    assert.ok(implementer?.spec && typeof implementer.spec === 'object');
+    const spec = implementer!.spec as {
+      control: { prompt: string };
+      policy: { authorizedWritePaths: string[] };
+      plan: { plannedAreas: string[] };
+    };
+    const serialized = Buffer.byteLength(JSON.stringify(spec), 'utf8');
+    assert.ok(serialized > 8_192);
+    assert.ok(serialized <= TASK_SPEC_MAX_BYTES);
+    assert.ok(spec.control.prompt.includes('BEGIN-MARKER'));
+    assert.ok(spec.control.prompt.includes('MIDDLE-MARKER'));
+    assert.ok(spec.control.prompt.includes('END-MARKER'));
+    assert.ok(spec.control.prompt.includes('你你你'));
+    assert.ok(spec.control.prompt.includes('Do not commit.'));
+    assert.ok(spec.control.prompt.includes('Keep the marker 你'));
+    assert.ok(spec.control.prompt.includes('File exists with exact contents.'));
+    assert.deepEqual(spec.policy.authorizedWritePaths, ['agent-host/smoke/example.txt']);
+    assert.deepEqual(spec.plan.plannedAreas, ['agent-host/smoke']);
+    const parsed = parseTaskControlSpec(implementer!.spec);
+    assert.equal(parsed.control.prompt, spec.control.prompt);
+    assert.deepEqual(parsed.policy.authorizedWritePaths, spec.policy.authorizedWritePaths);
   });
 });
 

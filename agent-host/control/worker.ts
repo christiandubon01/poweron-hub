@@ -33,6 +33,7 @@ import { discoverTools } from '../lib/discovery.ts';
 import { acquireLock, LockAcquisitionError, releaseLockIfOwned } from '../lib/lock.ts';
 import { readRepoStatus, resolveCanonicalRepo } from '../lib/repo.ts';
 import { resolveStatePaths } from '../lib/statePaths.ts';
+import { TASK_SPEC_MAX_BYTES } from './capacity.ts';
 import { assertOptionalJsonWithinLimit, openOrchestrationStore, type OrchestrationStore } from '../lib/store.ts';
 import type { JsonValue } from '../lib/orchestrationTypes.ts';
 import {
@@ -71,6 +72,7 @@ import {
   buildScopePackSignal,
   extractDoNotTouchPaths,
   inheritScopePackConstraints,
+  type ScopePackInheritanceResult,
   inspectHistoricalCheckpoint,
   isAuditLikeIntent,
   mapArchitectVerdict,
@@ -344,7 +346,7 @@ export async function handleCreatePlan(options: {
   const payload = parsedPayload.payload;
 
   let boundPack: ScopePackContract | null = null;
-  let inherited: ReturnType<typeof inheritScopePackConstraints> | null = null;
+  let inherited: Extract<ScopePackInheritanceResult, { ok: true }> | null = null;
   let architectVerdict: ReturnType<typeof mapArchitectVerdict> | null = null;
   let approvalGate: ReturnType<typeof buildScopePackApprovalGate> | null = null;
   let scopePackSignal: ReturnType<typeof buildScopePackSignal> | null = null;
@@ -370,6 +372,15 @@ export async function handleCreatePlan(options: {
     });
     if (!resolved.ok) {
       await controlPlane.failRequest(request.id, `${resolved.code}: ${resolved.message}`);
+      return;
+    }
+    const inheritanceFit = inheritScopePackConstraints({
+      ownerConstraints: payload.constraints,
+      pack: loaded,
+      phase: resolved.phase,
+    });
+    if (!inheritanceFit.ok) {
+      await controlPlane.failRequest(request.id, `${inheritanceFit.code}: ${inheritanceFit.message}`);
       return;
     }
     let checkpointNote: string | null = null;
@@ -429,11 +440,16 @@ export async function handleCreatePlan(options: {
     if (packStore.updateScopePackCurrentPhase) {
       await packStore.updateScopePackCurrentPhase(boundPack.packId, resolved.phase.id);
     }
-    inherited = inheritScopePackConstraints({
+    const inheritance = inheritScopePackConstraints({
       ownerConstraints: payload.constraints,
       pack: boundPack,
       phase: resolved.phase,
     });
+    if (!inheritance.ok) {
+      await controlPlane.failRequest(request.id, `${inheritance.code}: ${inheritance.message}`);
+      return;
+    }
+    inherited = inheritance;
     architectVerdict = mapArchitectVerdict(boundPack.reconciliationState);
     approvalGate = buildScopePackApprovalGate(boundPack.reconciliationState, resolved.phase.executionIntent, {
       staleAcknowledged: payload.staleAcknowledged === true,
@@ -557,7 +573,7 @@ export async function handleCreatePlan(options: {
     };
     for (const task of parsed.result.plan.tasks) {
       const extra = inherited.validationRequirements.filter((item) => !task.validationRequirements.includes(item));
-      task.validationRequirements = [...task.validationRequirements, ...extra].slice(0, 16);
+      task.validationRequirements = [...task.validationRequirements, ...extra];
     }
   }
 
@@ -685,8 +701,19 @@ export async function handleApprovePlan(options: {
     return { ok: true, runId: null, safeError: null };
   }
 
+  const sourcePayload = planRow.payload && typeof planRow.payload === 'object' ? planRow.payload : null;
+  const ownerScope = sourcePayload && typeof sourcePayload.scope === 'string' ? sourcePayload.scope : '';
+  const ownerConstraints = sourcePayload && Array.isArray(sourcePayload.constraints)
+    ? sourcePayload.constraints.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    : [];
+  const constraints = [...plan.constraints];
+  for (const constraint of ownerConstraints) {
+    if (!constraints.includes(constraint)) constraints.push(constraint);
+  }
+  const planForTasks: ControlPlan = { ...plan, constraints, ...(ownerScope ? { ownerScope } : {}) };
+
   // Build every task spec first. An oversized spec must fail before any run row exists.
-  const prepared = plan.tasks.map((task, index) => {
+  const prepared = planForTasks.tasks.map((task, index) => {
     const taskId = `${plan.planId}:${task.clientTaskKey}`;
     const spec: TaskControlSpec & { workingDirectory: string; plan: Record<string, unknown> } = {
       control: {
@@ -694,13 +721,13 @@ export async function handleApprovePlan(options: {
         requestedModel: task.requestedModel,
         reasoningEffort: options.roleEffort?.[task.role] ?? null,
         permissionProfile: task.permissionProfile,
-        prompt: buildTaskPrompt(task, plan),
+        prompt: buildTaskPrompt(task, planForTasks),
         timeoutMs: DEFAULT_TASK_TIMEOUT_MS,
       },
       policy: {
         authorizedWritePaths: task.authorizedWritePaths,
         doNotTouchPaths: extractDoNotTouchPaths(
-          plan.constraints
+          planForTasks.constraints
             .filter((constraint) => constraint.startsWith('DO_NOT_TOUCH: '))
             .map((constraint) => constraint.slice('DO_NOT_TOUCH: '.length)),
         ),
@@ -726,7 +753,7 @@ export async function handleApprovePlan(options: {
   });
   for (const item of prepared) {
     try {
-      assertOptionalJsonWithinLimit(item.spec as unknown as JsonValue, 'spec');
+      assertOptionalJsonWithinLimit(item.spec as unknown as JsonValue, 'spec', TASK_SPEC_MAX_BYTES);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       await controlPlane.failRequest(
