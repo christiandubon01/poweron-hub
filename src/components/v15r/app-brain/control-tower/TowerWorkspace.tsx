@@ -10,10 +10,12 @@ import SessionHistory from './SessionHistory'
 import type { TowerSession } from './sessionPresentation'
 
 export default function TowerWorkspace({
-  run, sessions, presence, selectedTaskId, onSelectRun, onSelectTask,
+  run, sessions, presence, selectedTaskId, failureFocus = 0, onSelectRun, onSelectTask,
   routing, onRoutingChange, scopePack, scopePhaseId, scopeStorage = 'unknown', preview = false,
 }: {
   run: TowerSession | null; sessions: TowerSession[]; presence?: HostPresenceView; selectedTaskId: string | null;
+  /** Increments when the owner asks to open verifier failure evidence. */
+  failureFocus?: number
   onSelectRun: (id: string) => void; onSelectTask: (runId: string, taskId: string | null) => void
   routing?: NextRunRouting
   onRoutingChange?: (next: NextRunRouting) => void
@@ -27,6 +29,12 @@ export default function TowerWorkspace({
   const [mode, setMode] = useState<IntelligenceMode>('team')
   const [localRouting, setLocalRouting] = useState<NextRunRouting>(() => routing ?? loadNextRunRouting(presence?.repoKey ?? null))
   useEffect(() => { setNodeId(null); setSelectedRoleId(null) }, [run?.runId])
+  useEffect(() => {
+    if (failureFocus < 1) return
+    setNodeId(null)
+    setMode('team')
+    setSelectedRoleId('verifier')
+  }, [failureFocus])
   useEffect(() => {
     if (routing) setLocalRouting(routing)
   }, [routing])
@@ -54,6 +62,7 @@ export default function TowerWorkspace({
       onClear={() => { setNodeId(null); setSelectedRoleId(null); if (run) onSelectTask(run.runId, null) }}
       onSelectRole={selectRole}
       onSelectNode={setNodeId}
+      onViewFailure={() => { setNodeId(null); setMode('team'); setSelectedRoleId('verifier') }}
       mode={mode}
       onModeChange={setMode}
       routing={localRouting ?? EMPTY_NEXT_RUN_ROUTING}

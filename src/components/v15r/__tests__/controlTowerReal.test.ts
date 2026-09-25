@@ -518,6 +518,232 @@ describe('CT-CORE-1 fail-closed and completion truth', () => {
   })
 })
 
+/* ── CT-LIVE-0A4: verifier FAIL diagnostics, not the execution task ───────── */
+describe('CT-LIVE-0A4 verifier failure diagnostics', () => {
+  const SUMMARY = 'The candidate lacks the capacity module.'
+  const css = readFileSync('src/components/v15r/app-brain/control-tower/controlTower.css', 'utf8')
+
+  function rejectedRow(options?: {
+    summary?: string | null
+    interimVerdicts?: unknown[]
+    signals?: unknown[]
+    hideDiagnostics?: boolean
+  }): RunSnapshotRow {
+    const row = wireSnapshot({
+      runStatus: 'completed',
+      taskStatuses: ['passed', 'passed'],
+      verification: { verdict: 'fail', summary: options?.summary === undefined ? SUMMARY : options.summary },
+      changeset: { ready: true, changeCount: 2, safePaths: ['agent-host/control/capacity.ts'] },
+    })
+    const snapshot = row.snapshot as Record<string, unknown>
+    snapshot.attempts = [
+      { attemptId: 'attempt-impl', taskId: 'task-1', ordinal: 1, status: 'passed', requestedModel: null, reportedModel: 'claude-opus-5-5', reportedModelSource: 'provider' },
+      { attemptId: 'attempt-ver', taskId: 'task-2', ordinal: 1, status: 'passed', requestedModel: null, reportedModel: 'claude-opus-5-5', reportedModelSource: 'provider' },
+    ]
+    const tasks = snapshot.tasks as Array<Record<string, unknown>>
+    tasks[1].provider = 'claude'
+    snapshot.chainOfThought = 'CHAIN-OF-THOUGHT hidden reasoning'
+    snapshot.finalText = 'RAW PROVIDER LOG should stay on the host'
+    if (options?.interimVerdicts) snapshot.interimVerdicts = options.interimVerdicts
+    else if (!options?.hideDiagnostics) {
+      snapshot.interimVerdicts = [{
+        verdictId: 'verdict:verifier:attempt-ver',
+        role: 'verifier',
+        taskId: 'task-2',
+        attemptId: 'attempt-ver',
+        state: 'FAIL',
+        summary: SUMMARY,
+        failedChecks: ['capacity-module-missing', 'migration-137-missing'],
+        evidenceRefs: ['agent-host/control/capacity.ts', 'supabase/migrations/136_agent_scope_packs.sql'],
+        evidenceCount: 2,
+        severity: 'critical',
+        recommendedAction: 'owner-review',
+        mayContinue: false,
+        timestamp: '2026-09-25T16:15:19.000Z',
+      }, {
+        verdictId: 'verdict:policy:attempt-impl',
+        role: 'guard',
+        taskId: 'task-1',
+        attemptId: 'attempt-impl',
+        state: 'CONTINUE',
+        summary: 'Guard clean · 2 change(s) in scope',
+        evidenceRefs: [],
+        evidenceCount: 2,
+        severity: 'info',
+        recommendedAction: 'none',
+        mayContinue: true,
+        timestamp: '2026-09-25T16:10:00.000Z',
+      }]
+    }
+    if (options?.signals) snapshot.signals = options.signals
+    else if (!options?.hideDiagnostics) {
+      snapshot.signals = [{
+        signalId: 's-disagree',
+        category: 'verifier-implementer-disagreement',
+        severity: 'warning',
+        source: 'host',
+        taskId: 'task-2',
+        attemptId: 'attempt-ver',
+        message: 'Verifier FAIL after an implementer changeset.',
+        evidenceCount: 1,
+        evidenceRefs: ['verdict=fail'],
+        firstSeen: '2026-09-25T16:15:19.000Z',
+        lastSeen: '2026-09-25T16:15:19.000Z',
+        resolvedAt: null,
+        ownerActionRequired: false,
+      }]
+    }
+    return row
+  }
+
+  async function show(row: RunSnapshotRow) {
+    fake.presenceRows = [presenceRow(new Date())]
+    fake.snapshots = [row]
+    await renderLive()
+  }
+
+  function panel() {
+    const found = container.querySelector('.ct-intelligence')
+    if (!found) throw new Error('Missing intelligence panel')
+    return found
+  }
+
+  it('shows the safe failure on the banner and opens failure evidence instead of the execution task', async () => {
+    await show(rejectedRow())
+    const command = container.querySelector('.ct-command')?.textContent ?? ''
+    expect(command).toContain('Verification failed')
+    expect(command).toContain('Execution completed')
+    expect(command).toContain('Candidate rejected')
+
+    const banner = container.querySelector('.ct-verifier-rejection')
+    expect(banner).not.toBeNull()
+    expect(banner?.textContent).toContain('Verification failed — Candidate rejected')
+    expect(banner?.textContent).toContain(SUMMARY)
+    expect(banner?.textContent).toContain('2 failed checks')
+    expect(banner?.textContent).toContain('2 evidence refs')
+    expect(banner?.textContent).not.toContain('Review the task states')
+    expect(banner?.textContent).not.toContain('capacity-module-missing')
+    const details = banner?.querySelector('details')?.textContent ?? ''
+    expect(details).toContain(SUMMARY)
+    expect(details).toContain('2 failed checks')
+    expect(details).toContain('2 evidence refs')
+
+    expect(container.textContent).not.toContain('CHAIN-OF-THOUGHT')
+    expect(container.textContent).not.toContain('RAW PROVIDER LOG')
+
+    click(button('Inspect failure'))
+    expect(panel().getAttribute('aria-label')).toBe('Verifier failure')
+    expect(panel().getAttribute('aria-label')).not.toBe('Task detail')
+    const failure = panel().querySelector('[aria-label="Verifier failure evidence"]')
+    expect(failure?.textContent).toContain('Completed successfully')
+    expect(failure?.querySelector('.ct-verifier-verdict-fail')?.textContent).toBe('FAIL')
+    expect(failure?.textContent).toContain('capacity-module-missing')
+    expect(failure?.textContent).toContain('migration-137-missing')
+    expect(failure?.textContent).toContain('agent-host/control/capacity.ts')
+    expect(failure?.textContent).toContain('supabase/migrations/136_agent_scope_packs.sql')
+    expect(failure?.textContent).toContain('claude')
+    expect(failure?.textContent).toContain('claude-opus-5-5')
+    expect(failure?.textContent).toContain('attempt-ver')
+    expect(failure?.textContent).toContain('Verify marker file')
+    expect(failure?.textContent).toContain('2 changes')
+    expect(failure?.textContent).toContain('Guard clean · 2 change(s) in scope')
+    expect(failure?.textContent).toContain('Verifier FAIL after an implementer changeset.')
+    expect(failure?.textContent).not.toContain('CHAIN-OF-THOUGHT')
+    expect(css).toMatch(/\.ct-verifier-verdict-fail\s*\{[^}]*font-weight:\s*700/)
+    expect(css).toMatch(/\.ct-verifier-execution\s*\{[^}]*font-weight:\s*500/)
+
+    click(button('Session details'))
+    const taskButton = Array.from(container.querySelectorAll('.ct-session-task-list button')).find((item) => item.textContent?.includes('Verify marker file'))
+    if (!taskButton) throw new Error('Missing verifier task')
+    click(taskButton as HTMLButtonElement)
+    expect(panel().getAttribute('aria-label')).toBe('Task detail')
+    expect(panel().textContent).toContain('Execution attempt: Passed')
+    expect(panel().textContent).toContain('Verification verdict: FAIL')
+    expect(panel().textContent).not.toContain('Attempt 1 · passed')
+    click(button('View failure evidence'))
+    expect(panel().getAttribute('aria-label')).toBe('Verifier failure')
+    expect(panel().textContent).toContain('capacity-module-missing')
+    expect(panel().textContent).toContain('agent-host/control/capacity.ts')
+  })
+
+  it('does not show a rejection banner when verification passed', async () => {
+    const row = wireSnapshot({
+      runStatus: 'completed',
+      taskStatuses: ['passed', 'passed'],
+      verification: { verdict: 'pass', summary: 'Marker file matches exactly.' },
+      changeset: { ready: true, changeCount: 1, safePaths: ['agent-host/smoke/control-tower-ui-e2e.txt'] },
+    })
+    await show(row)
+    expect(container.querySelector('.ct-verifier-rejection')).toBeNull()
+    expect(container.textContent).not.toContain('Inspect failure')
+    expect(container.querySelector('.ct-command')?.textContent).toContain('2/2 tasks passed')
+  })
+
+  it('renders an older fail without diagnostic fields as unavailable', async () => {
+    await show(rejectedRow({
+      summary: null,
+      hideDiagnostics: true,
+      interimVerdicts: [{
+        verdictId: 'verdict:verifier:attempt-ver',
+        role: 'verifier',
+        taskId: 'task-2',
+        attemptId: 'attempt-ver',
+        state: 'FAIL',
+        summary: 'Verifier verdict: FAIL',
+        evidenceRefs: ['attempt-ver'],
+        evidenceCount: 1,
+        severity: 'critical',
+        recommendedAction: 'owner-review',
+        mayContinue: false,
+        timestamp: '2026-09-25T16:15:19.000Z',
+      }],
+    }))
+    const banner = container.querySelector('.ct-verifier-rejection')
+    expect(banner?.textContent).toContain('Verifier rejected the candidate.')
+    expect(banner?.textContent).toContain('Detailed verifier evidence was not recorded for this run.')
+    expect(banner?.textContent).not.toContain('0 failed checks')
+    expect(banner?.textContent).not.toContain('capacity-module-missing')
+    expect(banner?.textContent).not.toContain('Verifier verdict: FAIL')
+    click(button('Inspect failure'))
+    expect(panel().getAttribute('aria-label')).toBe('Verifier failure')
+    expect(panel().textContent).toContain('Detailed verifier evidence was not recorded for this run.')
+    expect(panel().textContent).toContain('Failed checks were not recorded for this run.')
+    expect(panel().textContent).not.toContain('CHAIN-OF-THOUGHT')
+    expect(panel().querySelector('.ct-team-evidence-refs')).toBeNull()
+  })
+
+  it('uses the published verification summary when the interim verdict only has the generic fallback', async () => {
+    await show(rejectedRow({
+      summary: SUMMARY,
+      interimVerdicts: [{
+        verdictId: 'verdict:verifier:attempt-ver',
+        role: 'verifier',
+        taskId: 'task-2',
+        attemptId: 'attempt-ver',
+        state: 'FAIL',
+        summary: 'Verifier verdict: FAIL',
+        evidenceRefs: ['attempt-ver'],
+        evidenceCount: 1,
+        severity: 'critical',
+        recommendedAction: 'owner-review',
+        mayContinue: false,
+        timestamp: '2026-09-25T16:15:19.000Z',
+      }],
+      signals: [],
+    }))
+    const banner = container.querySelector('.ct-verifier-rejection')
+    expect(banner?.textContent).toContain(SUMMARY)
+    expect(banner?.textContent).toContain('Failed checks were not recorded for this run.')
+    expect(banner?.textContent).not.toContain('1 evidence ref')
+    expect(banner?.textContent).not.toContain('Verifier verdict: FAIL')
+    click(button('Inspect failure'))
+    const evidence = panel().querySelector('.ct-team-evidence-refs')
+    expect(evidence).toBeNull()
+    expect(panel().textContent).toContain(SUMMARY)
+    expect(panel().textContent).not.toContain('capacity-module-missing')
+  })
+})
+
 /* ── §36 13-14 + 18: no fixture fallback, preview still works, live map ───── */
 describe('CT-CORE-1 live surface truth', () => {
   it('never falls back to the fixture preview in live mode', async () => {

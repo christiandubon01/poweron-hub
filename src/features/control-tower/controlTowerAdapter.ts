@@ -36,6 +36,7 @@ import type {
 } from '@/components/v15r/app-brain/control-tower/controlTowerTypes'
 import type { AppBrainNode } from '@/components/v15r/appBrainMap'
 import type { HostPresenceRow, RunSnapshotRow } from './controlTowerService'
+import { verifierFailureDiagnostics, verifierRejectionConsequence } from './verifierFailure'
 
 /* ATB-1 defensive caps mirroring the Host projection (bounded even if a Host over-publishes). */
 const MAX_INTERIM_VERDICTS = 20
@@ -385,6 +386,18 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
 
   const changesetReady = isRecord(wire.changeset) && wire.changeset.ready === true
   const changeset: 'none' | 'not-applied' = changesetReady ? 'not-applied' : 'none'
+  const candidateCount = isRecord(wire.changeset) && typeof wire.changeset.changeCount === 'number' ? wire.changeset.changeCount : null
+  const verificationSummary = typeof verificationWire?.summary === 'string' ? verificationWire.summary : null
+  const interimVerdicts = mapInterimVerdicts(wire.interimVerdicts)
+  const signals = mapSignals(wire.signals)
+  const failure = verifierFailureDiagnostics({
+    verification,
+    verificationSummary,
+    interimVerdicts,
+    tasks: viewTasks,
+    candidateCount,
+    signals,
+  })
 
   const attention: AttentionEntry[] = []
   if (runState === 'paused' && isRecord(wire.gate)) {
@@ -395,13 +408,13 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
       consequence: `Host reason: ${typeof wire.gate.reason === 'string' ? wire.gate.reason : 'unknown'}. Approving or resuming happens only through the Host.`,
     })
   }
-  if (verification === 'rejected') {
+  if (failure) {
     const verifierTask = viewTasks.find((task) => task.role === 'Verifier')
     attention.push({
       id: `verifier:${row.run_id}`,
       kind: 'verifier-rejected',
-      title: 'The Verifier rejected the work',
-      consequence: 'The run records the failed verification. Review the task states.',
+      title: 'Verification failed — Candidate rejected',
+      consequence: verifierRejectionConsequence(failure),
       taskId: verifierTask?.id,
     })
   }
@@ -427,12 +440,12 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
     startedAt: typeof run.startedAt === 'string' ? run.startedAt : null,
     completedAt: typeof run.completedAt === 'string' ? run.completedAt : null,
     attemptCount: attemptsWire.length,
-    candidateCount: isRecord(wire.changeset) && typeof wire.changeset.changeCount === 'number' ? wire.changeset.changeCount : null,
+    candidateCount,
     candidatePaths: isRecord(wire.changeset) ? asStringArray(wire.changeset.safePaths) : [],
-    verificationSummary: typeof verificationWire?.summary === 'string' ? verificationWire.summary : null,
-    interimVerdicts: mapInterimVerdicts(wire.interimVerdicts),
+    verificationSummary,
+    interimVerdicts,
     handoffs: mapHandoffs(wire.handoffs),
-    signals: mapSignals(wire.signals),
+    signals,
   }
 }
 

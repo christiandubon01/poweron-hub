@@ -7,6 +7,7 @@ import PlanReview from './PlanReview'
 import RunCommand from './RunCommand'
 import TowerWorkspace from './TowerWorkspace'
 import { isActiveSession } from './sessionPresentation'
+import { VerifierRejectionBanner } from './VerifierFailure'
 import { useControlTowerReal, type ScopeDraft } from '@/features/control-tower/useControlTowerReal'
 import { EMPTY_NEXT_RUN_ROUTING, loadNextRunRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
 
@@ -16,12 +17,19 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
   const [mode, setMode] = useState<'live' | 'preview'>('live')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [failureFocus, setFailureFocus] = useState(0)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [routing, setRouting] = useState<NextRunRouting>(() => loadNextRunRouting(null) ?? EMPTY_NEXT_RUN_ROUTING)
   useEffect(() => { setRouting(loadNextRunRouting(presence.repoKey)) }, [presence.repoKey])
   const run = runHistory.find(item => item.runId === selectedRunId) ?? runHistory.find(isActiveSession) ?? tower.run
   useEffect(() => { setSelectedRunId(null); setSelectedId(null) }, [tower.run?.runId])
   const selectRun = (id: string) => { setSelectedRunId(id); setSelectedId(null) }
+  const inspectFailure = () => {
+    if (!run) return
+    setSelectedRunId(run.runId)
+    setSelectedId(null)
+    setFailureFocus((value) => value + 1)
+  }
   const hostConnected = presence.state === 'connected'
   const submit = (input: ScopeDraft) => {
     setSubmitError(null)
@@ -66,8 +74,9 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
 
     {(phase === 'run' || phase === 'idle' || phase === 'unavailable') && <>
       {run ? <RunCommand run={run} scopeTitle={tower.scopePacks[0]?.title} scopePhase={tower.scopePacks[0] ? `${tower.scopePacks[0].currentPhaseTitle ?? tower.scopePacks[0].currentPhaseId ?? ''}`.trim() || null : null} actions={<>{newRun}{isActiveSession(run) && <button type="button" className="ct-secondary" disabled={busy} onClick={() => tower.cancelRun(run.runId).catch(error => setSubmitError(error instanceof Error ? error.message : String(error)))}>Cancel Run</button>}</>} /> : <section className="ct-idle-command"><div><span className="ct-eyebrow">Ready when you are</span><h2>Plan your next run</h2><p>{hostConnected ? 'Describe the work. Review the plan before execution.' : 'No local Host is connected for this repository.'}</p></div>{newRun}</section>}
-      {run && run.attention.length > 0 && <section className="ct-attention" aria-label="Owner attention">{run.attention.map(item => <div key={item.id}><AlertTriangle size={15} aria-hidden="true" /><span>{item.title}</span><button type="button" onClick={() => { setSelectedId(item.taskId ?? null); setSelectedRunId(run.runId) }}>Inspect</button><details className="ct-disclosure"><summary>Details</summary><p>{item.consequence}</p></details></div>)}</section>}
-      <TowerWorkspace run={run} sessions={runHistory} presence={presence} selectedTaskId={selectedId} onSelectRun={selectRun} onSelectTask={(runId, taskId) => { setSelectedRunId(runId); setSelectedId(taskId) }} routing={routing} onRoutingChange={setRouting} scopePack={tower.scopePackRows[0] ? rowToContract(tower.scopePackRows[0]) : null} scopePhaseId={tower.scopePackRows[0]?.current_phase_id} scopeStorage={tower.scopeStorage} preview={false} />
+      {run?.verification === 'rejected' && <VerifierRejectionBanner run={run} onInspect={inspectFailure} />}
+      {run && run.attention.some(item => item.kind !== 'verifier-rejected') && <section className="ct-attention" aria-label="Owner attention">{run.attention.filter(item => item.kind !== 'verifier-rejected').map(item => <div key={item.id}><AlertTriangle size={15} aria-hidden="true" /><span>{item.title}</span><button type="button" onClick={() => { setSelectedId(item.taskId ?? null); setSelectedRunId(run.runId) }}>Inspect</button><details className="ct-disclosure"><summary>Details</summary><p>{item.consequence}</p></details></div>)}</section>}
+      <TowerWorkspace run={run} sessions={runHistory} presence={presence} selectedTaskId={selectedId} failureFocus={failureFocus} onSelectRun={selectRun} onSelectTask={(runId, taskId) => { setSelectedRunId(runId); setSelectedId(taskId) }} routing={routing} onRoutingChange={setRouting} scopePack={tower.scopePackRows[0] ? rowToContract(tower.scopePackRows[0]) : null} scopePhaseId={tower.scopePackRows[0]?.current_phase_id} scopeStorage={tower.scopeStorage} preview={false} />
     </>}
   </main></div>
 }

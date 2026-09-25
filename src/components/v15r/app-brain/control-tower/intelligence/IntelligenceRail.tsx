@@ -23,7 +23,7 @@ const MODE_LABEL: Record<IntelligenceMode, string> = {
 }
 
 export default function IntelligenceRail({
-  run, presence, task, nodeId, team, selectedRoleId, onClear, onSelectRole, onSelectNode,
+  run, presence, task, nodeId, team, selectedRoleId, onClear, onSelectRole, onSelectNode, onViewFailure,
   mode, onModeChange, routing, onRoutingChange, scopePack, scopePhaseId, scopeStorage, preview,
 }: {
   run: TowerSession | null
@@ -35,6 +35,7 @@ export default function IntelligenceRail({
   onClear: () => void
   onSelectRole: (role: TeamRoleId | null) => void
   onSelectNode: (id: string | null) => void
+  onViewFailure?: () => void
   mode: IntelligenceMode
   onModeChange: (mode: IntelligenceMode) => void
   routing: NextRunRouting
@@ -55,7 +56,8 @@ export default function IntelligenceRail({
     onModeChange(INTELLIGENCE_MODES[next])
     setFocusIndex(next)
   }
-  const title = roleNode && mode === 'team' ? 'Team detail' : nodeSelected && mode === 'team' ? 'Architecture detail' : task && mode === 'team' ? 'Task detail' : 'Intelligence'
+  const verifierFailure = mode === 'team' && selectedRoleId === 'verifier' && run?.verification === 'rejected'
+  const title = verifierFailure ? 'Verifier failure' : roleNode && mode === 'team' ? 'Team detail' : nodeSelected && mode === 'team' ? 'Architecture detail' : task && mode === 'team' ? 'Task detail' : 'Intelligence'
   return <TowerPanel title={title} className="ct-intelligence ct-inspector" action={<Cpu size={16} aria-hidden="true" />}>
     <div className="ct-intel-tabs" role="tablist" aria-label="Intelligence modes" onKeyDown={onTabKey}>
       {INTELLIGENCE_MODES.map((item, index) => (
@@ -74,7 +76,7 @@ export default function IntelligenceRail({
     </div>
     <div className="ct-intelligence-body" id={`ct-intel-panel-${mode}`} role="tabpanel" aria-labelledby={`ct-intel-tab-${mode}`}>
       {(roleNode || nodeSelected || task) && mode === 'team' && <button type="button" className="ct-intelligence-back" onClick={onClear}><ArrowLeft size={14} aria-hidden="true" />Intelligence</button>}
-      {mode === 'team' && <TeamMode run={run} task={task} nodeId={nodeId} team={team ?? null} selectedRoleId={selectedRoleId ?? null} onSelectRole={onSelectRole} />}
+      {mode === 'team' && <TeamMode run={run} task={task} nodeId={nodeId} team={team ?? null} selectedRoleId={selectedRoleId ?? null} onSelectRole={onSelectRole} onViewFailure={onViewFailure} />}
       {mode === 'models' && <ModelsMode presence={presence} routing={routing} onRoutingChange={onRoutingChange} preview={preview} />}
       {mode === 'signals' && <SignalsMode run={run} onSelectRole={onSelectRole} onSelectNode={onSelectNode} />}
       {mode === 'scope' && <ScopeMode pack={scopePack} selectedPhaseId={scopePhaseId} storage={scopeStorage} preview={preview} />}

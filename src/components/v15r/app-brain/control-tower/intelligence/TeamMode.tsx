@@ -1,7 +1,9 @@
 import { Cpu, Gauge, ShieldCheck } from 'lucide-react'
 import { getAppBrainNode } from '../../../appBrainMap'
 import { CT_ROLES, ProviderModelBadge, TaskStatus } from '../ControlTowerPrimitives'
-import { conciseTime, roleResult, sessionDuration, type TowerSession } from '../sessionPresentation'
+import { conciseTime, executionRejectedByVerifier, roleResult, sessionDuration, type TowerSession } from '../sessionPresentation'
+import { VerifierFailureDetail } from '../VerifierFailure'
+import { diagnosticVerifierSummary, taskProducedVerifierFailure, verifierFailureDiagnostics } from '@/features/control-tower/verifierFailure'
 import { TEAM_ROLE_LABEL, teamNodeByRole, type AgentTeamTopology, type TeamRoleId, type TeamRoleNode } from '../agentTeamTopology'
 import type { PreviewTask } from '../controlTowerTypes'
 
@@ -11,6 +13,7 @@ const VERDICT_ACTION: Record<string, string> = {
 }
 
 function TeamRoleDetail({ roleNode, team, run }: { roleNode: TeamRoleNode; team: AgentTeamTopology; run: TowerSession | null }) {
+  const leadFailure = roleNode.role === 'verifier' && run?.verification === 'rejected'
   const node = roleNode
   const handoffHistory = team.edges
     .filter((edge) => edge.from === node.role || edge.to === node.role)
@@ -18,6 +21,7 @@ function TeamRoleDetail({ roleNode, team, run }: { roleNode: TeamRoleNode; team:
     .reverse()
     .slice(0, 6)
   return <>
+    {leadFailure && run && <VerifierFailureDetail run={run} />}
     <section className="ct-intelligence-section"><span className="ct-eyebrow">{node.deterministic ? 'Deterministic orchestration' : 'Model-backed role'}</span>
       <h3>{node.label} · {node.state.replace('_', ' ').toLowerCase()}</h3>
       <p>{node.deterministic
@@ -55,13 +59,13 @@ function TeamRoleDetail({ roleNode, team, run }: { roleNode: TeamRoleNode; team:
     <section className="ct-intelligence-section"><h4>Latest interim verdict</h4>
       {node.verdict ? <div className="ct-team-verdict-detail">
         <span className={`ct-team-verdict ct-team-verdict--${node.verdict.state.toLowerCase().replace('_', '-')}`}>{node.verdict.state}</span>
-        <p>{node.verdict.summary || 'No summary published.'}</p>
+        {!leadFailure && <p>{diagnosticVerifierSummary(node.verdict.summary) ?? (node.verdict.state === 'FAIL' ? 'No verifier summary was recorded for this run.' : (node.verdict.summary || 'No summary published.'))}</p>}
         <dl className="ct-facts">
           <div><dt>Severity</dt><dd>{node.verdict.severity}</dd></div>
           <div><dt>Recommended action</dt><dd>{VERDICT_ACTION[node.verdict.recommendedAction] ?? node.verdict.recommendedAction}</dd></div>
           <div><dt>May continue</dt><dd>{node.verdict.mayContinue ? 'Yes' : 'No'}</dd></div>
-          {node.verdict.state === 'FAIL' && node.verdict.failedChecks && node.verdict.failedChecks.length > 0 && <div><dt>Failed checks</dt><dd><ul className="ct-team-failed-checks">{node.verdict.failedChecks.map((check, index) => <li key={`${index}-${check}`}>{check}</li>)}</ul></dd></div>}
-          <div><dt>Evidence</dt><dd>{node.verdict.evidenceCount} {node.verdict.evidenceCount === 1 ? 'reference' : 'references'}{node.verdict.state === 'FAIL' && node.verdict.evidenceRefs.length > 0 && <ul className="ct-team-evidence-refs">{node.verdict.evidenceRefs.map((ref, index) => <li key={`${index}-${ref}`}><code>{ref}</code></li>)}</ul>}</dd></div>
+          {!leadFailure && node.verdict.state === 'FAIL' && node.verdict.failedChecks && node.verdict.failedChecks.length > 0 && <div><dt>Failed checks</dt><dd><ul className="ct-team-failed-checks">{node.verdict.failedChecks.map((check, index) => <li key={`${index}-${check}`}>{check}</li>)}</ul></dd></div>}
+          {!leadFailure && <div><dt>Evidence</dt><dd>{node.verdict.evidenceCount} {node.verdict.evidenceCount === 1 ? 'reference' : 'references'}{node.verdict.state === 'FAIL' && node.verdict.evidenceRefs.length > 0 && <ul className="ct-team-evidence-refs">{node.verdict.evidenceRefs.map((ref, index) => <li key={`${index}-${ref}`}><code>{ref}</code></li>)}</ul>}</dd></div>}
           <div><dt>Timestamp</dt><dd>{conciseTime(node.verdict.timestamp)}</dd></div>
         </dl>
       </div> : <p className="ct-muted">No interim verdict published for this role.</p>}
@@ -113,18 +117,21 @@ function TeamOverview({ team, onSelect }: { team: AgentTeamTopology; onSelect: (
   </ul>
 }
 
-export default function TeamMode({ run, task, nodeId, team, selectedRoleId, onSelectRole }: {
+export default function TeamMode({ run, task, nodeId, team, selectedRoleId, onSelectRole, onViewFailure }: {
   run: TowerSession | null
   task: PreviewTask | null
   nodeId: string | null
   team: AgentTeamTopology | null
   selectedRoleId: TeamRoleId | null
   onSelectRole: (role: TeamRoleId | null) => void
+  onViewFailure?: () => void
 }) {
   const node = getAppBrainNode(nodeId)
   const roleNode = team && selectedRoleId ? teamNodeByRole(team, selectedRoleId) : null
   const active = run?.runState === 'running' ? run.tasks.find(item => item.state === 'running') : null
   const relevant = task ?? active ?? run?.tasks.find(item => item.role === run.currentRole)
+  const failure = run ? verifierFailureDiagnostics(run) : null
+  const showExecutionSplit = Boolean(task && run && failure && taskProducedVerifierFailure(task, failure) && failure.execution === 'passed')
   if (roleNode && team) return <TeamRoleDetail roleNode={roleNode} team={team} run={run} />
   if (node) return <>
     <section className="ct-intelligence-section"><span className="ct-eyebrow">{node.ownerArea}</span><h3>{node.label}</h3><p>{node.description}</p></section>
@@ -133,7 +140,7 @@ export default function TeamMode({ run, task, nodeId, team, selectedRoleId, onSe
     <p className="ct-muted">Architecture relationships describe the app. Activity is shown only when published planned areas match.</p>
   </>
   return <>
-    {task && <section className="ct-intelligence-section"><h3>{task.title}</h3><TaskStatus state={task.state} freshness={run?.provenance === 'Preview' ? 'Snapshot' : 'Last reported'} /><p>{task.detail}</p><p>{task.attempt}</p><details className="ct-disclosure"><summary>Dependencies &amp; model evidence</summary><p>{task.dependencies}</p><ProviderModelBadge identity={task.requested} /><ProviderModelBadge identity={task.reported} /><p>Requested configuration is never reported as the model used.</p></details></section>}
+    {task && <section className="ct-intelligence-section"><h3>{task.title}</h3>{showExecutionSplit ? <div className="ct-verifier-task-truth"><p className="ct-verifier-execution">Execution attempt: Passed</p><p className="ct-verifier-verdict-fail">Verification verdict: FAIL</p>{onViewFailure && <button type="button" onClick={onViewFailure}>View failure evidence</button>}</div> : <><TaskStatus state={task.state} freshness={run?.provenance === 'Preview' ? 'Snapshot' : 'Last reported'} /><p>{task.attempt}</p></>}<p>{task.detail}</p><details className="ct-disclosure"><summary>Dependencies &amp; model evidence</summary><p>{task.dependencies}</p><ProviderModelBadge identity={task.requested} /><ProviderModelBadge identity={task.reported} /><p>Requested configuration is never reported as the model used.</p></details></section>}
     <section className="ct-intelligence-section ct-ai-identity">
       <div className="ct-ai-symbol"><Cpu size={21} aria-hidden="true" /></div>
       <div>
@@ -146,7 +153,8 @@ export default function TeamMode({ run, task, nodeId, team, selectedRoleId, onSe
     <section className="ct-intelligence-section"><h4>Role / model routing</h4><div className="ct-routing">{CT_ROLES.map(role => {
       const roleTasks = run?.tasks.filter(item => item.role === role) ?? []
       const models = [...new Set(roleTasks.map(item => item.requested.state === 'requested' ? item.requested.model : null).filter(Boolean))]
-      return <div key={role}><span><b>{role}</b>{models.length > 0 && <small>Requested · {models.join(', ')}</small>}</span><span className={`ct-result-${run ? roleResult(run, role).toLowerCase() : ''}`}>{run ? roleResult(run, role) : '—'}</span></div>
+      const result = !run ? '—' : role === 'Verifier' && executionRejectedByVerifier(run) ? 'Verification verdict: FAIL' : roleResult(run, role)
+      return <div key={role}><span><b>{role}</b>{models.length > 0 && <small>Requested · {models.join(', ')}</small>}</span><span className={`ct-result-${run ? roleResult(run, role).toLowerCase() : ''}`}>{result}</span></div>
     })}</div></section>
     {run && <section className="ct-intelligence-section"><h4><Gauge size={15} aria-hidden="true" />Session stats</h4><dl className="ct-stats"><div><dt>Passed / tasks</dt><dd>{run.tasks.filter(item => item.state === 'passed').length}<small> / {run.tasks.length}</small></dd></div><div><dt>Attempts</dt><dd>{run.attemptCount ?? '—'}</dd></div><div><dt>Elapsed</dt><dd>{sessionDuration(run) ?? '—'}</dd></div><div><dt>Candidate files</dt><dd>{run.candidateCount ?? '—'}</dd></div></dl></section>}
   </>
