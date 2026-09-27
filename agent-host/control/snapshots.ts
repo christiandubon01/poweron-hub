@@ -120,14 +120,24 @@ export function buildRunSnapshot(options: {
   const attempts: SnapshotAttempt[] = [];
   for (const task of tasks) {
     for (const attempt of store.listAttempts(task.taskId)) {
+      const model = attemptModel(events, attempt.attemptId);
+      const terminal = attemptTerminal(events, attempt.attemptId, attempt.startedAt);
       attempts.push({
         attemptId: attempt.attemptId,
         taskId: task.taskId,
         ordinal: attempt.ordinal,
         status: attempt.status,
-        requestedModel: attemptModel(events, attempt.attemptId).requestedModel,
-        reportedModel: attemptModel(events, attempt.attemptId).reportedModel,
-        reportedModelSource: attemptModel(events, attempt.attemptId).reportedModelSource,
+        requestedModel: model.requestedModel,
+        reportedModel: model.reportedModel,
+        reportedModelSource: model.reportedModelSource,
+        startedAt: terminal.startedAt,
+        terminalErrorCode: terminal.terminalErrorCode,
+        terminalErrorMessage: terminal.terminalErrorMessage,
+        elapsedMs: terminal.elapsedMs,
+        lastActivityAt: terminal.lastActivityAt,
+        limitFired: terminal.limitFired,
+        limitMs: terminal.limitMs,
+        changedFileCount: terminal.changedFileCount,
       });
     }
   }
@@ -265,14 +275,57 @@ interface AttemptModelInfo {
   reportedModelSource: string | null;
 }
 
+const TERMINAL_EXECUTION_TYPES = new Set([
+  'execution.completed',
+  'execution.failed',
+  'execution.timed_out',
+  'execution.cancelled',
+]);
+
+function latestAttemptEvent(
+  events: OrchestrationEventRecord[],
+  attemptId: string,
+  types: ReadonlySet<string>,
+): OrchestrationEventRecord | null {
+  let best: OrchestrationEventRecord | null = null;
+  for (const event of events) {
+    if (event.attemptId !== attemptId || !types.has(event.type)) continue;
+    if (!best || event.seq > best.seq) best = event;
+  }
+  return best;
+}
+
 function attemptModel(events: OrchestrationEventRecord[], attemptId: string): AttemptModelInfo {
-  const terminal = events.find(
-    (event) => event.attemptId === attemptId && (event.type === 'execution.completed' || event.type === 'execution.failed' || event.type === 'execution.timed_out' || event.type === 'execution.cancelled'),
-  );
+  const terminal = latestAttemptEvent(events, attemptId, TERMINAL_EXECUTION_TYPES);
   const payload = (terminal?.payload ?? null) as Record<string, unknown> | null;
   return {
     requestedModel: typeof payload?.requestedModel === 'string' ? payload.requestedModel : null,
     reportedModel: typeof payload?.reportedModel === 'string' ? payload.reportedModel : null,
     reportedModelSource: typeof payload?.reportedModelSource === 'string' ? payload.reportedModelSource : null,
+  };
+}
+
+function attemptTerminal(
+  events: OrchestrationEventRecord[],
+  attemptId: string,
+  attemptStartedAt: string | null,
+): { startedAt: string | null; terminalErrorCode: string | null; terminalErrorMessage: string | null; elapsedMs: number | null; lastActivityAt: string | null; limitFired: 'startup' | 'inactivity' | 'ceiling' | 'none'; limitMs: number | null; changedFileCount: number | null } {
+  const started = latestAttemptEvent(events, attemptId, new Set(['execution.started']));
+  const terminal = latestAttemptEvent(events, attemptId, TERMINAL_EXECUTION_TYPES);
+  const payload = (terminal?.payload ?? null) as Record<string, unknown> | null;
+  const evidence = latestAttemptEvent(events, attemptId, new Set(['execution.failure_evidence', 'execution.persistence.failed']));
+  const detail = (evidence?.payload ?? null) as Record<string, unknown> | null;
+  const errorCode = typeof detail?.errorCode === 'string' ? detail.errorCode.slice(0, 128) : typeof payload?.errorCode === 'string' ? payload.errorCode.slice(0, 128) : null;
+  const errorMessage = typeof payload?.errorMessage === 'string' ? payload.errorMessage.slice(0, 512) : null;
+  const limitFired = detail?.limitFired;
+  return {
+    startedAt: started?.createdAt ?? attemptStartedAt,
+    terminalErrorCode: errorCode,
+    terminalErrorMessage: errorMessage,
+    elapsedMs: typeof detail?.elapsedMs === 'number' ? detail.elapsedMs : typeof payload?.durationMs === 'number' ? payload.durationMs : null,
+    lastActivityAt: typeof detail?.lastActivityAt === 'string' ? detail.lastActivityAt : null,
+    limitFired: limitFired === 'startup' || limitFired === 'inactivity' || limitFired === 'ceiling' ? limitFired : 'none',
+    limitMs: typeof detail?.limitMs === 'number' ? detail.limitMs : null,
+    changedFileCount: typeof detail?.changedFileCount === 'number' ? detail.changedFileCount : null,
   };
 }

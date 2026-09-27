@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { createClient } from '@supabase/supabase-js'
 import { fileURLToPath } from 'url'
 import path from 'path'
+import { computeAgentHostSourceFingerprint } from './agent-host/hostSourceFingerprint.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -118,6 +119,25 @@ function claudeDevProxy(env) {
   }
 }
 
+function agentHostSourceFingerprintPlugin() {
+  return {
+    name: 'agent-host-source-fingerprint',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.split('?')[0] !== '/__agent-host-source-fingerprint') {
+          next()
+          return
+        }
+        const fingerprint = computeAgentHostSourceFingerprint(process.cwd())
+        res.statusCode = 200
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'no-store')
+        res.end(JSON.stringify({ fingerprint }))
+      })
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   // loadEnv with an empty prefix reads ALL env vars (including non-VITE_
@@ -126,7 +146,7 @@ export default defineConfig(({ mode }) => {
   // vars reach import.meta.env. The key stays in the Node dev process.
   const env = loadEnv(mode, process.cwd(), '')
   return {
-    plugins: [react(), claudeDevProxy(env)],
+    plugins: [react(), claudeDevProxy(env), agentHostSourceFingerprintPlugin()],
   // SEC1 — SERVER-ONLY SECRETS MUST NOT REACH THE CLIENT BUNDLE.
   //
   // zustand 4.5.x guards its dev warnings with

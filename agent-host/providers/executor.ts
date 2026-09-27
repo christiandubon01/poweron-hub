@@ -11,9 +11,15 @@ import {
   type AttemptPolicyController,
 } from '../policy/policy.ts';
 import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.ts';
-import { adjudicateAttemptWorkspace, createWorkspacePolicyBaseline, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, writeCandidateChangeIndex, type AttemptWorkspace } from '../workspace.ts';
+import { adjudicateAttemptWorkspace, captureWorkspaceTree, createWorkspacePolicyBaseline, describeWorkspaceDelta, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, writeCandidateChangeIndex, type AttemptWorkspace } from '../workspace.ts';
+import {
+  absoluteTimeoutMessage,
+  isProviderTimeoutErrorCode,
+  LEGACY_FIXED_EXECUTION_LIMIT_MS,
+  providerExecutionTimeouts,
+} from './executionLimits.ts';
 
-const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_EXECUTION_TIMEOUT_MS = LEGACY_FIXED_EXECUTION_LIMIT_MS;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 /**
  * Executor-owned hard-timeout grace (ms). The provider adapter/ProcessRunner
@@ -24,11 +30,11 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
  * otherwise leave `await adapter.execute(...)` pending forever, so the Attempt
  * stays `running` and the Supervisor never regains control.
  *
- * This grace is added to the request timeout to form an INDEPENDENT hard upper
- * bound on provider execution. It must exceed the runner's own cancel-grace plus
- * post-kill settlement window (see processRunner.ts) so that in the normal case a
- * clean runner-level timeout result still flows through first and this backstop
- * only fires on a genuine hang.
+ * This grace is added to the absolute safety ceiling to form an INDEPENDENT hard
+ * upper bound on provider execution. It must exceed the runner's own cancel-grace
+ * plus post-kill settlement window (see processRunner.ts) so that in the normal
+ * case a clean runner-level timeout result still flows through first and this
+ * backstop only fires on a genuine hang. It is not the legacy 10-minute budget.
  */
 const DEFAULT_EXECUTION_HARD_GRACE_MS = 30_000;
 const STRING_FIELD_LIMIT = 512;
@@ -113,8 +119,13 @@ export interface AttemptExecutorDependencies {
   idGenerator?: (() => string) | undefined;
   defaultTimeoutMs?: number | undefined;
   /**
-   * Extra grace added to the request timeout to form the executor-owned hard
-   * upper bound on provider execution. Test seam only; production uses
+   * Absolute safety ceiling for the executor backstop. Test seam only;
+   * production uses {@link PROVIDER_ABSOLUTE_SAFETY_CEILING_MS}.
+   */
+  absoluteSafetyCeilingMs?: number | undefined;
+  /**
+   * Extra grace added to the absolute safety ceiling to form the executor-owned
+   * hard upper bound on provider execution. Test seam only; production uses
    * {@link DEFAULT_EXECUTION_HARD_GRACE_MS}.
    */
   executionHardGraceMs?: number | undefined;
@@ -135,6 +146,7 @@ export class AttemptExecutor {
   private readonly now: () => Date;
   private readonly idGenerator: () => string;
   private readonly defaultTimeoutMs: number;
+  private readonly absoluteSafetyCeilingMs: number;
   private readonly executionHardGraceMs: number;
   private readonly shutdownTimeoutMs: number;
   private readonly policyController: AttemptPolicyController;
@@ -150,6 +162,7 @@ export class AttemptExecutor {
     this.now = dependencies.now ?? (() => new Date());
     this.idGenerator = dependencies.idGenerator ?? globalThis.crypto.randomUUID.bind(globalThis.crypto);
     this.defaultTimeoutMs = dependencies.defaultTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
+    this.absoluteSafetyCeilingMs = dependencies.absoluteSafetyCeilingMs ?? providerExecutionTimeouts().overallTimeoutMs;
     this.executionHardGraceMs = dependencies.executionHardGraceMs ?? DEFAULT_EXECUTION_HARD_GRACE_MS;
     this.shutdownTimeoutMs = dependencies.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.policyController = dependencies.policyController ?? createAttemptPolicyController();
@@ -238,9 +251,10 @@ export class AttemptExecutor {
     let terminalEvent: OrchestrationEventRecord | null = null;
     let providerResult: ExecutionResult | undefined;
     let policyBaseline: PolicyBaselineCapture | undefined;
+    let changedFileCount: number | null = null;
+    let workspace: AttemptWorkspace | undefined;
 
     try {
-      let workspace: AttemptWorkspace | undefined;
       let executionInput = input;
       if (input.permissionProfile === 'task-implementer') {
         if (!this.workspaceConfig) {
@@ -274,6 +288,16 @@ export class AttemptExecutor {
               .filter((dependency) => dependency.taskId === input.taskId)
               .map((dependency) => dependency.dependsOnTaskId),
             events: this.store.listEvents().filter((event) => event.runId === input.runId),
+            isPassedAttempt: (attemptId, taskId) => {
+              const sourceAttempt = this.store.getAttempt(attemptId);
+              const sourceTask = sourceAttempt && this.store.getTask(sourceAttempt.taskId);
+              const spec = sourceTask?.spec;
+              const plan = spec && typeof spec === 'object' && !Array.isArray(spec)
+                ? (spec as Record<string, unknown>).plan : null;
+              return sourceAttempt?.status === 'passed' && sourceAttempt.taskId === taskId
+                && !!plan && typeof plan === 'object' && !Array.isArray(plan)
+                && (plan as Record<string, unknown>).role === 'implementer';
+            },
           });
           if (!candidate) {
             return await this.finishWorkspacePreparationFailure(input, context, startedAt, workspaceId);
@@ -320,9 +344,23 @@ export class AttemptExecutor {
       const workspaceAdjudication = workspace
         ? await adjudicateAttemptWorkspace({ workspace, runId: input.runId, task: context.task, attemptId: input.attemptId, permissionProfile: input.permissionProfile })
         : undefined;
+      changedFileCount = workspaceAdjudication?.changedFileCount ?? 0;
       const policy = workspaceAdjudication?.policy ?? await this.adjudicatePolicy(input, policyBaseline);
       this.persistPolicyEvent(input, policy);
       const terminalAttemptStatus = resolveEffectiveAttemptStatus(providerResult, policy);
+      if (terminalAttemptStatus === 'failed') {
+        // The terminal event stays in its established order. This follow-up is
+        // written only after the dead process's final workspace tree is read.
+        this.persistWorkspaceEvent(input, 'execution.failure_evidence', {
+          errorCode: providerResult.provider.errorCode ?? 'POLICY_REJECTED',
+          elapsedMs: durationMs,
+          lastActivityAt: providerResult.lifecycle?.lastActivityAt ?? null,
+          limitFired: providerResult.lifecycle?.limitFired ?? 'none',
+          limitMs: providerResult.lifecycle?.limitMs ?? null,
+          changedFileCount: workspaceAdjudication?.changedFileCount ?? 0,
+          sessionId: sanitizeOptional(providerResult.session.sessionId, 256) ?? null,
+        });
+      }
       if (workspace) {
         this.persistWorkspaceEvent(input, 'workspace.adjudication.completed', { workspaceId: workspace.workspaceId, policyAccepted: policy.accepted, workspaceState: policy.accepted ? 'accepted' : 'rejected' });
         if (
@@ -375,7 +413,15 @@ export class AttemptExecutor {
       if (error instanceof AttemptExecutorError && error.code === 'ATTEMPT_TRANSITION_FAILED') {
         throw error;
       }
-      return this.finishExecutionAttemptFailure(input, context, request, startedEvent, terminalEvent, providerResult, policyBaseline, error);
+      if (workspace && changedFileCount === null) {
+        try {
+          const finalTree = await captureWorkspaceTree(workspace.workspacePath);
+          changedFileCount = describeWorkspaceDelta(workspace.baselineHeadSha, workspace.baselineTree, finalTree).length;
+        } catch {
+          // Preserve null rather than inventing a count when inspection fails.
+        }
+      }
+      return this.finishExecutionAttemptFailure(input, context, request, startedEvent, terminalEvent, providerResult, policyBaseline, startedAt, changedFileCount, error);
     } finally {
       this.activeExecutions.delete(input.attemptId);
     }
@@ -390,6 +436,11 @@ export class AttemptExecutor {
    * (a Windows grandchild suppressing `close`, a stream/decoder promise that
    * stays open, or any adapter lacking robust timers), the Attempt would remain
    * `running` forever and the Supervisor would never regain control.
+   *
+   * The deadline is the absolute safety ceiling plus grace, not the legacy
+   * 10-minute task budget. Inactivity is enforced by ProcessRunner from parsed
+   * events and workspace writes. This backstop cannot see that activity, so it only stops a
+   * provider that has reached the ceiling without settling.
    *
    * When the hard deadline expires this method:
    *   1. terminates the spawned provider process AND its tree through the EXISTING
@@ -416,7 +467,7 @@ export class AttemptExecutor {
       return await providerPromise;
     }
 
-    const hardDeadlineMs = resolveHardDeadlineMs(request.timeoutMs, this.defaultTimeoutMs, this.executionHardGraceMs);
+    const hardDeadlineMs = resolveHardDeadlineMs(this.absoluteSafetyCeilingMs, this.executionHardGraceMs);
 
     return await new Promise<ExecutionResult>((resolve) => {
       let settled = false;
@@ -441,7 +492,7 @@ export class AttemptExecutor {
           // Best-effort process-tree termination; the hard timeout result stands
           // even if the adapter cannot be signalled.
         }
-        finish(buildProviderTimeoutResult(request));
+        finish(buildProviderTimeoutResult(request, this.absoluteSafetyCeilingMs));
       }, hardDeadlineMs);
 
       providerPromise.then(
@@ -512,6 +563,8 @@ export class AttemptExecutor {
     terminalEvent: OrchestrationEventRecord | null,
     providerResult: ExecutionResult | undefined,
     policyBaseline: PolicyBaselineCapture | undefined,
+    startedAt: Date,
+    changedFileCount: number | null,
     error: unknown,
   ): AttemptExecutionOutcome {
     const effectiveRequest = request ?? buildExecutionRequest(input, this.defaultTimeoutMs);
@@ -542,6 +595,12 @@ export class AttemptExecutor {
             redactCredentialShapes(error instanceof Error ? error.message : String(error)),
             STRING_FIELD_LIMIT,
           ),
+          elapsedMs: Math.max(0, this.now().getTime() - startedAt.getTime()),
+          lastActivityAt: result.lifecycle?.lastActivityAt ?? null,
+          limitFired: result.lifecycle?.limitFired ?? 'none',
+          limitMs: result.lifecycle?.limitMs ?? null,
+          changedFileCount,
+          sessionId: sanitizeOptional(result.session.sessionId, 256) ?? null,
         },
       });
     } catch {
@@ -577,7 +636,9 @@ export class AttemptExecutor {
   private async finishWorkspacePreparationFailure(input: AttemptExecutionInput, context: AttemptContext, startedAt: Date, workspaceId: string): Promise<AttemptExecutionOutcome> {
     const request = buildExecutionRequest(input, this.defaultTimeoutMs);
     const result = buildProviderUnavailableResult(request, 'Isolated workspace preparation failed; provider was not launched.', 'PROCESS_SPAWN_FAILED');
-    const terminalEvent = this.persistTerminalEvent(input, result, 'execution.failed', Math.max(0, this.now().getTime() - startedAt.getTime()));
+    const elapsedMs = Math.max(0, this.now().getTime() - startedAt.getTime());
+    const terminalEvent = this.persistTerminalEvent(input, result, 'execution.failed', elapsedMs);
+    this.persistWorkspaceEvent(input, 'execution.failure_evidence', { errorCode: 'PROCESS_SPAWN_FAILED', elapsedMs, lastActivityAt: null, limitFired: 'none', limitMs: null, changedFileCount: 0, sessionId: null });
     const policy: PolicyAdjudication = { decision: 'deny', accepted: false, reasonCodes: ['out-of-scope-write'], reason: 'Workspace preparation failed closed.', baselineHeadSha: 'workspace-unavailable', finalHeadSha: 'workspace-unavailable', headMoved: false, changes: [] };
     this.persistWorkspaceEvent(input, 'workspace.preparation.failed', { workspaceId, workspaceState: 'rejected' });
     this.persistPolicyEvent(input, policy);
@@ -888,7 +949,7 @@ function mapTerminalEventType(result: ExecutionResult): 'execution.completed' | 
   if (result.process.cancelled || result.provider.errorCode === 'EXECUTION_CANCELLED') {
     return 'execution.cancelled';
   }
-  if (result.process.timedOut || result.provider.errorCode === 'EXECUTION_TIMEOUT') {
+  if (result.process.timedOut || isProviderTimeoutErrorCode(result.provider.errorCode)) {
     return 'execution.timed_out';
   }
   return 'execution.failed';
@@ -1017,13 +1078,15 @@ function buildProviderUnavailableResult(
 }
 
 /**
- * Compute the executor-owned hard deadline: the request timeout plus the grace.
- * A non-finite or non-positive request timeout falls back to the executor
- * default so the backstop can never be armed with an immediate or invalid delay.
+ * Executor backstop: the absolute safety ceiling plus grace. A non-finite or
+ * non-positive ceiling falls back to the centralized ceiling so the backstop
+ * can never be armed with an immediate or invalid delay.
  */
-function resolveHardDeadlineMs(timeoutMs: number, defaultTimeoutMs: number, graceMs: number): number {
-  const base = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : defaultTimeoutMs;
-  return base + graceMs;
+function resolveHardDeadlineMs(absoluteCeilingMs: number, graceMs: number): number {
+  const ceiling = Number.isFinite(absoluteCeilingMs) && absoluteCeilingMs > 0
+    ? absoluteCeilingMs
+    : providerExecutionTimeouts().overallTimeoutMs;
+  return ceiling + graceMs;
 }
 
 /**
@@ -1032,7 +1095,7 @@ function resolveHardDeadlineMs(timeoutMs: number, defaultTimeoutMs: number, grac
  * terminal event to `execution.timed_out` and the durable classification to the
  * retryable `execution-timeout` cause; `reportedModel` is never fabricated.
  */
-function buildProviderTimeoutResult(request: ExecutionRequest): ExecutionResult {
+function buildProviderTimeoutResult(request: ExecutionRequest, ceilingMs: number): ExecutionResult {
   return {
     executionId: request.executionId,
     process: {
@@ -1044,8 +1107,8 @@ function buildProviderTimeoutResult(request: ExecutionRequest): ExecutionResult 
     provider: {
       terminalState: 'failed',
       success: false,
-      errorCode: 'EXECUTION_TIMEOUT',
-      errorMessage: 'Provider execution exceeded the hard timeout bound before returning a terminal result.',
+      errorCode: 'PROVIDER_ABSOLUTE_TIMEOUT',
+      errorMessage: absoluteTimeoutMessage(),
     },
     model: {
       requestedModel: request.requestedModel ?? null,
@@ -1057,6 +1120,7 @@ function buildProviderTimeoutResult(request: ExecutionRequest): ExecutionResult 
     },
     session: {},
     output: {},
+    lifecycle: { lastActivityAt: null, limitFired: 'ceiling', limitMs: ceilingMs },
   };
 }
 

@@ -196,17 +196,18 @@ export interface ImplementerCandidateWorkspace {
   sourceAttemptId: string;
 }
 
-/** Latest accepted implementer workspace among the verifier's dependencies. */
+/** Latest passed implementer workspace among the verifier's dependencies. */
 export function resolveImplementerCandidateWorkspace(options: {
   workspaceRoot: string;
   repoKey: string;
   runId: string;
   dependencyTaskIds: readonly string[];
   events: readonly Pick<OrchestrationEventRecord, 'seq' | 'taskId' | 'attemptId' | 'type' | 'payload'>[];
+  isPassedAttempt: (attemptId: string, taskId: string) => boolean;
 }): ImplementerCandidateWorkspace | null {
   const dependencies = new Set(options.dependencyTaskIds);
   const relevant = options.events
-    .filter((event) => event.taskId !== null && event.attemptId !== null && dependencies.has(event.taskId))
+    .filter((event) => event.taskId !== null && event.attemptId !== null && dependencies.has(event.taskId) && options.isPassedAttempt(event.attemptId, event.taskId))
     .slice()
     .sort((left, right) => left.seq - right.seq);
   const ready = relevant.filter((event) => event.type === 'workspace.changeset.ready');
@@ -255,13 +256,14 @@ export async function adjudicateAttemptWorkspace(options: {
   task: TaskRecord;
   attemptId: string;
   permissionProfile: PermissionProfile;
-}): Promise<{ policy: PolicyAdjudication; changeSet: WorkspaceChangeSet | null }> {
+}): Promise<{ policy: PolicyAdjudication; changeSet: WorkspaceChangeSet | null; changedFileCount: number }> {
   const finalTree = await captureWorkspaceTree(options.workspace.workspacePath);
   const finalSnapshot = buildWorkspaceSnapshot(options.workspace.baselineHeadSha, options.workspace.baselineTree, finalTree);
   const baseline = createWorkspacePolicyBaseline(options);
   const policy = adjudicateRepoPolicy({ baseline, finalSnapshot });
   return {
     policy,
+    changedFileCount: finalSnapshot.entries.length,
     changeSet: policy.accepted ? buildWorkspaceChangeSet(options.workspace, finalTree) : null,
   };
 }

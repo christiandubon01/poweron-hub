@@ -28,7 +28,7 @@ export default function SessionHistory({ sessions, selected, onSelect, onTask }:
           <span className="ct-session-results">{CT_ROLES.map(role => <span key={role} title={`${role}: ${roleResult(run, role)}`}><b>{role.slice(0, 1)}</b><span className={`ct-result-${roleResult(run, role).toLowerCase().replace(' ', '-')}`}>{roleResult(run, role)}</span></span>)}</span>
           <span className="ct-session-meta"><span>{executionRejectedByVerifier(run) ? `${run.tasks.length} tasks executed` : `${run.tasks.filter(task => task.state === 'passed').length}/${run.tasks.length} passed${run.tasks.some(task => task.state === 'failed') ? ` · ${run.tasks.filter(task => task.state === 'failed').length} failed` : ''}`}</span><span>{sessionDuration(run)}</span></span>
           {executionRejectedByVerifier(run) && <span className="ct-failure-summary">Verification failed · {run.tasks.length} tasks executed · Candidate rejected</span>}
-          {run.runState === 'failed' && <span className="ct-failure-summary">{run.tasks.find(task => task.state === 'failed')?.role ?? 'Run'} · {run.verificationSummary || run.tasks.find(task => task.state === 'failed')?.title || 'Failure detail not reported'}</span>}
+          {run.runState === 'failed' && <span className="ct-failure-summary">{run.tasks.find(task => task.state === 'failed')?.role ?? 'Run'} · {run.tasks.find(task => task.state === 'failed')?.failureReason || run.verificationSummary || run.tasks.find(task => task.state === 'failed')?.title || 'Failure detail not reported'}</span>}
           {(() => {
           const models = [...new Set(run.tasks.filter(task => task.reported.state === 'reported').map(task => task.reported.model).filter(Boolean))] as string[]
           if (!models.length) return null

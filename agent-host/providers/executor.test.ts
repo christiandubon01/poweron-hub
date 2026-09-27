@@ -191,6 +191,7 @@ function createExecutionResult(
       ...(overrides.output ?? {}),
     },
     diagnostics: overrides.diagnostics,
+    lifecycle: overrides.lifecycle,
   };
 }
 
@@ -222,6 +223,7 @@ function createExecutor(
   overrides: Partial<{
     now: () => Date;
     defaultTimeoutMs: number;
+    absoluteSafetyCeilingMs: number;
     executionHardGraceMs: number;
     shutdownTimeoutMs: number;
     policyController: ReturnType<typeof createNoOpAttemptPolicyController>;
@@ -234,6 +236,7 @@ function createExecutor(
     registry: new Map(adapters.map((adapter) => [adapter.id, adapter])),
     now: overrides.now,
     defaultTimeoutMs: overrides.defaultTimeoutMs,
+    absoluteSafetyCeilingMs: overrides.absoluteSafetyCeilingMs,
     executionHardGraceMs: overrides.executionHardGraceMs,
     shutdownTimeoutMs: overrides.shutdownTimeoutMs,
     policyController: overrides.policyController ?? createNoOpAttemptPolicyController(),
@@ -343,7 +346,7 @@ test('ATB-7B2: verifier reads the implementer candidate copy and leaves canonica
     taskId: 'task-impl',
     runId: 'run-1',
     title: 'Implement',
-    spec: { policy: { authorizedWritePaths: [CONTROL_TOWER_UI_SMOKE_PATH] }, plan: { plannedAreas: ['agent-host/smoke'] } },
+    spec: { policy: { authorizedWritePaths: [CONTROL_TOWER_UI_SMOKE_PATH] }, plan: { role: 'implementer', plannedAreas: ['agent-host/smoke'] } },
   });
   store.createTask({
     taskId: 'task-v',
@@ -604,6 +607,10 @@ test('executor: isolated workspace policy denies out-of-scope, protected, secret
     assert.equal(outcome.policy.accepted, false);
     assert.equal(outcome.attempt.status, 'failed');
     assert.equal(store.listEvents().some((event) => event.type === 'workspace.changeset.ready'), false);
+    const evidence = store.listEvents().find((event) => event.type === 'execution.failure_evidence');
+    assert.equal((evidence?.payload as Record<string, unknown>).changedFileCount, 4);
+    assert.equal((evidence?.payload as Record<string, unknown>).errorCode, 'POLICY_REJECTED');
+    assert.ok(Buffer.byteLength(JSON.stringify(evidence?.payload), 'utf8') < 8192);
     assert.equal(await readFile(path.join(repoPath, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
     assert.equal(await readFile(path.join(repoPath, 'src', 'store', 'authStore.ts'), 'utf8'), 'export const auth = true;\n');
     assert.equal(await readFile(path.join(repoPath, 'agent-host', 'smoke', 'delete-me.txt'), 'utf8'), 'BASELINE\n');
@@ -655,6 +662,8 @@ test('executor: provider failure maps Attempt failed and Task remains running', 
             errorCode: 'PROVIDER_ERROR',
             errorMessage: 'provider rejected the turn',
           },
+          lifecycle: { lastActivityAt: '2026-09-27T00:00:00.000Z', limitFired: 'none', limitMs: null },
+          session: { sessionId: 'provider-session-1' },
         }),
     });
     const executor = createExecutor(store, [adapter]);
@@ -663,6 +672,12 @@ test('executor: provider failure maps Attempt failed and Task remains running', 
     assert.equal(outcome.terminalEvent!.type, 'execution.failed');
     assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
     assert.equal(store.getTask('task-1')?.status, 'running');
+    const evidence = store.listEvents().find((event) => event.type === 'execution.failure_evidence');
+    assert.deepEqual(evidence?.payload, {
+      errorCode: 'PROVIDER_ERROR', elapsedMs: (outcome.terminalEvent?.payload as Record<string, unknown>).durationMs,
+      lastActivityAt: '2026-09-27T00:00:00.000Z', limitFired: 'none', limitMs: null,
+      changedFileCount: 0, sessionId: 'provider-session-1',
+    });
   } finally {
     store.close();
   }
@@ -794,8 +809,8 @@ test('executor: a provider that never settles is hard-terminated at the executor
         return await neverSettles.promise;
       },
     });
-    // hard deadline = request timeout (100ms) + grace (50ms) = 150ms.
-    const executor = createExecutor(store, [adapter], { executionHardGraceMs: 50 });
+    // hard deadline = absolute ceiling (100ms) + grace (50ms) = 150ms.
+    const executor = createExecutor(store, [adapter], { absoluteSafetyCeilingMs: 100, executionHardGraceMs: 50 });
 
     const startedAt = Date.now();
     const outcome = await executor.execute(createExecutionInput({ timeoutMs: 100 }));
@@ -807,7 +822,8 @@ test('executor: a provider that never settles is hard-terminated at the executor
     assert.equal(outcome.terminalEvent!.type, 'execution.timed_out');
     assert.equal(outcome.result.process.timedOut, true);
     assert.equal(outcome.result.process.cancelled, false);
-    assert.equal(outcome.result.provider.errorCode, 'EXECUTION_TIMEOUT');
+    assert.equal(outcome.result.provider.errorCode, 'PROVIDER_ABSOLUTE_TIMEOUT');
+    assert.equal(outcome.result.provider.errorMessage, 'Provider reached the absolute execution safety limit.');
     assert.equal(outcome.terminalAttemptStatus, 'failed');
     // The Attempt is durably terminalized, never left running.
     assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
@@ -843,7 +859,7 @@ test('executor: hard timeout ignores a late provider result and does not double-
       onExecute: async () => await late.promise,
       onCancel: () => late.resolve(createExecutionResult()),
     });
-    const executor = createExecutor(store, [adapter], { executionHardGraceMs: 50 });
+    const executor = createExecutor(store, [adapter], { absoluteSafetyCeilingMs: 100, executionHardGraceMs: 50 });
 
     const outcome = await executor.execute(createExecutionInput({ timeoutMs: 100 }));
 
@@ -853,7 +869,7 @@ test('executor: hard timeout ignores a late provider result and does not double-
     // Exactly one terminal execution event was persisted (no double terminalize).
     const terminalEvents = store
       .listEvents()
-      .filter((event) => event.type.startsWith('execution.') && event.type !== 'execution.started');
+      .filter((event) => event.type.startsWith('execution.') && event.type !== 'execution.started' && event.type !== 'execution.failure_evidence');
     assert.equal(terminalEvents.length, 1);
     assert.equal(terminalEvents[0]?.type, 'execution.timed_out');
     assert.deepEqual(executor.getActiveAttemptIds(), []);
@@ -1769,7 +1785,7 @@ test('executor regression: verifier policy event persistence failure fails close
       runId: 'run-1',
       title: 'implement',
       goal: 'implement',
-      spec: { policy: { authorizedWritePaths: [CONTROL_TOWER_UI_SMOKE_PATH] } },
+      spec: { policy: { authorizedWritePaths: [CONTROL_TOWER_UI_SMOKE_PATH] }, plan: { role: 'implementer' } },
     });
     store.createTask({
       taskId: 'task-1',
@@ -1838,6 +1854,8 @@ test('executor regression: verifier policy event persistence failure fails close
     const evidence = store.listEvents().find((event) => event.type === 'execution.persistence.failed');
     assert.ok(evidence, 'the persistence failure must be captured deterministically');
     assert.equal((evidence?.payload as Record<string, unknown>).errorCode, 'EVENT_PERSIST_FAILED');
+    assert.equal((evidence?.payload as Record<string, unknown>).changedFileCount, 0);
+    assert.equal((evidence?.payload as Record<string, unknown>).limitFired, 'none');
 
     // No fabricated pass and no auto-apply: the verifier attempt readies no
     // changeset, and the durable verdict pairs the provider text with the

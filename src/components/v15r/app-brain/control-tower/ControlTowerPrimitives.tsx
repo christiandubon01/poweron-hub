@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { AlertTriangle, Ban, CheckCircle2, Circle, Clock3, FileCheck2, GitBranch, Hourglass, PauseCircle, PlayCircle, RotateCcw, ShieldCheck, XCircle } from 'lucide-react'
 import type { AttentionEntry, EvidenceKind, Freshness, ModelIdentity, PreviewTask, RetryState, Role, RunState, TaskState, VerificationState } from './controlTowerTypes'
+import { useProviderWorkingLabel } from '@/features/control-tower/providerExecutionView'
 
 const RUN_META = {
   pending: { label: 'Pending', icon: Clock3 }, running: { label: 'Running', icon: PlayCircle },
@@ -82,11 +83,14 @@ export function RoleRelay({ currentRole }: { currentRole: Role }) {
 /** Frozen CT-3F execution spine row. Node and halo styling live on the rail step; the button remains the durable, inspectable task surface. */
 export function TaskRow({ task, selected, onSelect }: { task: PreviewTask; selected: boolean; onSelect: () => void }) {
   const { icon: Icon, label } = TASK_META[task.state]
+  const live = useProviderWorkingLabel(task.state === 'running' ? task.executionStartedAt : null)
+  const attemptText = live ?? task.attempt
   return <button type="button" className={`ct-task-row ct-task-${task.state} ${selected ? 'ct-selected' : ''}`} onClick={onSelect} aria-pressed={selected}>
     <span className="ct-task-copy"><span className="ct-task-title">{task.title}</span>
       <span className="ct-task-meta"><RoleBadge role={task.role} /><span className={`ct-status ct-state-${task.state}`}><Icon size={13} aria-hidden="true" />{label}</span></span>
       <span className="ct-task-summary">{task.summary}</span>
-      {task.state === 'running' && <span className="ct-task-attempt">{task.attempt}</span>}
+      {task.state === 'running' && <span className="ct-task-attempt">{attemptText}</span>}
+      {task.state === 'failed' && task.failureReason && <span className="ct-task-attempt">{task.failureReason}</span>}
       {task.state === 'blocked' && <span className="ct-task-flag">needs you</span>}
     </span>
   </button>

@@ -15,6 +15,7 @@ import {
   type ProviderProbeResult,
 } from './types.ts';
 import { isEffortLevel, mapNormalizedEffort } from './effort.ts';
+import { classifyProcessTermination, providerExecutionTimeouts } from './executionLimits.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -148,15 +149,17 @@ export class CodexProviderAdapter implements ProviderAdapter {
       allowedWorkingDirectory: request.authorizedWorkingDirectory ?? request.workingDirectory,
       prompt: request.prompt,
       environmentProfile: 'codex',
-      timeouts: {
-        overallTimeoutMs: request.timeoutMs,
-      },
+      timeouts: providerExecutionTimeouts(),
+      activityWorkspacePath: request.authorizedWorkingDirectory,
       callbacks: {
         onStdoutChunk: (chunk) => {
+          let parsedEvent = false;
           for (const event of streamState.decoder.push(chunk)) {
             handleJsonlEvent(streamState, event);
+            if (event.type === 'json') parsedEvent = true;
           }
           callbacks?.onStdoutChunk?.(chunk);
+          return parsedEvent;
         },
         onStderrChunk: (chunk) => {
           callbacks?.onStderrChunk?.(chunk);
@@ -327,14 +330,15 @@ function buildExecutionResult(
 ): ExecutionResult {
   let provider = mapProcessFailure(processResult);
 
-  if (state.protocolIssue) {
+  // A parsed terminal event cannot turn a killed process into a success.
+  if (processResult.terminationReason === 'exited' && state.protocolIssue) {
     provider = {
       terminalState: 'failed',
       success: false,
       errorCode: 'PROTOCOL_ERROR',
       errorMessage: `Codex protocol inconsistency: ${state.protocolIssue}`,
     };
-  } else if (state.failure) {
+  } else if (processResult.terminationReason === 'exited' && state.failure) {
     provider = {
       terminalState: 'failed',
       success: false,
@@ -345,7 +349,7 @@ function buildExecutionResult(
           ? 'Codex reported turn.failed.'
           : 'Codex reported a terminal provider error event.'),
     };
-  } else if (state.sawTurnCompleted) {
+  } else if (processResult.terminationReason === 'exited' && state.sawTurnCompleted) {
     provider = {
       terminalState: 'completed',
       success: true,
@@ -372,6 +376,11 @@ function buildExecutionResult(
     session: state.sessionId ? { sessionId: state.sessionId } : {},
     output: finalText ? { finalText } : {},
     diagnostics: buildDiagnostics(processResult),
+    lifecycle: {
+      lastActivityAt: processResult.lastActivityAt ?? null,
+      limitFired: processResult.limitFired ?? 'none',
+      limitMs: processResult.limitMs ?? null,
+    },
   };
 }
 
@@ -408,16 +417,16 @@ function buildImmediateFailureResult(
 }
 
 function mapProcessFailure(processResult: ProcessExecutionResult): ExecutionResult['provider'] {
+  const classified = classifyProcessTermination(processResult);
+  if (classified) {
+    return {
+      terminalState: 'failed',
+      success: false,
+      errorCode: classified.errorCode,
+      errorMessage: classified.errorMessage,
+    };
+  }
   switch (processResult.terminationReason) {
-    case 'timeout-overall':
-    case 'timeout-startup':
-    case 'timeout-idle':
-      return {
-        terminalState: 'failed',
-        success: false,
-        errorCode: 'EXECUTION_TIMEOUT',
-        errorMessage: 'Provider process timed out before Codex emitted turn.completed.',
-      };
     case 'cancelled':
       return {
         terminalState: 'failed',

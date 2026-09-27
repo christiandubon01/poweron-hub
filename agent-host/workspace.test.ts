@@ -10,11 +10,12 @@ import {
   adjudicateAttemptWorkspace,
   materializeAttemptWorkspace,
   materializeVerifierWorkspace,
+  resolveImplementerCandidateWorkspace,
   resolveAttemptWorkspacePath,
   resolveWorkspaceTarExecutable,
   WorkspacePreparationError,
 } from './workspace.ts';
-import type { TaskRecord } from './lib/orchestrationTypes.ts';
+import type { OrchestrationEventRecord, TaskRecord } from './lib/orchestrationTypes.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -250,6 +251,19 @@ test('workspace: verifier copy is the inherited baseline plus provider delta, no
   await writeFile(path.join(fixture.repoPath, 'README.md'), 'EVEN_LATER\n');
   assert.equal((await readFile(path.join(verifier.workspacePath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
   assert.equal((await readFile(path.join(fixture.repoPath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'EVEN_LATER\n');
+});
+
+test('workspace: verifier resolver rejects a policy-accepted failed Implementer attempt', () => {
+  const events: Array<Pick<OrchestrationEventRecord, 'seq' | 'taskId' | 'attemptId' | 'type' | 'payload'>> = [
+    { seq: 1, taskId: 'implementer', attemptId: 'failed-attempt', type: 'workspace.prepared', payload: { baselineHeadSha: 'a'.repeat(40) } },
+    { seq: 2, taskId: 'implementer', attemptId: 'failed-attempt', type: 'workspace.adjudication.completed', payload: { policyAccepted: true } },
+  ];
+  const options = {
+    workspaceRoot: path.join(os.tmpdir(), 'resolver-fixture'), repoKey: 'repo-key', runId: 'run-1',
+    dependencyTaskIds: ['implementer'], events,
+  };
+  assert.equal(resolveImplementerCandidateWorkspace({ ...options, isPassedAttempt: () => false }), null);
+  assert.equal(resolveImplementerCandidateWorkspace({ ...options, isPassedAttempt: (id, taskId) => id === 'failed-attempt' && taskId === 'implementer' })?.sourceAttemptId, 'failed-attempt');
 });
 
 test('workspace: tracked env template baseline materializes without weakening secret fail-closed behavior', async () => {

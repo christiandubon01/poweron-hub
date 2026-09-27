@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildCodexLaunchDescriptor, CodexProviderAdapter, mapPermissionProfileToCodexSandbox } from './codex.ts';
+import { PROVIDER_ABSOLUTE_SAFETY_CEILING_MS, PROVIDER_INACTIVITY_TIMEOUT_MS } from './executionLimits.ts';
 import type { RunProcessOptions } from './processRunner.ts';
 import type { ExecutionRequest, ProcessExecutionResult } from './types.ts';
 
@@ -198,7 +199,8 @@ test('codex adapter: nonzero exit without turn.completed preserves bounded proce
 
   const result = await adapter.execute(createRequest());
   assert.equal(result.provider.success, false);
-  assert.equal(result.provider.errorCode, 'PROTOCOL_ERROR');
+  assert.equal(result.provider.errorCode, 'PROVIDER_PROCESS_FAILED');
+  assert.equal(result.provider.errorMessage, 'Provider process failed before a terminal result arrived.');
   assert.equal(result.process.exitCode, 1);
   assert.equal(result.diagnostics?.stderrTail, stderrTail);
 });
@@ -727,8 +729,8 @@ test('codex adapter: 25) spawn failure maps to PROCESS_SPAWN_FAILED', async () =
   assert.equal(result.provider.errorCode, 'PROCESS_SPAWN_FAILED');
 });
 
-test('codex adapter: 26) timeout maps to EXECUTION_TIMEOUT', async () => {
-  const runner = createRunnerDouble([
+test('codex adapter: 26) absolute timeout stays distinct from inactivity and process failure', async () => {
+  const absolute = createRunnerDouble([
     {
       processResult: createProcessResult({
         timedOut: true,
@@ -736,13 +738,56 @@ test('codex adapter: 26) timeout maps to EXECUTION_TIMEOUT', async () => {
       }),
     },
   ]);
-  const adapter = new CodexProviderAdapter(
+  const absoluteResult = await new CodexProviderAdapter(
     { providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' },
-    { runner: runner.runner },
-  );
+    { runner: absolute.runner },
+  ).execute(createRequest({ timeoutMs: 600_000 }));
+  assert.equal(absoluteResult.provider.errorCode, 'PROVIDER_ABSOLUTE_TIMEOUT');
+  assert.equal(absoluteResult.provider.errorMessage, 'Provider reached the absolute execution safety limit.');
+  assert.equal(absolute.runs[0]?.options.timeouts?.overallTimeoutMs, PROVIDER_ABSOLUTE_SAFETY_CEILING_MS);
+  assert.equal(absolute.runs[0]?.options.timeouts?.idleTimeoutMs, PROVIDER_INACTIVITY_TIMEOUT_MS);
 
-  const result = await adapter.execute(createRequest());
-  assert.equal(result.provider.errorCode, 'EXECUTION_TIMEOUT');
+  const idle = createRunnerDouble([
+    {
+      processResult: createProcessResult({
+        timedOut: true,
+        terminationReason: 'timeout-idle',
+      }),
+    },
+  ]);
+  const idleResult = await new CodexProviderAdapter(
+    { providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' },
+    { runner: idle.runner },
+  ).execute(createRequest());
+  assert.equal(idleResult.provider.errorCode, 'PROVIDER_INACTIVITY_TIMEOUT');
+  assert.equal(idleResult.provider.errorMessage, 'Provider became unresponsive after 8m 0s without activity.');
+});
+
+test('codex streaming activity waits for complete events and preserves terminal result and session', async () => {
+  const runner = createRunnerDouble([{ autoResolve: false }]);
+  const adapter = new CodexProviderAdapter({ providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' }, { runner: runner.runner });
+  const pending = adapter.execute(createRequest({ requestedModel: 'gpt-5.6' }));
+  await nextTick();
+  const stream = runner.runs[0].options.callbacks?.onStdoutChunk;
+  assert.ok(stream);
+  assert.equal(stream(Buffer.from('{"type":"thread.started",')), false);
+  assert.equal(stream(Buffer.from('"thread_id":"thread-1"}\n')), true);
+  assert.equal(stream(Buffer.from(jsonLine({ type: 'item.completed', item: { type: 'agent_message', text: 'done' } }))), true);
+  assert.equal(stream(Buffer.from(jsonLine({ type: 'turn.completed' }))), true);
+  runner.runs[0].resolve(createProcessResult());
+  const result = await pending;
+  assert.equal(result.provider.success, true);
+  assert.equal(result.model.requestedModel, 'gpt-5.6');
+  assert.equal(result.model.reportedModel, null);
+  assert.equal(result.session.sessionId, 'thread-1');
+  assert.equal(result.output.finalText, 'done');
+});
+
+test('codex terminal JSON cannot override a ceiling kill', async () => {
+  const runner = createRunnerDouble([{ stdoutChunks: [jsonLine({ type: 'turn.completed' })], processResult: createProcessResult({ terminationReason: 'timeout-overall', timedOut: true }) }]);
+  const result = await new CodexProviderAdapter({ providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' }, { runner: runner.runner }).execute(createRequest());
+  assert.equal(result.provider.success, false);
+  assert.equal(result.provider.errorCode, 'PROVIDER_ABSOLUTE_TIMEOUT');
 });
 
 test('codex adapter: 27) manual cancel maps to EXECUTION_CANCELLED', async () => {

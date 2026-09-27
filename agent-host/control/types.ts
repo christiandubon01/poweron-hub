@@ -245,6 +245,17 @@ export interface SnapshotAttempt {
   requestedModel: string | null;
   reportedModel: string | null;
   reportedModelSource: string | null;
+  /** execution.started time, else the attempt start. Null on legacy snapshots. */
+  startedAt: string | null;
+  /** Exact provider termination code from the terminal execution event. */
+  terminalErrorCode: string | null;
+  /** Sanitized owner-facing terminal message. Never a prompt or transcript. */
+  terminalErrorMessage: string | null;
+  elapsedMs: number | null;
+  lastActivityAt: string | null;
+  limitFired: 'startup' | 'inactivity' | 'ceiling' | 'none';
+  limitMs: number | null;
+  changedFileCount: number | null;
 }
 
 export interface SnapshotTask {

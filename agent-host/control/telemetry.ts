@@ -45,19 +45,19 @@ import {
   TELEMETRY_MESSAGE_MAX_CHARS,
   TELEMETRY_SUMMARY_MAX_CHARS,
 } from './types.ts';
+import { PROVIDER_ABSOLUTE_SAFETY_CEILING_MS } from '../providers/executionLimits.ts';
 
 /**
  * attempt-stalled honesty (ATB-1B): a normal long provider turn produces NO
  * mid-turn durable events, so "no event for N minutes" is NOT evidence of a
- * stall. An attempt is only flagged stalled once it has been open PAST its own
- * configured time budget (control.timeoutMs) plus this grace — i.e. it is
- * genuinely overdue relative to the bound the executor itself enforces. Below
- * that bound a long attempt is truthfully just RUNNING (elapsed is derivable
- * from the execution.started timestamp), never "stalled".
+ * stall. An attempt is only flagged stalled once it has been open PAST the
+ * absolute execution safety ceiling plus this grace. The legacy 10-minute task
+ * budget is not a stall. Below the ceiling a long attempt is truthfully just
+ * RUNNING (elapsed is derivable from the execution.started timestamp).
  */
 export const TELEMETRY_STALL_GRACE_MS = 60_000;
-/** Fallback attempt time budget when the task spec does not carry control.timeoutMs. */
-export const TELEMETRY_DEFAULT_ATTEMPT_TIMEOUT_MS = 10 * 60_000;
+/** Absolute ceiling used when judging whether an open attempt is overdue. */
+export const TELEMETRY_DEFAULT_ATTEMPT_TIMEOUT_MS = PROVIDER_ABSOLUTE_SAFETY_CEILING_MS;
 /** Number of scheduled retries for one task that trips the excessive-retry signal. */
 export const TELEMETRY_EXCESSIVE_RETRY_THRESHOLD = 2;
 
@@ -572,17 +572,16 @@ export function projectSignals(input: TelemetryProjectionInput): SnapshotSignal[
 
   // Attempt stalled (honest): a normal long provider turn emits no mid-turn
   // durable events, so elapsed-without-events is NOT a stall. Only flag an
-  // attempt that is open PAST its configured time budget + grace — i.e. genuinely
-  // overdue relative to the executor's own hard bound. Timestamp comparison only;
-  // no new scheduler is introduced. Below the budget the attempt is truthfully
-  // just running (elapsed derivable from execution.started).
+  // attempt that is open PAST the absolute safety ceiling + grace. The legacy
+  // 10-minute task budget is not a stall. Timestamp comparison only; no new
+  // scheduler is introduced.
   if (ACTIVE_RUN_STATUSES.has(input.run.status)) {
     for (const [attemptId, open] of openAttempts) {
       const startedMs = parseMs(open.startedAt);
       if (startedMs === null) {
         continue;
       }
-      const budgetMs = (open.taskId ? metaByTask.get(open.taskId)?.timeoutMs : null) ?? TELEMETRY_DEFAULT_ATTEMPT_TIMEOUT_MS;
+      const budgetMs = TELEMETRY_DEFAULT_ATTEMPT_TIMEOUT_MS;
       const overdueThreshold = budgetMs + TELEMETRY_STALL_GRACE_MS;
       const elapsedMs = nowMs - startedMs;
       if (elapsedMs > overdueThreshold) {
@@ -590,7 +589,7 @@ export function projectSignals(input: TelemetryProjectionInput): SnapshotSignal[
           id: `signal:attempt-stalled:${attemptId}`,
           category: 'attempt-stalled', severity: 'warning', source: 'host',
           taskId: open.taskId, attemptId,
-          message: `Attempt is overdue: open ${Math.floor(elapsedMs / 60_000)}m past its ${Math.floor(budgetMs / 60_000)}m budget without completing.`,
+          message: `Attempt is overdue: open ${Math.floor(elapsedMs / 60_000)}m past the ${Math.floor(budgetMs / 60_000)}m absolute execution safety limit without completing.`,
           evidenceRefs: [`elapsedMs=${elapsedMs}`, `budgetMs=${budgetMs}`], at: open.startedAt, ownerActionRequired: false,
         });
       }

@@ -31,6 +31,10 @@ export interface PreviewTask {
   effort?: EffortLevel | null
   /** CT-CORE-1 live view: real planned areas from the Host snapshot (absent in the fixture preview). */
   plannedAreas?: string[]
+  /** Safe terminal reason from the attempt event. Absent when the attempt did not fail that way. */
+  failureReason?: string | null
+  /** execution.started timestamp used for the live working clock. */
+  executionStartedAt?: string | null
 }
 export interface AttentionEntry {
   id: string

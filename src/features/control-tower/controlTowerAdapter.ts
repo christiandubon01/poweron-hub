@@ -37,6 +37,8 @@ import type {
 import type { AppBrainNode } from '@/components/v15r/appBrainMap'
 import type { HostPresenceRow, RunSnapshotRow } from './controlTowerService'
 import { verifierFailureDiagnostics, verifierRejectionConsequence } from './verifierFailure'
+import { ownerTerminalReason, providerWorkingLabel } from './providerExecutionView'
+import { readHostSourceFingerprint } from './hostCodeWarning'
 
 /* ATB-1 defensive caps mirroring the Host projection (bounded even if a Host over-publishes). */
 const MAX_INTERIM_VERDICTS = 20
@@ -71,10 +73,12 @@ export interface HostPresenceView {
   hostVersion: string | null
   lastSeenAt: string | null
   hostInstanceId: string | null
+  /** Agent Host source fingerprint from presence. Null on older Hosts. */
+  sourceFingerprint?: string | null
 }
 
 const UNAVAILABLE_HOST_PRESENCE: HostPresenceView = {
-  state: 'unavailable', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null, hostInstanceId: null,
+  state: 'unavailable', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null, hostInstanceId: null, sourceFingerprint: null,
 }
 
 export function computeHostPresence(rows: HostPresenceRow[], nowMs: number): HostPresenceView {
@@ -113,6 +117,7 @@ export function computeHostPresence(rows: HostPresenceRow[], nowMs: number): Hos
     hostVersion: typeof freshest.host_version === 'string' ? freshest.host_version : null,
     lastSeenAt: freshest.last_seen_at,
     hostInstanceId: freshest.host_instance_id,
+    sourceFingerprint: readHostSourceFingerprint(freshest.providers),
   }
 }
 
@@ -223,6 +228,14 @@ interface SnapshotAttemptWire {
   requestedModel: string | null
   reportedModel: string | null
   reportedModelSource: string | null
+  startedAt?: string | null
+  terminalErrorCode?: string | null
+  terminalErrorMessage?: string | null
+  elapsedMs?: number | null
+  lastActivityAt?: string | null
+  limitFired?: 'startup' | 'inactivity' | 'ceiling' | 'none'
+  limitMs?: number | null
+  changedFileCount?: number | null
 }
 export interface SnapshotWire {
   schemaVersion: number
@@ -354,7 +367,7 @@ function attemptModelIdentity(attempt: SnapshotAttemptWire | undefined, reported
  * the snapshot payload is not the expected whitelist shape (honest failure,
  * never a fabricated run).
  */
-export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | null {
+export function mapRunSnapshotRow(row: RunSnapshotRow, nowMs: number = Date.now()): ControlTowerRunView | null {
   const wire = row.snapshot as unknown
   if (!isRecord(wire)) return null
   const run = wire.run as unknown
@@ -379,6 +392,15 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
     const state = normalizeTaskState(task.status, (task.dependencies ?? []).every((dep) => passedKeys.has(dep)))
     const plannedAreas = asStringArray(task.plannedAreas)
     const role = ROLE_LABEL[task.role] ?? 'Implementer'
+    const startedAt = typeof latest?.startedAt === 'string' ? latest.startedAt : null
+    const elapsedMs = startedAt ? nowMs - Date.parse(startedAt) : Number.NaN
+    const working = state === 'running' && Number.isFinite(elapsedMs) && elapsedMs >= 0
+      ? providerWorkingLabel(elapsedMs)
+      : null
+    const failureReason = state === 'failed'
+      ? ownerTerminalReason(latest?.terminalErrorCode, latest?.terminalErrorMessage, latest)
+      : null
+    const plannedDetail = plannedAreas.length > 0 ? `Planned areas: ${plannedAreas.join(', ')}` : 'No planned areas reported in this snapshot.'
     return {
       id: task.clientTaskKey,
       taskId: task.taskId,
@@ -386,8 +408,10 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
       role,
       state,
       summary: latest ? `Attempt ${latest.ordinal} · ${latest.status}` : state === 'running' ? 'No Attempt reported yet' : 'No Attempt started',
-      detail: plannedAreas.length > 0 ? `Planned areas: ${plannedAreas.join(', ')}` : 'No planned areas reported in this snapshot.',
-      attempt: latest ? `Attempt ${latest.ordinal} · ${latest.status}` : 'No Attempt started',
+      detail: failureReason ?? plannedDetail,
+      attempt: working ?? failureReason ?? (latest ? `Attempt ${latest.ordinal} · ${latest.status}` : 'No Attempt started'),
+      failureReason,
+      executionStartedAt: startedAt,
       retry: (state === 'running' ? 'attempt-active' : 'none') as RetryState,
       dependencies: (task.dependencies ?? []).length > 0 ? task.dependencies.join(', ') : 'None',
       requested: attemptModelIdentity(latest, false),
@@ -399,6 +423,7 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
   })
 
   const runState = normalizeRunState(String(run.status ?? 'failed'))
+  const providerWorking = viewTasks.find((task) => task.state === 'running' && task.attempt.startsWith('Provider working · '))?.attempt ?? null
   const runningTask = viewTasks.find((task) => task.state === 'running')
   const currentRole: Role = runningTask
     ? runningTask.role
@@ -461,7 +486,9 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
       ? 'Candidate applied'
       : verification === 'rejected' && runState === 'completed'
         ? 'Verification failed · candidate rejected'
-        : RUN_PHASE_LABEL[runState],
+        : runState === 'running' && providerWorking
+          ? providerWorking
+          : RUN_PHASE_LABEL[runState],
     currentRole,
     verification,
     changeset,

@@ -559,7 +559,7 @@ function classifyFromDurableEvents(store: OrchestrationStore, attemptId: string)
       case 'execution.failed': {
         sawProviderFailure = true;
         const errorCode = eventString(event, 'errorCode');
-        if (errorCode === 'EXECUTION_TIMEOUT') {
+        if (errorCode === 'EXECUTION_TIMEOUT' || errorCode === 'PROVIDER_INACTIVITY_TIMEOUT' || errorCode === 'PROVIDER_ABSOLUTE_TIMEOUT') {
           sawTimeout = true;
         }
         if (errorCode === 'EXECUTION_CANCELLED') {

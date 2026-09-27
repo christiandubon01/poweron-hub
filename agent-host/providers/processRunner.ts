@@ -21,12 +21,17 @@
 
 import { spawn, execFile } from 'node:child_process';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { realpathSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { ExecutionStreamCallbacks, ProcessExecutionResult, ProcessTerminationReason } from './types.ts';
 import { buildProviderEnvironment, claudeOverlayRequestsApiBilling, CLAUDE_API_BILLING_DISABLED_MESSAGE, type ProviderEnvironmentProfile } from './environmentPolicy.ts';
+import {
+  PROVIDER_ABSOLUTE_SAFETY_CEILING_MS,
+  PROVIDER_INACTIVITY_TIMEOUT_MS,
+  PROVIDER_STARTUP_INACTIVITY_TIMEOUT_MS,
+} from './executionLimits.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,22 +39,23 @@ const execFileAsync = promisify(execFile);
 /* Tunable constants (documented defaults)                                    */
 /* -------------------------------------------------------------------------- */
 
-/** Startup timeout: from spawn until first stdout/stderr activity. */
-export const STARTUP_TIMEOUT_MS = 30_000;
-/** Idle timeout: no stdout/stderr activity for this long. Optional; disabled when undefined. */
-export const IDLE_TIMEOUT_MS: number | undefined = 120_000;
-/** Overall timeout default (10 minutes). */
-export const OVERALL_TIMEOUT_DEFAULT_MS = 10 * 60_000;
-/** Overall timeout minimum (60 seconds). */
-export const OVERALL_TIMEOUT_MIN_MS = 60_000;
-/** Overall timeout maximum (30 minutes). Prevents multi-hour accidental runs. */
-export const OVERALL_TIMEOUT_MAX_MS = 30 * 60_000;
+/** Startup timeout: from spawn until first parsed event or workspace write. */
+export const STARTUP_TIMEOUT_MS = PROVIDER_STARTUP_INACTIVITY_TIMEOUT_MS;
+/** Idle timeout: no parsed event or workspace write. Optional when undefined. */
+export const IDLE_TIMEOUT_MS: number | undefined = PROVIDER_INACTIVITY_TIMEOUT_MS;
+/** Absolute safety ceiling. Active providers may run past the legacy 10-minute budget. */
+export const OVERALL_TIMEOUT_DEFAULT_MS = PROVIDER_ABSOLUTE_SAFETY_CEILING_MS;
+/** Overall timeout minimum for short operator diagnostics. */
+export const OVERALL_TIMEOUT_MIN_MS = 1_000;
+/** Absolute safety ceiling. Prevents multi-hour accidental runs. */
+export const OVERALL_TIMEOUT_MAX_MS = 2 * 60 * 60_000;
 /** Cancel grace: time between cancel request and force tree kill. */
 export const CANCEL_GRACE_MS = 5_000;
 /** Maximum wait for a killed process tree to emit the child's `close` event. */
 export const POST_KILL_SETTLEMENT_MS = 3_000;
 /** One bounded retry is allowed when exact-PID tree termination reports failure. */
 export const TREE_KILL_RETRY_MS = 100;
+export const WORKSPACE_POLL_MS = 1_000;
 
 /** Retained stdout tail (last 64 KiB). Stream throughput is NOT capped by this. */
 export const STDOUT_RETAINED_TAIL_BYTES = 64 * 1024;
@@ -95,7 +101,7 @@ export class UnsafeCmdWrapperArgumentError extends Error {
 
 /**
  * Overrideable clamp bounds for the overall timeout. Production callers never
- * supply this; the defaults enforce the documented 60s–30min envelope. Tests
+ * supply this; the defaults enforce a 1s–2h envelope. Tests
  * inject a narrower bound so the overall-timer mechanism can be exercised at
  * sub-minute scale without weakening the production floor.
  */
@@ -115,7 +121,7 @@ export const DEFAULT_TIMEOUT_BOUNDS: TimeoutBounds = {
  * NaN / non-number / 0 / negative / Infinity are REJECTED (explicit error,
  * never silently accepted). Finite positive values outside the supported
  * bounds are CLAMPED to [bounds.minMs, bounds.maxMs] so multi-hour accidental
- * runs cannot occur. Behaviour is deterministic. Defaults enforce 60s–30min.
+ * runs cannot occur. Behaviour is deterministic. Defaults enforce 1s–2h.
  */
 export function validateOverallTimeout(ms: unknown, bounds: TimeoutBounds = DEFAULT_TIMEOUT_BOUNDS): number {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) {
@@ -390,6 +396,15 @@ export interface TimeoutConfig {
   postKillSettlementMs: number;
 }
 
+/**
+ * Test seam for deterministic liveness checks. Production uses the global timers.
+ * Only parsed provider events and isolated-workspace writes refresh inactivity.
+ */
+export interface ProcessTimerControl {
+  setTimeout(callback: () => void, ms: number): NodeJS.Timeout;
+  clearTimeout(handle: NodeJS.Timeout): void;
+}
+
 export interface RunProcessOptions {
   executionId: string;
   launch: LaunchDescriptor;
@@ -399,10 +414,12 @@ export interface RunProcessOptions {
   prompt?: string;
   /** Override defaults; overallTimeoutMs is validated + clamped against bounds. */
   timeouts?: Partial<TimeoutConfig>;
-  /** Clamp bounds for overall timeout (test seam; defaults to 60s–30min). */
+  /** Clamp bounds for overall timeout (test seam; defaults to 1s–2h). */
   timeoutBounds?: TimeoutBounds;
   /** Incremental stream callbacks. Throwing is fail-safe (see header). */
   callbacks?: ExecutionStreamCallbacks;
+  /** Isolated attempt workspace only; file metadata changes count as activity. */
+  activityWorkspacePath?: string;
   /** Small environment overlay merged onto the current process env. Never returned/logged. */
   envOverlay?: Record<string, string>;
   /** Provider identity selects the narrowly allowed authentication variables. */
@@ -417,6 +434,8 @@ export interface RunProcessOptions {
   spawnFn?: SpawnFn;
   /** Injectable clock for deterministic timestamps. */
   now?: () => Date;
+  /** Injectable timers. Production omits this and uses the global clock. */
+  timers?: ProcessTimerControl;
 }
 
 export interface ProcessHandle {
@@ -443,6 +462,8 @@ export class ProcessRunner {
     const now = options.now ?? (() => new Date());
     const killFn = options.killProcessTree ?? defaultKillProcessTree;
     const spawnFn: SpawnFn = options.spawnFn ?? spawn;
+    const scheduleTimeout = options.timers?.setTimeout ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
+    const cancelTimeout = options.timers?.clearTimeout ?? ((handle: NodeJS.Timeout) => { clearTimeout(handle); });
 
     const dir = resolveWorkingDirectory(options.workingDirectory, options.allowedWorkingDirectory);
     if (!dir.ok) {
@@ -529,6 +550,7 @@ export class ProcessRunner {
     let lastExitCode: number | null = null;
     let lastSignal: string | null = null;
     let startedAt: string | null = null;
+    let lastActivityAt: string | null = null;
     let firstActivity = false;
 
     let overallTimer: NodeJS.Timeout | undefined;
@@ -537,7 +559,12 @@ export class ProcessRunner {
     let graceTimer: NodeJS.Timeout | undefined;
     let postKillTimer: NodeJS.Timeout | undefined;
     let treeKillRetryTimer: NodeJS.Timeout | undefined;
+    let workspacePollTimer: NodeJS.Timeout | undefined;
+    let workspaceFiles = options.activityWorkspacePath ? snapshotWorkspaceFiles(options.activityWorkspacePath) : null;
     let treeKillAttempts = 0;
+    let postKillWaits = 0;
+    let treeKillPending = false;
+    let closeObserved = false;
 
     let resolveDone!: (result: ProcessExecutionResult) => void;
     const done = new Promise<ProcessExecutionResult>((resolve) => {
@@ -549,7 +576,7 @@ export class ProcessRunner {
 
     const clearTimer = (t: NodeJS.Timeout | undefined): void => {
       if (t) {
-        clearTimeout(t);
+        cancelTimeout(t);
       }
     };
     const clearAllTimers = (): void => {
@@ -559,12 +586,14 @@ export class ProcessRunner {
       clearTimer(graceTimer);
       clearTimer(postKillTimer);
       clearTimer(treeKillRetryTimer);
+      clearTimer(workspacePollTimer);
       overallTimer = undefined;
       startupTimer = undefined;
       idleTimer = undefined;
       graceTimer = undefined;
       postKillTimer = undefined;
       treeKillRetryTimer = undefined;
+      workspacePollTimer = undefined;
     };
 
     const armIdle = (): void => {
@@ -572,13 +601,14 @@ export class ProcessRunner {
         return;
       }
       clearTimer(idleTimer);
-      idleTimer = setTimeout(() => terminate('timeout-idle'), timeouts.idleTimeoutMs);
+      idleTimer = scheduleTimeout(() => terminate('timeout-idle'), timeouts.idleTimeoutMs);
     };
 
     const markActivity = (): void => {
       if (state === 'settled' || state === 'terminating') {
         return;
       }
+      lastActivityAt = now().toISOString();
       if (!firstActivity) {
         firstActivity = true;
         clearTimer(startupTimer);
@@ -604,6 +634,9 @@ export class ProcessRunner {
         callbackErrorMessage: reason === 'callback-error' ? callbackErrorMessage : undefined,
         startedAt,
         endedAt,
+        lastActivityAt,
+        limitFired: reason === 'timeout-startup' ? 'startup' : reason === 'timeout-idle' ? 'inactivity' : reason === 'timeout-overall' ? 'ceiling' : 'none',
+        limitMs: reason === 'timeout-startup' ? timeouts.startupTimeoutMs : reason === 'timeout-idle' ? (timeouts.idleTimeoutMs ?? null) : reason === 'timeout-overall' ? timeouts.overallTimeoutMs : null,
         stdoutBytes,
         stderrBytes,
         stdoutTail: stdoutTail.toString(),
@@ -653,13 +686,7 @@ export class ProcessRunner {
       }
     };
 
-    /**
-     * Initiate termination for a non-exit reason. Cooperative step: close stdin
-     * (EOF signal). After the cancel grace period, force tree-kill. The actual
-     * settle normally happens on the child 'close' event so we capture exit
-     * facts. A bounded post-kill deadline prevents inherited descendant pipes
-     * from keeping the host in this state indefinitely.
-     */
+    /** On Windows, kill the whole tree before EOF can let the parent exit. */
     const terminate = (reason: ProcessTerminationReason): void => {
       if (state === 'settled' || state === 'terminating') {
         return;
@@ -671,29 +698,27 @@ export class ProcessRunner {
       clearTimer(overallTimer);
       clearTimer(startupTimer);
       clearTimer(idleTimer);
+      clearTimer(workspacePollTimer);
       overallTimer = undefined;
       startupTimer = undefined;
       idleTimer = undefined;
 
-      // Cooperative: close stdin to signal EOF to the provider.
-      try {
-        child?.stdin?.end();
-      } catch {
-        /* ignore */
-      }
-
-      // Force tree-kill after the grace period.
       const pid = capturedPid;
       if (isValidKillPid(pid)) {
-        graceTimer = setTimeout(() => {
-          const forceKill = (): void => {
+        const forceKill = (): void => {
             if (state !== 'terminating') {
               return;
             }
+            treeKillRetryTimer = undefined;
             treeKillAttempts += 1;
+            treeKillPending = true;
             if (!postKillTimer) {
-              postKillTimer = setTimeout(() => {
+              const finishAfterKill = (): void => {
                 if (state !== 'terminating') {
+                  return;
+                }
+                if ((treeKillPending || treeKillRetryTimer) && postKillWaits++ < 4) {
+                  postKillTimer = scheduleTimeout(finishAfterKill, timeouts.postKillSettlementMs);
                   return;
                 }
                 // The exact tree was targeted, but a descendant may retain a
@@ -701,25 +726,40 @@ export class ProcessRunner {
                 // terminal reason while releasing local handles and settling.
                 releaseProcessResources();
                 settle(pendingReason ?? reason);
-              }, timeouts.postKillSettlementMs);
+              };
+              postKillTimer = scheduleTimeout(finishAfterKill, timeouts.postKillSettlementMs);
             }
             void killFn(pid)
               .then((result) => {
+                treeKillPending = false;
                 if (!result.killed && treeKillAttempts < 2 && state === 'terminating') {
-                  treeKillRetryTimer = setTimeout(forceKill, TREE_KILL_RETRY_MS);
+                  treeKillRetryTimer = scheduleTimeout(forceKill, TREE_KILL_RETRY_MS);
+                } else if (closeObserved && state === 'terminating') {
+                  settle(pendingReason ?? reason);
                 }
               })
               .catch(() => {
+                treeKillPending = false;
                 if (treeKillAttempts < 2 && state === 'terminating') {
-                  treeKillRetryTimer = setTimeout(forceKill, TREE_KILL_RETRY_MS);
+                  treeKillRetryTimer = scheduleTimeout(forceKill, TREE_KILL_RETRY_MS);
+                } else if (closeObserved && state === 'terminating') {
+                  settle(pendingReason ?? reason);
                 }
               });
           };
+        if (process.platform === 'win32') {
           forceKill();
-        }, timeouts.cancelGraceMs);
+        } else {
+          graceTimer = scheduleTimeout(forceKill, timeouts.cancelGraceMs);
+        }
       } else {
-        // No valid PID (spawn failed). Settle immediately.
         settle(reason);
+      }
+
+      try {
+        child?.stdin?.end();
+      } catch {
+        /* ignore */
       }
     };
 
@@ -761,20 +801,29 @@ export class ProcessRunner {
     state = 'running';
 
     // ---- Timers ------------------------------------------------------------
-    overallTimer = setTimeout(() => terminate('timeout-overall'), timeouts.overallTimeoutMs);
-    startupTimer = setTimeout(() => terminate('timeout-startup'), timeouts.startupTimeoutMs);
+    overallTimer = scheduleTimeout(() => terminate('timeout-overall'), timeouts.overallTimeoutMs);
+    startupTimer = scheduleTimeout(() => terminate('timeout-startup'), timeouts.startupTimeoutMs);
+    if (workspaceFiles) {
+      const pollWorkspace = (): void => {
+        if (state === 'settled' || state === 'terminating' || !options.activityWorkspacePath) return;
+        const current = snapshotWorkspaceFiles(options.activityWorkspacePath);
+        if (current && workspaceFiles && workspaceSnapshotChanged(workspaceFiles, current)) markActivity();
+        if (current) workspaceFiles = current;
+        workspacePollTimer = scheduleTimeout(pollWorkspace, WORKSPACE_POLL_MS);
+      };
+      workspacePollTimer = scheduleTimeout(pollWorkspace, WORKSPACE_POLL_MS);
+    }
 
     // ---- Stdout ------------------------------------------------------------
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
       stdoutTail.append(chunk);
-      markActivity();
       if (stdoutBytes > limits.absoluteOutputBytes) {
         terminate('output-limit');
         return;
       }
       try {
-        options.callbacks?.onStdoutChunk?.(chunk);
+        if (options.callbacks?.onStdoutChunk?.(chunk) === true) markActivity();
       } catch (err) {
         callbackErrorMessage = `stdout callback threw: ${err instanceof Error ? err.message : String(err)}`;
         terminate('callback-error');
@@ -785,7 +834,6 @@ export class ProcessRunner {
     child.stderr?.on('data', (chunk: Buffer) => {
       stderrBytes += chunk.length;
       stderrTail.append(chunk);
-      markActivity();
       // stderr non-empty is NOT failure; no semantic interpretation.
       try {
         options.callbacks?.onStderrChunk?.(chunk);
@@ -802,7 +850,8 @@ export class ProcessRunner {
     });
 
     child.on('close', () => {
-      // Natural exit: settle with pendingReason (if a terminate raced) else 'exited'.
+      closeObserved = true;
+      if (state === 'terminating' && (treeKillPending || graceTimer || treeKillRetryTimer)) return;
       const reason: ProcessTerminationReason = pendingReason ?? 'exited';
       settle(reason);
     });
@@ -862,6 +911,36 @@ export class ProcessRunner {
       stderrTail,
     };
   }
+}
+
+/** Metadata polling avoids platform-specific recursive watch behavior. Symlinks are ignored. */
+function snapshotWorkspaceFiles(root: string): Map<string, string> | null {
+  const files = new Map<string, string>();
+  try {
+    const pending = [root];
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const fullPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) pending.push(fullPath);
+        else if (entry.isFile()) {
+          const stat = statSync(fullPath);
+          files.set(path.relative(root, fullPath), `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`);
+        }
+      }
+    }
+    return files;
+  } catch {
+    return null;
+  }
+}
+
+function workspaceSnapshotChanged(previous: Map<string, string>, current: Map<string, string>): boolean {
+  if (previous.size !== current.size) return true;
+  for (const [name, metadata] of current) {
+    if (previous.get(name) !== metadata) return true;
+  }
+  return false;
 }
 
 /**

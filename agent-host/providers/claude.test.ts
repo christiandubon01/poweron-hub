@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ClaudeCompatibleProviderAdapter, buildClaudeLaunchDescriptor, mapPermissionProfileToClaudeMode } from './claude.ts';
+import { PROVIDER_ABSOLUTE_SAFETY_CEILING_MS, PROVIDER_INACTIVITY_TIMEOUT_MS } from './executionLimits.ts';
 import { buildProviderEnvironment } from './environmentPolicy.ts';
 import type { RunProcessOptions } from './processRunner.ts';
 import type { ExecutionRequest, ProcessExecutionResult } from './types.ts';
@@ -687,6 +688,8 @@ test('claude adapter: explicit Opus 4.8 keeps --model, requested model, and subs
   assert.equal(result.model.requestedModel, 'claude-opus-4-8');
   assert.equal(result.model.reportedModel, 'claude-opus-5-5');
   assert.notEqual(result.model.requestedModel, result.model.reportedModel);
+  assert.equal(runner.runs[0]?.options.timeouts?.overallTimeoutMs, PROVIDER_ABSOLUTE_SAFETY_CEILING_MS);
+  assert.equal(runner.runs[0]?.options.timeouts?.idleTimeoutMs, PROVIDER_INACTIVITY_TIMEOUT_MS);
   const child = buildProviderEnvironment('claude', {
     ANTHROPIC_API_KEY: 'fixture-key',
     ANTHROPIC_AUTH_TOKEN: 'fixture-token',
@@ -696,4 +699,29 @@ test('claude adapter: explicit Opus 4.8 keeps --model, requested model, and subs
   assert.equal(child.ANTHROPIC_API_KEY, undefined);
   assert.equal(child.ANTHROPIC_AUTH_TOKEN, undefined);
   assert.equal(child.ANTHROPIC_BASE_URL, undefined);
+});
+
+test('claude streaming activity waits for complete events and preserves result, model, and session', async () => {
+  const runner = createRunnerDouble([{ autoResolve: false }]);
+  const adapter = new ClaudeCompatibleProviderAdapter({ providerId: 'claude', executable: 'C:\\Tools\\claude.exe' }, { runner: runner.runner });
+  const pending = adapter.execute(createRequest({ requestedModel: 'claude-opus-4-8', reasoningEffort: undefined }));
+  await nextTick();
+  const stream = runner.runs[0].options.callbacks?.onStdoutChunk;
+  assert.ok(stream);
+  assert.equal(stream(Buffer.from('{"type":"system","subtype":"init",')), false);
+  assert.equal(stream(Buffer.from('"session_id":"session-1","model":"claude-opus-4-8"}\n')), true);
+  assert.equal(stream(Buffer.from(jsonLine({ type: 'result', subtype: 'success', is_error: false, result: 'done' }))), true);
+  runner.runs[0].resolve(createProcessResult());
+  const result = await pending;
+  assert.equal(result.provider.success, true);
+  assert.equal(result.model.reportedModel, 'claude-opus-4-8');
+  assert.equal(result.session.sessionId, 'session-1');
+  assert.equal(result.output.finalText, 'done');
+});
+
+test('claude terminal JSON cannot override a ceiling kill', async () => {
+  const runner = createRunnerDouble([{ stdoutChunks: [jsonLine({ type: 'result', subtype: 'success', is_error: false })], processResult: createProcessResult({ terminationReason: 'timeout-overall', timedOut: true }) }]);
+  const result = await new ClaudeCompatibleProviderAdapter({ providerId: 'claude', executable: 'C:\\Tools\\claude.exe' }, { runner: runner.runner }).execute(createRequest());
+  assert.equal(result.provider.success, false);
+  assert.equal(result.provider.errorCode, 'PROVIDER_ABSOLUTE_TIMEOUT');
 });

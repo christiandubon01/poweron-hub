@@ -33,6 +33,11 @@ import { parseCreatePlanScopePackFields } from './scopePack.ts';
 import { isEffortLevel } from '../providers/effort.ts';
 import type { ExecutionResult, PermissionProfile, ProviderId } from '../providers/types.ts';
 
+/**
+ * Stored on architect and task specs for compatibility. Provider liveness is
+ * not this wall clock. See PROVIDER_INACTIVITY_TIMEOUT_MS and
+ * PROVIDER_ABSOLUTE_SAFETY_CEILING_MS.
+ */
 export const ARCHITECT_TIMEOUT_MS = 10 * 60_000;
 export const DEFAULT_TASK_TIMEOUT_MS = 10 * 60_000;
 

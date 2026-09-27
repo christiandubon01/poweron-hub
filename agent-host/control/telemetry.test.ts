@@ -420,8 +420,8 @@ test('changeset-oversized fires when changes exceed authorized paths; identical 
   assert.ok(!signals.some((s) => s.category === 'model-routing-mismatch'), 'identical requested/reported model is not a mismatch');
 });
 
-test('attempt-stalled is honest: a normal long run is NOT flagged; only an over-budget open attempt is', () => {
-  // implementerSpec sets control.timeoutMs = 600_000 (10m); budget+grace = 660_000.
+test('attempt-stalled is honest: a normal long run is NOT flagged; only an over-ceiling open attempt is', () => {
+  // The task spec still carries the legacy 10-minute budget. That budget is not a stall.
   const events = mkEvents([{ type: 'execution.started', taskId: 't-impl', attemptId: 'a-1', createdAt: iso(0) }]);
   const startedMs = BASE;
 
@@ -429,13 +429,16 @@ test('attempt-stalled is honest: a normal long run is NOT flagged; only an over-
   assert.ok(!projectSignals({ run: mkRun('running'), tasks: [mkTask('t-impl', implementerSpec())], events, nowMs: startedMs + 1_000 })
     .some((s) => s.category === 'attempt-stalled'));
 
-  // 9 minutes into a healthy long provider turn (under the 10m budget) — a normal
-  // RUNNING attempt, NOT a stall. ATB-1's fixed 5m window would have overclaimed here.
-  assert.ok(!projectSignals({ run: mkRun('running'), tasks: [mkTask('t-impl', implementerSpec())], events, nowMs: startedMs + 9 * 60_000 })
+  // 12 minutes — past the legacy 10-minute budget, still inside the 45-minute ceiling.
+  assert.ok(!projectSignals({ run: mkRun('running'), tasks: [mkTask('t-impl', implementerSpec())], events, nowMs: startedMs + 12 * 60_000 })
     .some((s) => s.category === 'attempt-stalled'));
 
-  // 15 minutes — well past the configured 10m budget + grace → genuinely overdue.
-  assert.ok(projectSignals({ run: mkRun('running'), tasks: [mkTask('t-impl', implementerSpec())], events, nowMs: startedMs + 15 * 60_000 })
+  // 15 minutes — still a live provider turn, not a stall.
+  assert.ok(!projectSignals({ run: mkRun('running'), tasks: [mkTask('t-impl', implementerSpec())], events, nowMs: startedMs + 15 * 60_000 })
+    .some((s) => s.category === 'attempt-stalled'));
+
+  // Past the 45-minute ceiling plus the 60-second grace.
+  assert.ok(projectSignals({ run: mkRun('running'), tasks: [mkTask('t-impl', implementerSpec())], events, nowMs: startedMs + 45 * 60_000 + 60_000 + 1 })
     .some((s) => s.category === 'attempt-stalled'));
 
   // A terminated attempt (has a terminal execution event) is never stalled.

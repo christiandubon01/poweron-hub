@@ -26,6 +26,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { computeAgentHostSourceFingerprint } from '../hostSourceFingerprint.ts';
 import { composeHostIdentity, createInstanceIdentity, readOrCreateHostId } from '../lib/identity.ts';
 import { createEventWriter } from '../lib/events.ts';
 import { writeHeartbeat } from '../lib/heartbeat.ts';
@@ -49,6 +50,7 @@ import {
   toSafeProviderFleet,
 } from '../providers/capabilityRegistry.ts';
 import { buildCmdWrapperCommandLine } from '../providers/processRunner.ts';
+import { configureProviderExecutionLimits } from '../providers/executionLimits.ts';
 import { supervisorTick } from '../supervisor/supervisor.ts';
 import { shutdownHostRuntime } from '../index.ts';
 
@@ -1192,6 +1194,10 @@ function createHeartbeatDocument(options: {
 export async function runControlWorker(options: ControlWorkerOptions = {}): Promise<number> {
   const canonicalRepoPath = await resolveCanonicalRepo(options.startDir);
   await loadEnvFile(path.join(canonicalRepoPath, '.env.local'));
+  const providerLimits = configureProviderExecutionLimits(process.env, (message) => {
+    process.stderr.write(`[provider limits] ${message}\n`);
+  });
+  process.stderr.write(`[provider limits] startup=${providerLimits.startupTimeoutMs}ms inactivity=${providerLimits.idleTimeoutMs}ms ceiling=${providerLimits.overallTimeoutMs}ms\n`);
 
   const statePaths = resolveStatePaths({ canonicalRepoPath, localAppData: options.localAppData });
   await Promise.all([
@@ -1348,6 +1354,9 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
   const providerFleet = toSafeProviderFleet(
     buildProviderCapabilityRegistry({ discovery: providers, enumeratedModels }),
   );
+  // Frozen at process start: later source edits must not look like this process loaded them.
+  const hostSourceFingerprint = computeAgentHostSourceFingerprint(canonicalRepoPath);
+  const presenceProviders = [...providerFleet, { sourceFingerprint: hostSourceFingerprint }];
 
   let shutdownStarted = false;
   let running = true;
@@ -1361,7 +1370,7 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     presenceInFlight = true;
     void (async () => {
       try {
-        await controlPlane.publishPresence({ providers: providerFleet });
+        await controlPlane.publishPresence({ providers: presenceProviders });
       } catch {
         // Best effort — the local heartbeat file remains the host truth.
       } finally {
@@ -1431,7 +1440,7 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     void shutdown('unhandledRejection');
   });
 
-  await controlPlane.publishPresence({ providers: providerFleet });
+  await controlPlane.publishPresence({ providers: presenceProviders });
 
   // Restart recovery (§28): recoverInterruptedAttempts above only interrupted the
   // previous Host's stale Attempts. Hand every still-resumable Run back to the

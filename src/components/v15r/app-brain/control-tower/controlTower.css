@@ -344,6 +344,7 @@ body:has(.app-brain-destinations.ct-active) .app-brain-shell-metrics { display: 
 .ct-console .ct-page-header { align-items: center; min-height: 40px; }
 .ct-console .ct-page-header > div { display: flex; align-items: center; gap: 14px; }
 .ct-console .ct-page-header h1 { font-size: 17px; }
+.ct-host-restart { margin: 0; padding: 8px 12px; border: 1px solid rgba(240, 194, 97, .45); border-radius: 8px; background: rgba(240, 194, 97, .08); color: var(--ct-amber, #f0c261); font-size: 13px; }
 .ct-host-state { display: flex; align-items: center; gap: 7px; margin-left: auto; color: var(--ct-muted); font-size: 12px; }
 .ct-host-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--ct-muted); }
 .ct-host-connected i { background: var(--ct-green); }

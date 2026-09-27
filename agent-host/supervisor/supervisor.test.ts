@@ -193,7 +193,8 @@ test('supervisor: a hung provider is hard-timed-out by the executor and reconcil
       store,
       registry: new Map<ProviderAdapter['id'], ProviderAdapter>([[adapter.id, adapter]]),
       policyController: createNoOpAttemptPolicyController(),
-      // hard deadline = request timeout (100ms) + grace (50ms) = 150ms.
+      // hard deadline = absolute ceiling (100ms) + grace (50ms) = 150ms.
+      absoluteSafetyCeilingMs: 100,
       executionHardGraceMs: 50,
     });
 

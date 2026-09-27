@@ -10,6 +10,7 @@ import TowerWorkspace from './TowerWorkspace'
 import { isActiveSession } from './sessionPresentation'
 import { VerifierRejectionBanner } from './VerifierFailure'
 import CandidateApplyPanel from './CandidateApplyPanel'
+import HostRestartNotice from '@/features/control-tower/HostRestartNotice'
 import { useControlTowerReal, type ScopeDraft } from '@/features/control-tower/useControlTowerReal'
 import { EMPTY_NEXT_RUN_ROUTING, loadNextRunRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
 
@@ -47,6 +48,7 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
   const newRun = <button type="button" className="ct-primary" disabled={!hostConnected || busy} onClick={tower.openComposer} title={hostConnected ? 'Plan a new run' : 'Requires a connected local Host'}><Plus size={15} aria-hidden="true" />New Run</button>
   return <div className="ct-container"><main className="ct-shell ct-real ct-console" aria-label="Control Tower">
     <header className="ct-page-header"><div><p className="ct-eyebrow">PowerOn / Operations</p><h1>Control Tower</h1></div><span className={`ct-host-state ct-host-${presence.state}`}><i />{hostConnected ? 'Host connected' : presence.state === 'stale' ? 'Host stale' : 'Host unavailable'}</span><button type="button" className="ct-preview-access" onClick={() => setMode('preview')}>Preview</button></header>
+    <HostRestartNotice required={tower.hostRestartRequired} />
     {contextError && <section className="ct-unavailable" role="alert"><AlertTriangle size={16} aria-hidden="true" /><p>{contextError}</p></section>}
 
     {phase === 'composing' && <NewRunComposer presence={presence} busy={busy} draft={draft} onSubmit={submit} onCancel={tower.closeComposer} scopePacks={tower.scopePacks} scopePackRows={tower.scopePackRows} importWarning={tower.importWarning} importing={tower.importing} onImportScopePack={tower.importScopePack} surface="live" routing={routing} onRoutingChange={setRouting} />}

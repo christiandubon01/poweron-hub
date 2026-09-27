@@ -60,6 +60,9 @@ export type ProviderErrorCode =
   | 'PROTOCOL_ERROR'
   | 'PROVIDER_ERROR'
   | 'EXECUTION_TIMEOUT'
+  | 'PROVIDER_INACTIVITY_TIMEOUT'
+  | 'PROVIDER_ABSOLUTE_TIMEOUT'
+  | 'PROVIDER_PROCESS_FAILED'
   | 'EXECUTION_CANCELLED'
   | 'OUTPUT_LIMIT_EXCEEDED'
   | 'WORKING_DIRECTORY_INVALID';
@@ -90,7 +93,10 @@ export interface ExecutionRequest {
   requestedModel?: string;
   reasoningEffort?: string;
   permissionProfile: PermissionProfile;
-  /** Overall wall-clock timeout in milliseconds. Validated + clamped by the runner. */
+  /**
+   * Legacy task budget in milliseconds. Adapters do not use this as the kill
+   * clock. Inactivity and the absolute safety ceiling live in executionLimits.ts.
+   */
   timeoutMs: number;
 }
 
@@ -133,6 +139,10 @@ export interface ProcessExecutionResult {
   callbackErrorMessage?: string;
   startedAt: string | null;
   endedAt: string | null;
+  /** Last parsed provider event or isolated-workspace file write. */
+  lastActivityAt?: string | null;
+  limitFired?: 'startup' | 'inactivity' | 'ceiling' | 'none';
+  limitMs?: number | null;
   /** Total processed stdout bytes (not retained — only counted). */
   stdoutBytes: number;
   /** Total processed stderr bytes (not retained — only counted). */
@@ -200,6 +210,11 @@ export interface ExecutionResult {
     stdoutTail?: string;
     stderrTail?: string;
   };
+  lifecycle?: {
+    lastActivityAt: string | null;
+    limitFired: 'startup' | 'inactivity' | 'ceiling' | 'none';
+    limitMs: number | null;
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -213,7 +228,8 @@ export interface ExecutionResult {
  * orphans a child process.
  */
 export interface ExecutionStreamCallbacks {
-  onStdoutChunk?: (chunk: Buffer) => void;
+  /** Return true only after a complete, parsed provider event. */
+  onStdoutChunk?: (chunk: Buffer) => unknown;
   onStderrChunk?: (chunk: Buffer) => void;
 }
 

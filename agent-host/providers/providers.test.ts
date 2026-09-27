@@ -16,6 +16,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
+import './executionLimits.test.ts';
 import { JsonlDecoder } from './jsonl.ts';
 import {
   ProcessRunner,
@@ -449,11 +450,13 @@ test('process: 7) overall timeout', async (t) => {
 
 test('process: 8) idle timeout', async (t) => {
   const kill = recordingKill();
+  const decoder = new JsonlDecoder();
   const result = await runToResult(
     new ProcessRunner(),
     baseOptions(nativeLaunch('idle'), {
       timeouts: { overallTimeoutMs: 10_000, startupTimeoutMs: 10_000, idleTimeoutMs: 200, cancelGraceMs: 100 },
       killProcessTree: kill.fn,
+      callbacks: { onStdoutChunk: (chunk) => decoder.push(chunk).some((event) => event.type === 'json') },
     }),
   );
   assert.equal(result.timedOut, true);
@@ -775,9 +778,9 @@ test('process: 18) timeout validation', () => {
   assert.throws(() => validateOverallTimeout(Infinity), TimeoutValidationError);
   assert.throws(() => validateOverallTimeout('1000'), TimeoutValidationError);
   // below min -> clamped to min
-  assert.equal(validateOverallTimeout(5_000), OVERALL_TIMEOUT_MIN_MS);
+  assert.equal(validateOverallTimeout(500), OVERALL_TIMEOUT_MIN_MS);
   // above max -> clamped to max (no multi-hour runs)
-  assert.equal(validateOverallTimeout(99 * 60_000), OVERALL_TIMEOUT_MAX_MS);
+  assert.equal(validateOverallTimeout(999 * 60_000), OVERALL_TIMEOUT_MAX_MS);
   // in range -> unchanged
   assert.equal(validateOverallTimeout(120_000), 120_000);
 });
