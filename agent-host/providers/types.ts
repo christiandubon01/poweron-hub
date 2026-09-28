@@ -143,6 +143,8 @@ export interface ProcessExecutionResult {
   lastActivityAt?: string | null;
   limitFired?: 'startup' | 'inactivity' | 'ceiling' | 'none';
   limitMs?: number | null;
+  /** Windows termination bound or failed identity sweep may leave descendants. */
+  possibleSurvivors?: boolean;
   /** Total processed stdout bytes (not retained — only counted). */
   stdoutBytes: number;
   /** Total processed stderr bytes (not retained — only counted). */
@@ -214,6 +216,9 @@ export interface ExecutionResult {
     lastActivityAt: string | null;
     limitFired: 'startup' | 'inactivity' | 'ceiling' | 'none';
     limitMs: number | null;
+    possibleSurvivors?: boolean;
+    /** Hard backstop counted workspace files before provider settlement. */
+    changedFileCountPreExit?: boolean;
   };
 }
 

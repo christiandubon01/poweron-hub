@@ -22,6 +22,8 @@ import {
   ProcessRunner,
   buildCmdWrapperCommandLine,
   defaultKillProcessTree,
+  defaultWindowsProcessTreeOps,
+  createWindowsProcessTreeOps,
   isValidKillPid,
   resolveWorkingDirectory,
   validateOverallTimeout,
@@ -34,6 +36,9 @@ import {
   type LaunchDescriptor,
   type ProcessHandle,
   type RunProcessOptions,
+  snapshotWorkspaceFiles,
+  terminateWindowsProcessTree,
+  type WindowsProcessTreeOps,
 } from './processRunner.ts';
 import { buildProviderEnvironment } from './environmentPolicy.ts';
 import {
@@ -74,6 +79,7 @@ function baseOptions(
     workingDirectory: tmpDir,
     allowedWorkingDirectory: tmpDir,
     timeouts: { overallTimeoutMs: 10_000, startupTimeoutMs: 10_000, idleTimeoutMs: 10_000, cancelGraceMs: 100 },
+    platform: 'linux',
     ...overrides,
   };
 }
@@ -85,12 +91,13 @@ async function writeCmdWrapper(name: string): Promise<string> {
   return cmdPath;
 }
 
-/** Kill fn that records calls and delegates to the real tree kill (cleans up). */
+/** Kill only the exact child fixture PID; production operations are forbidden in tests. */
 function recordingKill(): { fn: KillProcessTreeFn; calls: number[] } {
   const calls: number[] = [];
   const fn: KillProcessTreeFn = async (pid: number) => {
     calls.push(pid);
-    return defaultKillProcessTree(pid);
+    forceStopKnownPid(pid);
+    return { killed: true };
   };
   return { fn, calls };
 }
@@ -520,6 +527,7 @@ test('process: forced settlement preserves cancellation when close never arrives
         postKillSettlementMs: 25,
       },
       spawnFn: () => child as any,
+      platform: 'linux',
       killProcessTree: async (pid) => {
         kills.push(pid);
         return { killed: true };
@@ -538,6 +546,285 @@ test('process: forced settlement preserves cancellation when close never arrives
 
   child.emit('close');
   assert.equal(child.unrefCalls, 1, 'late close must be a harmless no-op');
+});
+
+test('Windows tree termination awaits delayed taskkill, then sweeps a surviving grandchild', async () => {
+  let releaseTaskkill!: (value: { killed: boolean }) => void;
+  const taskkill = new Promise<{ killed: boolean }>((resolve) => { releaseTaskkill = resolve; });
+  const alive = new Map([[41, 'root-time'], [42, 'child-time'], [43, 'grandchild-time']]);
+  const calls: string[] = [];
+  const ops: WindowsProcessTreeOps = {
+    snapshot: async () => [...alive].map(([pid, creationTime]) => ({ pid, creationTime })),
+    sweep: async (snapshot) => snapshot.map(({ pid, creationTime }) => {
+      if (alive.get(pid) !== creationTime) return { pid, status: 'gone' };
+      calls.push(`sweep:${pid}`);
+      alive.delete(pid);
+      return { pid, status: 'killed' };
+    }),
+  };
+  let completed = false;
+  const done = terminateWindowsProcessTree(41, async () => { calls.push('taskkill'); return await taskkill; }, ops, 500)
+    .then((value) => { completed = true; return value; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(completed, false);
+  assert.deepEqual(calls, ['taskkill']);
+  alive.delete(41);
+  alive.delete(42);
+  releaseTaskkill({ killed: true });
+  assert.deepEqual(await done, { possibleSurvivors: false });
+  assert.deepEqual(calls, ['taskkill', 'sweep:43']);
+});
+
+test('Windows parent not found still sweeps, while a reused PID is never killed', async () => {
+  const killed: number[] = [];
+  const ops: WindowsProcessTreeOps = {
+    snapshot: async () => [{ pid: 51, creationTime: 'old-root' }, { pid: 52, creationTime: 'child' }, { pid: 53, creationTime: 'old-pid' }],
+    sweep: async (snapshot) => snapshot.map(({ pid, creationTime }) => {
+      const current = pid === 52 ? 'child' : pid === 53 ? 'new-pid' : null;
+      if (current !== creationTime) return { pid, status: current ? 'mismatch' : 'gone' };
+      killed.push(pid);
+      return { pid, status: 'killed' };
+    }),
+  };
+  const result = await terminateWindowsProcessTree(51, async () => ({ killed: true, error: 'not found' }), ops, 500);
+  assert.deepEqual(result, { possibleSurvivors: false });
+  assert.deepEqual(killed, [52]);
+});
+
+test('batched CIM command kills matching identities and leaves exact-string mismatches alone', async () => {
+  const rows = [
+    { ProcessId: 81, ParentProcessId: 1, CreationDate: '2026-09-27T01:00:00.0000000Z' },
+    { ProcessId: 82, ParentProcessId: 81, CreationDate: '2026-09-27T01:00:01.0000000Z' },
+    { ProcessId: 83, ParentProcessId: 82, CreationDate: '2026-09-27T01:00:02.0000000Z' },
+  ];
+  const live = new Map(rows.map((row) => [row.ProcessId, row.CreationDate]));
+  const killed: number[] = [];
+  let sweepCalls = 0;
+  const ops = createWindowsProcessTreeOps(async (script, input) => {
+    if (!input) return JSON.stringify(rows);
+    sweepCalls += 1;
+    assert.equal((script.match(/Get-CimInstance Win32_Process/gu) ?? []).length, 1);
+    assert.match(script, /Invoke-CimMethod -InputObject \$row -MethodName Terminate/u);
+    assert.match(script, /CreationDate\.ToUniversalTime\(\)\.ToString\('o'\) -cne/u);
+    assert.doesNotMatch(script, /Get-Process|StartTime/u);
+    const items = JSON.parse(input) as Array<{ pid: number; creationTime: string }>;
+    return JSON.stringify(items.map((item) => {
+      const current = live.get(item.pid);
+      if (!current) return { pid: item.pid, status: 'gone' };
+      if (current !== item.creationTime) return { pid: item.pid, status: 'mismatch' };
+      killed.push(item.pid);
+      live.delete(item.pid);
+      return { pid: item.pid, status: 'killed' };
+    }));
+  });
+  const snapshot = await ops.snapshot(81, new AbortController().signal);
+  assert.deepEqual(snapshot.map((item) => item.pid), [81, 82, 83]);
+  live.delete(81);
+  live.set(83, '2026-09-27T01:00:02.0000001Z');
+  const results = await ops.sweep(snapshot, new AbortController().signal);
+  assert.deepEqual(results.map((item) => item.status), ['gone', 'killed', 'mismatch']);
+  assert.deepEqual(killed, [82]);
+  assert.equal(sweepCalls, 1);
+});
+
+test('Host tests fail loudly before production CIM or taskkill can run', async () => {
+  assert.notEqual(process.env.NODE_TEST_CONTEXT, undefined);
+  await assert.rejects(defaultWindowsProcessTreeOps.snapshot(4242, new AbortController().signal), /forbidden in Host tests/u);
+  await assert.rejects(defaultWindowsProcessTreeOps.sweep([{ pid: 4242, creationTime: 'fake' }], new AbortController().signal), /forbidden in Host tests/u);
+  await assert.rejects(defaultKillProcessTree(4242), /forbidden in Host tests/u);
+});
+
+test('Windows snapshot failure still awaits taskkill before termination closes stdin', async () => {
+  class FakeChild extends EventEmitter {
+    pid = 54;
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    unref(): void {}
+  }
+  const child = new FakeChild();
+  let endCalls = 0;
+  (child.stdin as any).write = () => false;
+  const originalEnd = child.stdin.end.bind(child.stdin);
+  (child.stdin as any).end = (...args: any[]) => { endCalls += 1; return originalEnd(...args); };
+  child.stdin.on('finish', () => child.emit('close'));
+  let releaseTaskkill!: (result: { killed: boolean }) => void;
+  const taskkill = new Promise<{ killed: boolean }>((resolve) => { releaseTaskkill = resolve; });
+  let taskkillStarted = false;
+  let sweepCalled = false;
+  const handle = new ProcessRunner().run(baseOptions(nativeLaunch('hang'), {
+    platform: 'win32', prompt: 'held prompt', spawnFn: () => child as any,
+    windowsProcessTreeOps: { snapshot: async () => { throw new Error('CIM failed'); }, sweep: async () => { sweepCalled = true; return []; } },
+    killProcessTree: async () => { taskkillStarted = true; return await taskkill; },
+  }));
+  handle.cancel();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(taskkillStarted, true);
+  assert.equal(endCalls, 0);
+  releaseTaskkill({ killed: true });
+  const result = await handle.done;
+  assert.equal(endCalls, 1);
+  assert.equal(sweepCalled, false);
+  assert.equal(result.possibleSurvivors, true);
+});
+
+test('Windows taskkill has its own bound and finishes before the sweep and settlement', async () => {
+  let taskkillActive = false;
+  let taskkillAbandoned = false;
+  let sweepCalled = false;
+  const result = await terminateWindowsProcessTree(56, async (_pid, signal) => {
+    taskkillActive = true;
+    return await new Promise<{ killed: boolean }>((resolve) => signal!.addEventListener('abort', () => {
+      taskkillAbandoned = true;
+      taskkillActive = false;
+      resolve({ killed: false });
+    }, { once: true }));
+  }, {
+    snapshot: async () => [{ pid: 56, creationTime: 'original' }],
+    sweep: async () => { sweepCalled = true; assert.equal(taskkillActive, false); return [{ pid: 56, status: 'killed' }]; },
+  }, 20);
+  assert.equal(taskkillAbandoned, true);
+  assert.equal(sweepCalled, true);
+  assert.equal(taskkillActive, false);
+  assert.equal(result.possibleSurvivors, true);
+});
+
+test('Windows hung snapshot is aborted before awaited taskkill and settlement', async () => {
+  class FakeChild extends EventEmitter {
+    pid = 55;
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    unref(): void {}
+  }
+  const child = new FakeChild();
+  let endCalls = 0;
+  (child.stdin as any).write = () => false;
+  const originalEnd = child.stdin.end.bind(child.stdin);
+  (child.stdin as any).end = (...args: any[]) => { endCalls += 1; return originalEnd(...args); };
+  child.stdin.on('finish', () => child.emit('close'));
+  let snapshotChildKilled = false;
+  let noteSnapshotAborted!: () => void;
+  const snapshotAborted = new Promise<void>((resolve) => { noteSnapshotAborted = resolve; });
+  let releaseTaskkill!: (result: { killed: boolean }) => void;
+  const taskkill = new Promise<{ killed: boolean }>((resolve) => { releaseTaskkill = resolve; });
+  let taskkillStarted = false;
+  const handle = new ProcessRunner().run(baseOptions(nativeLaunch('hang'), {
+    platform: 'win32', prompt: 'held prompt', spawnFn: () => child as any, windowsTreeTerminationMs: 20,
+    windowsProcessTreeOps: {
+      snapshot: async (_pid, signal) => await new Promise((_, reject) => signal.addEventListener('abort', () => { snapshotChildKilled = true; noteSnapshotAborted(); reject(new Error('PowerShell child killed')); }, { once: true })),
+      sweep: async () => { throw new Error('sweep must be skipped'); },
+    },
+    killProcessTree: async () => { taskkillStarted = true; return await taskkill; },
+  }));
+  handle.cancel();
+  await snapshotAborted;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(snapshotChildKilled, true);
+  assert.equal(taskkillStarted, true);
+  assert.equal(endCalls, 0);
+  releaseTaskkill({ killed: true });
+  const result = await handle.done;
+  assert.equal(result.possibleSurvivors, true);
+  assert.equal(endCalls, 1);
+});
+
+test('Windows sweep bound settles runner and records possible survivors', async () => {
+  class FakeChild extends EventEmitter {
+    pid = 61;
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    unref(): void {}
+  }
+  const child = new FakeChild();
+  let sweepAbandoned = false;
+  let sweepActive = false;
+  const handle = new ProcessRunner().run(baseOptions(nativeLaunch('hang'), {
+    platform: 'win32',
+    spawnFn: () => child as any,
+    windowsTreeTerminationMs: 20,
+    windowsProcessTreeOps: {
+      snapshot: async () => [{ pid: 61, creationTime: 'root' }, { pid: 62, creationTime: 'child' }],
+      sweep: async (_snapshot, signal) => {
+        sweepActive = true;
+        return await new Promise((resolve) => signal.addEventListener('abort', () => {
+          sweepAbandoned = true;
+          sweepActive = false;
+          resolve([]);
+        }, { once: true }));
+      },
+    },
+    killProcessTree: async () => ({ killed: true }),
+  }));
+  handle.cancel();
+  child.emit('close');
+  let settled = false;
+  void handle.done.then(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  const result = await handle.done;
+  assert.equal(result.terminationReason, 'cancelled');
+  assert.equal(result.possibleSurvivors, true);
+  assert.equal(sweepAbandoned, true);
+  assert.equal(sweepActive, false);
+});
+
+test('workspace activity scanner skips node_modules and .git at every depth', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'workspace-poll-skip-'));
+  await mkdir(path.join(root, 'nested', 'node_modules'), { recursive: true });
+  await mkdir(path.join(root, 'nested', '.git'), { recursive: true });
+  await mkdir(path.join(root, 'nested', 'NODE_MODULES'), { recursive: true });
+  await mkdir(path.join(root, 'nested', '.GiT'), { recursive: true });
+  await writeFile(path.join(root, 'nested', 'node_modules', 'package.js'), 'one');
+  await writeFile(path.join(root, 'nested', '.git', 'index'), 'one');
+  await writeFile(path.join(root, 'nested', 'NODE_MODULES', 'uppercase.js'), 'one');
+  await writeFile(path.join(root, 'nested', '.GiT', 'uppercase-index'), 'one');
+  await writeFile(path.join(root, 'nested', 'visible.txt'), 'one');
+  const snapshot = await snapshotWorkspaceFiles(root);
+  assert.deepEqual([...snapshot!.keys()], [path.join('nested', 'visible.txt')]);
+});
+
+test('workspace activity polling skips ticks while an async scan is pending', async () => {
+  class FakeChild extends EventEmitter {
+    pid = 71;
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    unref(): void {}
+  }
+  const child = new FakeChild();
+  const timers = new Map<number, () => void>();
+  let nextTimer = 0;
+  let scans = 0;
+  let finishBaseline!: (value: Map<string, string>) => void;
+  const baseline = new Promise<Map<string, string>>((resolve) => { finishBaseline = resolve; });
+  const handle = new ProcessRunner().run(baseOptions(nativeLaunch('hang'), {
+    spawnFn: () => child as any,
+    activityWorkspacePath: tmpDir,
+    workspaceSnapshot: async () => { scans += 1; return scans === 1 ? await baseline : await new Promise<Map<string, string>>(() => undefined); },
+    timers: {
+      setTimeout: (fn) => { const id = ++nextTimer; timers.set(id, fn); return id as unknown as NodeJS.Timeout; },
+      clearTimeout: (id) => { timers.delete(id as unknown as number); },
+    },
+  }));
+  const tickPoll = (): void => {
+    const pollId = Math.max(...timers.keys());
+    const poll = timers.get(pollId);
+    assert.ok(poll);
+    timers.delete(pollId);
+    poll();
+  };
+  tickPoll();
+  tickPoll();
+  assert.equal(scans, 1);
+  finishBaseline(new Map());
+  await new Promise((resolve) => setImmediate(resolve));
+  tickPoll();
+  tickPoll();
+  assert.equal(scans, 2);
+  child.emit('close');
+  await handle.done;
 });
 
 test('process: failed exact tree kill is retried once before bounded settlement', async () => {
@@ -561,6 +848,7 @@ test('process: failed exact tree kill is retried once before bounded settlement'
         postKillSettlementMs: 250,
       },
       spawnFn: () => child as any,
+      platform: 'linux',
       killProcessTree: async (pid) => {
         kills.push(pid);
         return { killed: false, error: 'access denied' };
@@ -623,11 +911,9 @@ test('process: exact root tree kill handles a known grandchild within the bounde
     // clean up the exact descendant PID announced by this fixture. This never
     // discovers or targets a process by executable name.
     if (handle.pid !== null && processExists(handle.pid)) {
-      await defaultKillProcessTree(handle.pid);
       forceStopKnownPid(handle.pid);
     }
     if (grandchildPid !== null && processExists(grandchildPid)) {
-      await defaultKillProcessTree(grandchildPid);
       forceStopKnownPid(grandchildPid);
     }
     await new Promise((resolve) => setTimeout(resolve, 25));

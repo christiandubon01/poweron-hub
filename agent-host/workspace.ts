@@ -236,6 +236,7 @@ export async function captureWorkspaceTree(workspacePath: string): Promise<Works
   async function walk(directory: string, prefix: string): Promise<void> {
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (isExcludedWorkspacePath(entry.name)) continue;
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         await walk(path.join(directory, entry.name), relativePath);
@@ -248,6 +249,10 @@ export async function captureWorkspaceTree(workspacePath: string): Promise<Works
   }
   await walk(workspacePath, '');
   return { files };
+}
+
+export function isExcludedWorkspacePath(relativePath: string): boolean {
+  return relativePath.replaceAll('\\', '/').split('/').some((segment) => segment.toLowerCase() === 'node_modules' || segment.toLowerCase() === '.git');
 }
 
 export async function adjudicateAttemptWorkspace(options: {
@@ -289,6 +294,7 @@ function buildWorkspaceSnapshot(headSha: string, baseline: WorkspaceTree, finalT
   const entries: RepoStatusEntryFingerprint[] = [];
   const paths = new Set([...baseline.files.keys(), ...finalTree.files.keys()]);
   for (const repoPath of [...paths].sort()) {
+    if (isExcludedWorkspacePath(repoPath)) continue;
     const before = baseline.files.get(repoPath);
     const after = finalTree.files.get(repoPath);
     if (before?.sha256 === after?.sha256 && before?.sizeBytes === after?.sizeBytes) {

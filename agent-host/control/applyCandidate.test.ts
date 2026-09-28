@@ -488,6 +488,28 @@ test('traversal, absolute paths, and symlink escapes are rejected before any wri
   await rm(root, { recursive: true, force: true });
 });
 
+test('Apply Candidate cannot prepare writes beneath node_modules or .git, while a sibling file is allowed', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'apply-excluded-segments-'));
+  const canonical = path.join(root, 'canonical');
+  const workspace = path.join(root, 'workspace');
+  await mkdir(canonical);
+  await mkdir(path.join(workspace, 'src', 'feature'), { recursive: true });
+  await writeFile(path.join(workspace, 'src', 'feature', 'normal.ts'), 'normal');
+  const io: CandidateApplyIo = { readFile, writeFile: async (filePath, data) => writeFile(filePath, data), mkdir, rm, lstat };
+  try {
+    for (const relative of ['src/feature/node_modules/x.js', 'src/feature/NODE_MODULES/x.js', 'src/feature/.git/x', 'src/feature/.GiT/x']) {
+      const result = await prepareCandidateWrites({ canonicalRepoPath: canonical, workspacePath: workspace, baseline: new Map(), changes: [{ path: relative, kind: 'add' }], io });
+      assert.equal(result.ok, false, relative);
+      if (!result.ok) assert.equal(result.reason, APPLY_OWNER_REASONS.unsafe);
+    }
+    const normal = await prepareCandidateWrites({ canonicalRepoPath: canonical, workspacePath: workspace, baseline: new Map(), changes: [{ path: 'src/feature/normal.ts', kind: 'add' }], io });
+    assert.equal(normal.ok, true);
+    if (normal.ok) assert.deepEqual(normal.planned.map((entry) => entry.relative), ['src/feature/normal.ts']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('duplicate, reload, and retry requests apply a candidate only once', async () => {
   await withStore(async (store) => {
     seedRun(store, { paths: ['notes/smoke.txt'], changes: [{ path: 'notes/smoke.txt', kind: 'modify' }] });

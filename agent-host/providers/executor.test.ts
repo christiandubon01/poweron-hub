@@ -418,6 +418,32 @@ test('ATB-7B2: verifier reads the implementer candidate copy and leaves canonica
   store.close();
 });
 
+test('executor: failed policy-accepted Implementer is never offered to Verifier', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'failed-implementer-verifier-'));
+  const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  try {
+    store.createRun({ runId: 'run-1', title: 'Run' });
+    store.createTask({ taskId: 'task-impl', runId: 'run-1', title: 'Implement', spec: { plan: { role: 'implementer' } } });
+    store.createTask({ taskId: 'task-v', runId: 'run-1', title: 'Verify', spec: { plan: { role: 'verifier' } } });
+    store.addDependency('task-v', 'task-impl');
+    store.createAttempt({ attemptId: 'attempt-impl', taskId: 'task-impl', hostInstanceId: 'host-instance-1' });
+    store.transitionAttempt('attempt-impl', 'failed');
+    store.appendEvent({ eventId: 'failed-workspace-prepared', runId: 'run-1', taskId: 'task-impl', attemptId: 'attempt-impl', type: 'workspace.prepared', payload: { baselineHeadSha: 'a'.repeat(40) } });
+    store.appendEvent({ eventId: 'failed-policy-accepted', runId: 'run-1', taskId: 'task-impl', attemptId: 'attempt-impl', type: 'workspace.adjudication.completed', payload: { policyAccepted: true } });
+    store.createAttempt({ attemptId: 'attempt-v', taskId: 'task-v', hostInstanceId: 'host-instance-1' });
+    const adapter = new FakeAdapter({ id: 'codex' });
+    const executor = createExecutor(store, [adapter], { workspaceConfig: { canonicalRepoPath: root, workspaceRoot: path.join(root, 'workspaces'), repoKey: 'repo-key' } });
+    const outcome = await executor.execute(createExecutionInput({ taskId: 'task-v', attemptId: 'attempt-v', permissionProfile: 'verifier', workingDirectory: root }));
+    assert.equal(outcome.attempt.status, 'failed');
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.equal(store.listEvents().some((event) => event.attemptId === 'attempt-v' && event.type === 'workspace.prepared'), false);
+    assert.equal(store.listEvents().some((event) => event.type === 'workspace.changeset.ready'), false);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('executor: changeset-ready requires provider success and a non-empty accepted change', async () => {
   const cases = [
     { name: 'failed-no-op', providerSuccess: false, writesAuthorizedFile: false, expectedStatus: 'failed' },
@@ -736,6 +762,25 @@ test('executor: provider failure persists a bounded redacted stderr tail with pr
   }
 });
 
+test('executor: incomplete Windows tree sweep is durable bounded failure evidence', async () => {
+  const dbPath = await createTempDbPath('orch-windows-sweep-evidence-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+  try {
+    const adapter = new FakeAdapter({ id: 'codex', onExecute: async (request) => createExecutionResult({
+      executionId: request.executionId,
+      provider: { terminalState: 'failed', success: false, errorCode: 'PROVIDER_PROCESS_FAILED' },
+      lifecycle: { lastActivityAt: null, limitFired: 'none', limitMs: null, possibleSurvivors: true },
+    }) });
+    await createExecutor(store, [adapter]).execute(createExecutionInput());
+    const evidence = store.listEvents().find((event) => event.type === 'execution.failure_evidence');
+    assert.equal((evidence?.payload as Record<string, unknown>).possibleSurvivors, true);
+    assert.ok(Buffer.byteLength(JSON.stringify(evidence?.payload), 'utf8') <= 8192);
+  } finally {
+    store.close();
+  }
+});
+
 test('executor: successful provider does not persist diagnostic tails', async () => {
   const dbPath = await createTempDbPath('orch4c4c-success-diagnostic-');
   const store = createStore({ dbPath });
@@ -839,8 +884,46 @@ test('executor: a provider that never settles is hard-terminated at the executor
     const durableAttempt = store.getAttempt('attempt-1');
     assert.ok(durableAttempt);
     assert.deepEqual(classifyAttemptFailure(store, durableAttempt), { cause: 'execution-timeout' });
+    const evidence = store.listEvents().find((event) => event.type === 'execution.failure_evidence');
+    assert.equal((evidence?.payload as Record<string, unknown>).changedFileCountPreExit, true);
   } finally {
     store.close();
+  }
+});
+
+test('executor: hard backstop waits for provider settlement before counting workspace changes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hardtimeout-postexit-count-'));
+  const repoPath = path.join(root, 'repo');
+  const workspaceRoot = path.join(root, 'workspaces');
+  await mkdir(repoPath);
+  await git(repoPath, ['init']);
+  await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
+  await git(repoPath, ['config', 'user.name', 'Fixture']);
+  await writeFile(path.join(repoPath, 'README.md'), 'BASELINE\n');
+  await git(repoPath, ['add', '.']);
+  await git(repoPath, ['commit', '-m', 'baseline']);
+  const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  store.createRun({ runId: 'run-1', title: 'Run' });
+  store.createTask({ taskId: 'task-1', runId: 'run-1', title: 'Implement', spec: { policy: { authorizedWritePaths: ['result.txt'] }, plan: { role: 'implementer' } } });
+  store.createAttempt({ attemptId: 'attempt-1', taskId: 'task-1', hostInstanceId: 'host-instance-1' });
+  const settled = createDeferred<ExecutionResult>();
+  let workspacePath = '';
+  const adapter = new FakeAdapter({
+    id: 'codex',
+    onExecute: async (request) => { workspacePath = request.workingDirectory; return await settled.promise; },
+    onCancel: () => { void writeFile(path.join(workspacePath, 'result.txt'), 'AFTER_CANCEL\n').then(() => settled.resolve(createExecutionResult({ lifecycle: { lastActivityAt: null, limitFired: 'ceiling', limitMs: 50, possibleSurvivors: true } }))); },
+  });
+  try {
+    const executor = createExecutor(store, [adapter], { absoluteSafetyCeilingMs: 50, executionHardGraceMs: 100, workspaceConfig: { canonicalRepoPath: repoPath, workspaceRoot, repoKey: 'repo-key' } });
+    const outcome = await executor.execute(createExecutionInput({ permissionProfile: 'task-implementer', workingDirectory: repoPath }));
+    assert.equal(outcome.terminalEvent?.type, 'execution.timed_out');
+    const evidence = store.listEvents().find((event) => event.type === 'execution.failure_evidence');
+    assert.equal((evidence?.payload as Record<string, unknown>).changedFileCount, 1);
+    assert.equal((evidence?.payload as Record<string, unknown>).changedFileCountPreExit ?? false, false);
+    assert.equal((evidence?.payload as Record<string, unknown>).possibleSurvivors, true);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
 

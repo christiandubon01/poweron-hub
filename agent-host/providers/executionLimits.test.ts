@@ -28,7 +28,7 @@ import {
   PROVIDER_INACTIVITY_TIMEOUT_MS,
   PROVIDER_STARTUP_INACTIVITY_TIMEOUT_MS,
 } from './executionLimits.ts';
-import { CANCEL_GRACE_MS, ProcessRunner, type ProcessTimerControl } from './processRunner.ts';
+import { CANCEL_GRACE_MS, ProcessRunner, snapshotWorkspaceFiles, type ProcessTimerControl } from './processRunner.ts';
 import { JsonlDecoder } from './jsonl.ts';
 
 class ManualTimers implements ProcessTimerControl {
@@ -111,7 +111,7 @@ async function withRunner(
   }
 }
 
-function launch(dir: string, timers: ManualTimers, child: FakeChild, kill: () => void, activityWorkspacePath?: string) {
+function launch(dir: string, timers: ManualTimers, child: FakeChild, kill: () => void, activityWorkspacePath?: string, onWorkspaceSnapshot?: () => void) {
   const decoder = new JsonlDecoder();
   return new ProcessRunner().run({
     executionId: 'exec-limits',
@@ -119,8 +119,18 @@ function launch(dir: string, timers: ManualTimers, child: FakeChild, kill: () =>
     workingDirectory: dir,
     allowedWorkingDirectory: dir,
     activityWorkspacePath,
+    workspaceSnapshot: onWorkspaceSnapshot ? async (root) => {
+      const snapshot = await snapshotWorkspaceFiles(root);
+      onWorkspaceSnapshot();
+      return snapshot;
+    } : undefined,
     timers,
     spawnFn: () => child as unknown as ChildProcess,
+    platform: 'win32',
+    windowsProcessTreeOps: {
+      snapshot: async () => [{ pid: child.pid, creationTime: 'fixture' }],
+      sweep: async () => [{ pid: child.pid, status: 'gone' }],
+    },
     callbacks: { onStdoutChunk: (chunk) => decoder.push(chunk).some((event) => event.type === 'json') },
     killProcessTree: async () => {
       kill();
@@ -181,10 +191,28 @@ test('a file write inside the isolated workspace resets inactivity', async () =>
   await withRunner(async ({ dir, timers, child, kill }) => {
     const workspace = path.join(dir, 'attempt');
     await mkdir(workspace);
-    const handle = launch(dir, timers, child, kill, workspace);
+    let scanned = 0;
+    let baselineReady!: () => void;
+    let changeReady!: () => void;
+    let postWriteReady!: () => void;
+    const baseline = new Promise<void>((resolve) => { baselineReady = resolve; });
+    const change = new Promise<void>((resolve) => { changeReady = resolve; });
+    const postWrite = new Promise<void>((resolve) => { postWriteReady = resolve; });
+    const handle = launch(dir, timers, child, kill, workspace, () => {
+      scanned += 1;
+      if (scanned === 1) baselineReady();
+      if (scanned === 2) changeReady();
+      if (scanned === 3) postWriteReady();
+    });
+    await baseline;
+    await new Promise((resolve) => setImmediate(resolve));
     timers.tick(PROVIDER_STARTUP_INACTIVITY_TIMEOUT_MS - 1_500);
+    await change;
+    await new Promise((resolve) => setImmediate(resolve));
     await writeFile(path.join(workspace, 'change.txt'), 'one');
     timers.tick(500);
+    await postWrite;
+    await new Promise((resolve) => setImmediate(resolve));
     timers.tick(PROVIDER_INACTIVITY_TIMEOUT_MS - 1_000);
     await Promise.resolve();
     assert.equal(handle.done instanceof Promise, true);
@@ -220,6 +248,11 @@ test('Windows tree kill precedes parent EOF and clears fake descendants', async 
       executionId: 'tree', launch: { kind: 'native', executable: process.execPath, argv: [] },
       workingDirectory: dir, allowedWorkingDirectory: dir,
       spawnFn: () => child as unknown as ChildProcess,
+      platform: 'win32',
+      windowsProcessTreeOps: {
+        snapshot: async () => [...descendants].map((pid) => ({ pid, creationTime: String(pid) })),
+        sweep: async (snapshot) => snapshot.map(({ pid }) => ({ pid, status: descendants.has(pid) ? 'failed' : 'gone' })),
+      },
       killProcessTree: async () => {
         killCalled = true;
         descendants.clear();

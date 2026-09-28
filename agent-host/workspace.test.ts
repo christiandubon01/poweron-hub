@@ -8,6 +8,7 @@ import test from 'node:test';
 
 import {
   adjudicateAttemptWorkspace,
+  captureWorkspaceTree,
   materializeAttemptWorkspace,
   materializeVerifierWorkspace,
   resolveImplementerCandidateWorkspace,
@@ -101,6 +102,42 @@ test('workspace: policy accepts only authorized isolated changes and produces a 
     { kind: 'add', path: 'agent-host/smoke/orch4c-smoke.txt' },
   ]);
   assert.equal((await readFile(path.join(fixture.repoPath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+});
+
+test('workspace: provider-created node_modules and .git are absent from count and candidate changes', async () => {
+  const fixture = await createRepo();
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+  });
+  const prefix = path.join(workspace.workspacePath, 'src', 'feature');
+  await mkdir(path.join(prefix, 'node_modules'), { recursive: true });
+  await mkdir(path.join(prefix, '.git'), { recursive: true });
+  await writeFile(path.join(prefix, 'node_modules', 'x.js'), 'generated');
+  await writeFile(path.join(prefix, '.git', 'x'), 'generated');
+  await writeFile(path.join(prefix, 'normal.ts'), 'export const normal = true;\n');
+  const result = await adjudicateAttemptWorkspace({
+    workspace, runId: 'run-1', task: task(['src/feature/**']), attemptId: 'attempt-1', permissionProfile: 'task-implementer',
+  });
+  assert.equal(result.policy.accepted, true);
+  assert.equal(result.changedFileCount, 1);
+  assert.deepEqual(result.changeSet?.changes.map((change) => change.path), ['src/feature/normal.ts']);
+  assert.deepEqual([...((await captureWorkspaceTree(workspace.workspacePath)).files.keys())].filter((name) => name.startsWith('src/feature/')), ['src/feature/normal.ts']);
+});
+
+test('workspace: excluded directories are omitted from the baseline capture too', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'workspace-baseline-exclusions-'));
+  await mkdir(path.join(root, 'src', 'NODE_MODULES'), { recursive: true });
+  await mkdir(path.join(root, 'src', '.GiT'), { recursive: true });
+  await writeFile(path.join(root, 'src', 'NODE_MODULES', 'x.js'), 'baseline');
+  await writeFile(path.join(root, 'src', '.GiT', 'x'), 'baseline');
+  await writeFile(path.join(root, 'src', 'normal.ts'), 'baseline');
+  try {
+    assert.deepEqual([...((await captureWorkspaceTree(root)).files.keys())], ['src/normal.ts']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('workspace: out-of-scope, protected, and secret writes are rejected without a changeset', async () => {

@@ -19,6 +19,7 @@ import {
   adjudicateAttemptWorkspace,
   captureWorkspaceTree,
   describeWorkspaceDelta,
+  isExcludedWorkspacePath,
   readCandidateChangeIndex,
   readCapturedBaseline,
   resolveAttemptWorkspacePath,
@@ -437,7 +438,7 @@ export async function prepareCandidateWrites(options: {
     } catch {
       return { ok: false, reason: APPLY_OWNER_REASONS.unsafe };
     }
-    if (relative === '.git' || relative.startsWith('.git/')) {
+    if (isExcludedWorkspacePath(relative)) {
       return { ok: false, reason: APPLY_OWNER_REASONS.unsafe };
     }
     let absolute: string;

@@ -379,6 +379,7 @@ function buildExecutionResult(
     lifecycle: {
       lastActivityAt: processResult.lastActivityAt ?? null,
       limitFired: processResult.limitFired ?? 'none',
+      possibleSurvivors: processResult.possibleSurvivors,
       limitMs: processResult.limitMs ?? null,
     },
   };

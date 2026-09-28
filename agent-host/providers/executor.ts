@@ -358,6 +358,8 @@ export class AttemptExecutor {
           limitFired: providerResult.lifecycle?.limitFired ?? 'none',
           limitMs: providerResult.lifecycle?.limitMs ?? null,
           changedFileCount: workspaceAdjudication?.changedFileCount ?? 0,
+          ...(providerResult.lifecycle?.changedFileCountPreExit ? { changedFileCountPreExit: true } : {}),
+          ...(providerResult.lifecycle?.possibleSurvivors ? { possibleSurvivors: true } : {}),
           sessionId: sanitizeOptional(providerResult.session.sessionId, 256) ?? null,
         });
       }
@@ -471,6 +473,7 @@ export class AttemptExecutor {
 
     return await new Promise<ExecutionResult>((resolve) => {
       let settled = false;
+      let deadlineFired = false;
       let timer: NodeJS.Timeout | undefined;
 
       const finish = (result: ExecutionResult): void => {
@@ -486,19 +489,27 @@ export class AttemptExecutor {
       };
 
       timer = setTimeout(() => {
+        deadlineFired = true;
         try {
           adapter.cancel(request.attemptId);
         } catch {
           // Best-effort process-tree termination; the hard timeout result stands
           // even if the adapter cannot be signalled.
         }
-        finish(buildProviderTimeoutResult(request, this.absoluteSafetyCeilingMs));
+        let graceTimer: NodeJS.Timeout;
+        void Promise.race([
+          providerPromise.then((result) => ({ preExit: false, possibleSurvivors: result.lifecycle?.possibleSurvivors ?? false }), () => ({ preExit: false, possibleSurvivors: false })),
+          new Promise<{ preExit: boolean; possibleSurvivors: boolean }>((resolveGrace) => { graceTimer = setTimeout(() => resolveGrace({ preExit: true, possibleSurvivors: true }), this.executionHardGraceMs); }),
+        ]).then(({ preExit, possibleSurvivors }) => {
+          clearTimeout(graceTimer);
+          finish(buildProviderTimeoutResult(request, this.absoluteSafetyCeilingMs, preExit, possibleSurvivors));
+        });
       }, hardDeadlineMs);
 
       providerPromise.then(
-        (result) => finish(result),
+        (result) => { if (!deadlineFired) finish(result); },
         (error) =>
-          finish(
+          !deadlineFired && finish(
             buildProviderUnavailableResult(
               request,
               sanitizeString(error instanceof Error ? error.message : String(error), STRING_FIELD_LIMIT),
@@ -600,6 +611,8 @@ export class AttemptExecutor {
           limitFired: result.lifecycle?.limitFired ?? 'none',
           limitMs: result.lifecycle?.limitMs ?? null,
           changedFileCount,
+          ...(result.lifecycle?.changedFileCountPreExit ? { changedFileCountPreExit: true } : {}),
+          ...(result.lifecycle?.possibleSurvivors ? { possibleSurvivors: true } : {}),
           sessionId: sanitizeOptional(result.session.sessionId, 256) ?? null,
         },
       });
@@ -1095,7 +1108,7 @@ function resolveHardDeadlineMs(absoluteCeilingMs: number, graceMs: number): numb
  * terminal event to `execution.timed_out` and the durable classification to the
  * retryable `execution-timeout` cause; `reportedModel` is never fabricated.
  */
-function buildProviderTimeoutResult(request: ExecutionRequest, ceilingMs: number): ExecutionResult {
+function buildProviderTimeoutResult(request: ExecutionRequest, ceilingMs: number, changedFileCountPreExit: boolean, possibleSurvivors: boolean): ExecutionResult {
   return {
     executionId: request.executionId,
     process: {
@@ -1120,7 +1133,7 @@ function buildProviderTimeoutResult(request: ExecutionRequest, ceilingMs: number
     },
     session: {},
     output: {},
-    lifecycle: { lastActivityAt: null, limitFired: 'ceiling', limitMs: ceilingMs },
+    lifecycle: { lastActivityAt: null, limitFired: 'ceiling', limitMs: ceilingMs, changedFileCountPreExit, possibleSurvivors },
   };
 }
 

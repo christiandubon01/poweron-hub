@@ -21,7 +21,7 @@
 
 import { spawn, execFile } from 'node:child_process';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { realpathSync, readdirSync, statSync } from 'node:fs';
+import { realpathSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -56,6 +56,8 @@ export const POST_KILL_SETTLEMENT_MS = 3_000;
 /** One bounded retry is allowed when exact-PID tree termination reports failure. */
 export const TREE_KILL_RETRY_MS = 100;
 export const WORKSPACE_POLL_MS = 1_000;
+/** Separate budget for each Windows snapshot, taskkill, and sweep command. */
+export const WINDOWS_TREE_TERMINATION_MS = 5_000;
 
 /** Retained stdout tail (last 64 KiB). Stream throughput is NOT capped by this. */
 export const STDOUT_RETAINED_TAIL_BYTES = 64 * 1024;
@@ -287,7 +289,109 @@ export interface KillResult {
   error?: string;
 }
 
-export type KillProcessTreeFn = (pid: number) => Promise<KillResult>;
+export type KillProcessTreeFn = (pid: number, signal?: AbortSignal) => Promise<KillResult>;
+
+export interface WindowsProcessIdentity { pid: number; creationTime: string }
+export interface WindowsSweepResult { pid: number; status: 'killed' | 'gone' | 'mismatch' | 'failed' }
+export interface WindowsProcessTreeOps {
+  /** Implementations must stop their command and settle when signal aborts. */
+  snapshot(pid: number, signal: AbortSignal): Promise<WindowsProcessIdentity[]>;
+  sweep(snapshot: readonly WindowsProcessIdentity[], signal: AbortSignal): Promise<WindowsSweepResult[]>;
+}
+
+const windowsPowerShell = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+const productionProcessOpsDisabled = process.env.NODE_TEST_CONTEXT !== undefined;
+
+function assertProductionProcessOpsAllowed(): void {
+  if (productionProcessOpsDisabled) throw new Error('Real process operations are forbidden in Host tests');
+}
+
+function runWindowsPowerShell(script: string, input: string, signal: AbortSignal): Promise<string> {
+  assertProductionProcessOpsAllowed();
+  return new Promise((resolve, reject) => {
+    const child = spawn(windowsPowerShell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let error: Error | null = null;
+    const abort = (): void => { child.kill('SIGKILL'); };
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    child.stdout?.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > 8 * 1024 * 1024) {
+        error = new Error('Windows process query output exceeded its bound');
+        abort();
+      } else chunks.push(chunk);
+    });
+    child.stderr?.on('data', () => undefined);
+    child.stdin?.on('error', () => undefined);
+    child.on('error', (cause: Error) => { error = cause; });
+    child.on('close', (code) => {
+      signal.removeEventListener('abort', abort);
+      if (signal.aborted || error || code !== 0) reject(error ?? new Error('Windows process command failed or was abandoned'));
+      else resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    child.stdin?.end(input);
+  });
+}
+
+export function createWindowsProcessTreeOps(runCommand: (script: string, input: string, signal: AbortSignal) => Promise<string>): WindowsProcessTreeOps {
+  return {
+  async snapshot(pid, signal) {
+    const script = "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{Name='CreationDate';Expression={$_.CreationDate.ToUniversalTime().ToString('o')}} | ConvertTo-Json -Compress";
+    const parsed: unknown = JSON.parse(await runCommand(script, '', signal));
+    const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{ ProcessId: number; ParentProcessId: number; CreationDate: string }>;
+    const descendants = new Set([pid]);
+    let added = true;
+    while (added) {
+      added = false;
+      for (const row of rows) {
+        if (!descendants.has(row.ProcessId) && descendants.has(row.ParentProcessId)) {
+          descendants.add(row.ProcessId);
+          added = true;
+        }
+      }
+    }
+    return rows.filter((row) => descendants.has(row.ProcessId) && typeof row.CreationDate === 'string')
+      .map((row) => ({ pid: row.ProcessId, creationTime: row.CreationDate }));
+  },
+  async sweep(snapshot, signal) {
+    const script = "$ErrorActionPreference='Stop'; $items=@([Console]::In.ReadToEnd() | ConvertFrom-Json); $live=@(Get-CimInstance Win32_Process); $byPid=@{}; foreach($row in $live){$byPid[[int]$row.ProcessId]=$row}; $results=foreach($item in $items){$id=[int]$item.pid; $row=$byPid[$id]; if($null -eq $row){[pscustomobject]@{pid=$id;status='gone'}} elseif($row.CreationDate.ToUniversalTime().ToString('o') -cne [string]$item.creationTime){[pscustomobject]@{pid=$id;status='mismatch'}} else {try {$result=Invoke-CimMethod -InputObject $row -MethodName Terminate; $status=if($result.ReturnValue -eq 0){'killed'}else{'failed'}} catch {$status='failed'}; [pscustomobject]@{pid=$id;status=$status}}}; ConvertTo-Json -InputObject @($results) -Compress -Depth 3";
+    const parsed: unknown = JSON.parse(await runCommand(script, JSON.stringify(snapshot), signal));
+    return (Array.isArray(parsed) ? parsed : [parsed]) as WindowsSweepResult[];
+  },
+  };
+}
+
+export const defaultWindowsProcessTreeOps = createWindowsProcessTreeOps(runWindowsPowerShell);
+
+async function boundedWindowsOperation<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): Promise<{ ok: true; value: T } | { ok: false }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const value = await run(controller.signal);
+    return controller.signal.aborted ? { ok: false } : { ok: true, value };
+  } catch {
+    return { ok: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function terminateWindowsProcessTree(pid: number, killTree: KillProcessTreeFn, ops: WindowsProcessTreeOps, boundMs: number): Promise<{ possibleSurvivors: boolean }> {
+  const captured = await boundedWindowsOperation((signal) => ops.snapshot(pid, signal), boundMs);
+  const snapshot = captured.ok ? captured.value.filter((item) => isValidKillPid(item.pid) && typeof item.creationTime === 'string' && item.creationTime.length > 0) : [];
+  const taskkill = await boundedWindowsOperation((signal) => killTree(pid, signal), boundMs);
+  let possibleSurvivors = !captured.ok || snapshot.length === 0 || !taskkill.ok || !taskkill.value.killed;
+  if (captured.ok && snapshot.length > 0) {
+    const swept = await boundedWindowsOperation((signal) => ops.sweep(snapshot, signal), boundMs);
+    if (!swept.ok || swept.value.length !== snapshot.length || swept.value.some((result, index) =>
+      result.pid !== snapshot[index]?.pid || !['killed', 'gone', 'mismatch'].includes(result.status))) possibleSurvivors = true;
+  }
+  return { possibleSurvivors };
+}
 
 /**
  * Validate a PID before any kill operation. Rejects non-integers, non-positive,
@@ -304,7 +408,8 @@ export function isValidKillPid(pid: unknown): pid is number {
  * interpolation. PID is validated first. On non-Windows, falls back to
  * `process.kill(pid, 'SIGKILL')` (best-effort; this project targets Windows).
  */
-export const defaultKillProcessTree: KillProcessTreeFn = async (pid: number): Promise<KillResult> => {
+export const defaultKillProcessTree: KillProcessTreeFn = async (pid: number, signal?: AbortSignal): Promise<KillResult> => {
+  assertProductionProcessOpsAllowed();
   if (!isValidKillPid(pid)) {
     return { killed: false, error: `invalid pid: ${String(pid)}` };
   }
@@ -315,6 +420,7 @@ export const defaultKillProcessTree: KillProcessTreeFn = async (pid: number): Pr
       await execFileAsync(taskkillPath, ['/PID', String(pid), '/T', '/F'], {
         windowsHide: true,
         timeout: 5000,
+        signal,
       });
       return { killed: true };
     } catch (err) {
@@ -430,6 +536,14 @@ export interface RunProcessOptions {
   limits?: Partial<OutputLimits>;
   /** Injectable kill (tests record calls without killing unrelated processes). */
   killProcessTree?: KillProcessTreeFn;
+  /** Windows process identity operations (test seam). */
+  windowsProcessTreeOps?: WindowsProcessTreeOps;
+  /** Test seam for the bounded Windows snapshot, taskkill, and sweep. */
+  windowsTreeTerminationMs?: number;
+  /** Async workspace metadata scanner (test seam). */
+  workspaceSnapshot?: (root: string) => Promise<Map<string, string> | null>;
+  /** Test seam for Windows lifecycle behavior. */
+  platform?: NodeJS.Platform;
   /** Injectable spawn (tests). Always called as (command, argv, options). */
   spawnFn?: SpawnFn;
   /** Injectable clock for deterministic timestamps. */
@@ -461,6 +575,7 @@ export class ProcessRunner {
   run(options: RunProcessOptions): ProcessHandle {
     const now = options.now ?? (() => new Date());
     const killFn = options.killProcessTree ?? defaultKillProcessTree;
+    const platform = options.platform ?? process.platform;
     const spawnFn: SpawnFn = options.spawnFn ?? spawn;
     const scheduleTimeout = options.timers?.setTimeout ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
     const cancelTimeout = options.timers?.clearTimeout ?? ((handle: NodeJS.Timeout) => { clearTimeout(handle); });
@@ -560,11 +675,14 @@ export class ProcessRunner {
     let postKillTimer: NodeJS.Timeout | undefined;
     let treeKillRetryTimer: NodeJS.Timeout | undefined;
     let workspacePollTimer: NodeJS.Timeout | undefined;
-    let workspaceFiles = options.activityWorkspacePath ? snapshotWorkspaceFiles(options.activityWorkspacePath) : null;
+    let workspaceFiles: Map<string, string> | null = null;
+    let workspaceScanPending = false;
+    const workspaceSnapshot = options.workspaceSnapshot ?? snapshotWorkspaceFiles;
     let treeKillAttempts = 0;
     let postKillWaits = 0;
     let treeKillPending = false;
     let closeObserved = false;
+    let possibleSurvivors = false;
 
     let resolveDone!: (result: ProcessExecutionResult) => void;
     const done = new Promise<ProcessExecutionResult>((resolve) => {
@@ -637,6 +755,7 @@ export class ProcessRunner {
         lastActivityAt,
         limitFired: reason === 'timeout-startup' ? 'startup' : reason === 'timeout-idle' ? 'inactivity' : reason === 'timeout-overall' ? 'ceiling' : 'none',
         limitMs: reason === 'timeout-startup' ? timeouts.startupTimeoutMs : reason === 'timeout-idle' ? (timeouts.idleTimeoutMs ?? null) : reason === 'timeout-overall' ? timeouts.overallTimeoutMs : null,
+        possibleSurvivors,
         stdoutBytes,
         stderrBytes,
         stdoutTail: stdoutTail.toString(),
@@ -705,6 +824,20 @@ export class ProcessRunner {
 
       const pid = capturedPid;
       if (isValidKillPid(pid)) {
+        if (platform === 'win32') {
+          treeKillPending = true;
+          void terminateWindowsProcessTree(pid, killFn, options.windowsProcessTreeOps ?? defaultWindowsProcessTreeOps, options.windowsTreeTerminationMs ?? WINDOWS_TREE_TERMINATION_MS)
+            .then((result) => { possibleSurvivors = result.possibleSurvivors; })
+            .catch(() => { possibleSurvivors = true; })
+            .finally(() => {
+              treeKillPending = false;
+              try { child?.stdin?.end(); } catch { /* ignore */ }
+              if (state !== 'terminating') return;
+              if (closeObserved) settle(pendingReason ?? reason);
+              else postKillTimer = scheduleTimeout(() => { releaseProcessResources(); settle(pendingReason ?? reason); }, timeouts.postKillSettlementMs);
+            });
+          return;
+        }
         const forceKill = (): void => {
             if (state !== 'terminating') {
               return;
@@ -747,11 +880,7 @@ export class ProcessRunner {
                 }
               });
           };
-        if (process.platform === 'win32') {
-          forceKill();
-        } else {
-          graceTimer = scheduleTimeout(forceKill, timeouts.cancelGraceMs);
-        }
+        graceTimer = scheduleTimeout(forceKill, timeouts.cancelGraceMs);
       } else {
         settle(reason);
       }
@@ -803,14 +932,21 @@ export class ProcessRunner {
     // ---- Timers ------------------------------------------------------------
     overallTimer = scheduleTimeout(() => terminate('timeout-overall'), timeouts.overallTimeoutMs);
     startupTimer = scheduleTimeout(() => terminate('timeout-startup'), timeouts.startupTimeoutMs);
-    if (workspaceFiles) {
+    if (options.activityWorkspacePath) {
       const pollWorkspace = (): void => {
         if (state === 'settled' || state === 'terminating' || !options.activityWorkspacePath) return;
-        const current = snapshotWorkspaceFiles(options.activityWorkspacePath);
-        if (current && workspaceFiles && workspaceSnapshotChanged(workspaceFiles, current)) markActivity();
-        if (current) workspaceFiles = current;
         workspacePollTimer = scheduleTimeout(pollWorkspace, WORKSPACE_POLL_MS);
+        if (workspaceScanPending) return;
+        workspaceScanPending = true;
+        void workspaceSnapshot(options.activityWorkspacePath).then((current) => {
+          if (state === 'settled' || state === 'terminating') return;
+          if (current && workspaceFiles && workspaceSnapshotChanged(workspaceFiles, current)) markActivity();
+          if (current) workspaceFiles = current;
+        }).catch(() => undefined).finally(() => { workspaceScanPending = false; });
       };
+      workspaceScanPending = true;
+      void workspaceSnapshot(options.activityWorkspacePath).then((current) => { workspaceFiles = current; })
+        .catch(() => undefined).finally(() => { workspaceScanPending = false; });
       workspacePollTimer = scheduleTimeout(pollWorkspace, WORKSPACE_POLL_MS);
     }
 
@@ -914,17 +1050,19 @@ export class ProcessRunner {
 }
 
 /** Metadata polling avoids platform-specific recursive watch behavior. Symlinks are ignored. */
-function snapshotWorkspaceFiles(root: string): Map<string, string> | null {
+export async function snapshotWorkspaceFiles(root: string): Promise<Map<string, string> | null> {
   const files = new Map<string, string>();
   try {
     const pending = [root];
     while (pending.length > 0) {
       const directory = pending.pop()!;
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
         const fullPath = path.join(directory, entry.name);
-        if (entry.isDirectory()) pending.push(fullPath);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory() && entry.name.toLowerCase() !== 'node_modules' && entry.name.toLowerCase() !== '.git') pending.push(fullPath);
         else if (entry.isFile()) {
-          const stat = statSync(fullPath);
+          const stat = await fs.lstat(fullPath);
+          if (!stat.isFile()) continue;
           files.set(path.relative(root, fullPath), `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`);
         }
       }
