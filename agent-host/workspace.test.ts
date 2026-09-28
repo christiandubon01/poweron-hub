@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -137,6 +137,31 @@ test('workspace: excluded directories are omitted from the baseline capture too'
     assert.deepEqual([...((await captureWorkspaceTree(root)).files.keys())], ['src/normal.ts']);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('workspace: symlinks and directory junctions are never followed (CT-REL-2 goal 10)', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'workspace-baseline-symlinks-'));
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'workspace-baseline-symlinks-outside-'));
+  try {
+    // A real directory OUTSIDE the workspace the link points into — following it
+    // would leak foreign files into the captured tree.
+    await writeFile(path.join(outside, 'leaked.ts'), 'never capture me');
+    await writeFile(path.join(root, 'normal.ts'), 'baseline');
+    // Directory junction (Windows reports junctions as symlinks via Dirent).
+    await symlink(outside, path.join(root, 'escape'), 'junction');
+    // File symlink — best-effort: creating one needs a symlink privilege that
+    // may be absent (EPERM); the junction above is the realistic escape hatch.
+    try {
+      await symlink(path.join(outside, 'leaked.ts'), path.join(root, 'file-link.ts'));
+    } catch (error) {
+      assert.ok((error as NodeJS.ErrnoException).code === 'EPERM', 'unexpected symlink failure');
+    }
+    const tree = await captureWorkspaceTree(root);
+    assert.deepEqual([...tree.files.keys()], ['normal.ts'], 'neither the junction nor the file symlink is captured');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

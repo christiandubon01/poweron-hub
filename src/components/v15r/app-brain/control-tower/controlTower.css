@@ -347,8 +347,10 @@ body:has(.app-brain-destinations.ct-active) .app-brain-shell-metrics { display: 
 .ct-host-restart { margin: 0; padding: 8px 12px; border: 1px solid rgba(240, 194, 97, .45); border-radius: 8px; background: rgba(240, 194, 97, .08); color: var(--ct-amber, #f0c261); font-size: 13px; }
 .ct-host-state { display: flex; align-items: center; gap: 7px; margin-left: auto; color: var(--ct-muted); font-size: 12px; }
 .ct-host-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--ct-muted); }
-.ct-host-connected i { background: var(--ct-green); }
-.ct-host-stale i { background: var(--ct-amber); }
+.ct-host-healthy i { background: var(--ct-green); }
+.ct-host-delayed i { background: var(--ct-cyan); }
+.ct-host-degraded i { background: var(--ct-amber); }
+.ct-host-offline i { background: var(--ct-red, #f87171); }
 .ct-shell .ct-preview-access { min-height: 32px; padding: 4px 10px; border-color: transparent; background: transparent; color: var(--ct-muted); }
 .ct-destinations { border-bottom: 1px solid rgba(148,163,184,.1); padding-bottom: 10px; }
 .ct-destinations button { background: transparent; border-color: transparent; }

@@ -689,6 +689,31 @@ test('Windows taskkill has its own bound and finishes before the sweep and settl
   assert.equal(result.possibleSurvivors, true);
 });
 
+test('a bound that fires while the kill op ignores the abort still settles on the bound itself (CT-REL-2 goal 9)', async () => {
+  // The kill op NEVER settles — not even on abort (a hung child that ignores
+  // the signal). The bounded operation must settle ON THE BOUND anyway, so no
+  // kill step can block termination indefinitely.
+  let sweepCalled = false;
+  const startedAt = Date.now();
+  const result = await terminateWindowsProcessTree(
+    57,
+    () => new Promise<{ killed: boolean }>(() => undefined),
+    {
+      snapshot: async () => [{ pid: 57, creationTime: 'original' }],
+      sweep: async () => {
+        sweepCalled = true;
+        return [{ pid: 57, status: 'killed' }];
+      },
+    },
+    25,
+  );
+  const elapsed = Date.now() - startedAt;
+  assert.equal(result.possibleSurvivors, true, 'an abandoned kill flags possible survivors');
+  assert.ok(elapsed >= 20, 'the bound was actually awaited');
+  assert.ok(elapsed < 1_000, `termination must settle on the bound, not the hung child (took ${elapsed}ms)`);
+  assert.equal(sweepCalled, true, 'the sweep still runs after the bound settles');
+});
+
 test('Windows hung snapshot is aborted before awaited taskkill and settlement', async () => {
   class FakeChild extends EventEmitter {
     pid = 55;

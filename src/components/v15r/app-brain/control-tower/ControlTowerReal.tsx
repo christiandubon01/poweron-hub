@@ -11,6 +11,7 @@ import { isActiveSession } from './sessionPresentation'
 import { VerifierRejectionBanner } from './VerifierFailure'
 import CandidateApplyPanel from './CandidateApplyPanel'
 import HostRestartNotice from '@/features/control-tower/HostRestartNotice'
+import { isHostUsable } from '@/features/control-tower/controlTowerAdapter'
 import { useControlTowerReal, type ScopeDraft } from '@/features/control-tower/useControlTowerReal'
 import { EMPTY_NEXT_RUN_ROUTING, loadNextRunRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
 
@@ -39,7 +40,17 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
     setSelectedId(null)
     setFailureFocus((value) => value + 1)
   }
-  const hostConnected = presence.state === 'connected'
+  // CT-REL-2: healthy or merely "heartbeat delayed" (amendment 1) both count as
+  // usable for NEW plan work; degraded/offline do not. Restart-required is
+  // enforced Host-side — the banner below only reports it.
+  const hostConnected = isHostUsable(presence)
+  const hostStateLabel = presence.state === 'healthy'
+    ? 'Host connected'
+    : presence.state === 'delayed'
+      ? 'Host heartbeat delayed'
+      : presence.state === 'degraded'
+        ? 'Host connection degraded'
+        : 'Host offline'
   const submit = (input: ScopeDraft) => {
     setSubmitError(null)
     tower.submitScope(input).catch(error => { setSubmitError(error instanceof Error ? error.message : String(error)) })
@@ -47,7 +58,7 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
   if (mode === 'preview') return <div className="ct-container"><div className="ct-real-modetoggle"><button type="button" onClick={() => setMode('live')}>Live</button><span className="ct-preview">Preview · demo data</span></div><ControlTower /></div>
   const newRun = <button type="button" className="ct-primary" disabled={!hostConnected || busy} onClick={tower.openComposer} title={hostConnected ? 'Plan a new run' : 'Requires a connected local Host'}><Plus size={15} aria-hidden="true" />New Run</button>
   return <div className="ct-container"><main className="ct-shell ct-real ct-console" aria-label="Control Tower">
-    <header className="ct-page-header"><div><p className="ct-eyebrow">PowerOn / Operations</p><h1>Control Tower</h1></div><span className={`ct-host-state ct-host-${presence.state}`}><i />{hostConnected ? 'Host connected' : presence.state === 'stale' ? 'Host stale' : 'Host unavailable'}</span><button type="button" className="ct-preview-access" onClick={() => setMode('preview')}>Preview</button></header>
+    <header className="ct-page-header"><div><p className="ct-eyebrow">PowerOn / Operations</p><h1>Control Tower</h1></div><span className={`ct-host-state ct-host-${presence.state}`}><i />{hostStateLabel}</span><button type="button" className="ct-preview-access" onClick={() => setMode('preview')}>Preview</button></header>
     <HostRestartNotice required={tower.hostRestartRequired} />
     {contextError && <section className="ct-unavailable" role="alert"><AlertTriangle size={16} aria-hidden="true" /><p>{contextError}</p></section>}
 

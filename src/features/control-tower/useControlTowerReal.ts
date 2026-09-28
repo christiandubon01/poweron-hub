@@ -37,7 +37,6 @@ import {
 } from './controlTowerService'
 import type { ScopePackImportDraft, ScopePackListItem } from './scopePack/types'
 import { applyProgressLabel, noticeFromApplyResult, type ApplyNotice } from './applyCandidateView'
-import { hostRestartRequired, loadCanonicalAgentHostFingerprint } from './hostCodeWarning'
 
 // Re-exported for the composer/panel components that consume presence views.
 export type { HostPresenceView } from './controlTowerAdapter'
@@ -198,7 +197,7 @@ function chooseDisplayedRun(
   if (active) return active
   return options.allowHistory ? (views[0] ?? null) : null
 }
-const UNAVAILABLE_PRESENCE: HostPresenceView = { state: 'unavailable', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null, hostInstanceId: null, sourceFingerprint: null }
+const UNAVAILABLE_PRESENCE: HostPresenceView = { state: 'offline', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null, hostInstanceId: null, restartRequired: false, restartDetectedAt: null, hostHealth: null }
 
 function makeClientRequestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
@@ -212,7 +211,6 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   const [context, setContext] = useState<ControlTowerContext | null>(null)
   const [contextError, setContextError] = useState<string | null>(null)
   const [presence, setPresence] = useState<HostPresenceView>(UNAVAILABLE_PRESENCE)
-  const [canonicalHostFingerprint, setCanonicalHostFingerprint] = useState<string | null>(null)
   const [phase, setPhase] = useState<ControlTowerPhase>('unavailable')
   const [plan, setPlan] = useState<PlanReviewModel | null>(null)
   const [planError, setPlanError] = useState<string | null>(null)
@@ -290,7 +288,6 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     }
     const nextPresence = computeHostPresence(presenceRows, Date.now())
     setPresence(nextPresence)
-    setCanonicalHostFingerprint(await loadCanonicalAgentHostFingerprint())
 
     // Planning poll: has the Host completed the create_plan request?
     const planningId = planningIdRef.current
@@ -687,7 +684,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   return useMemo(() => ({
     phase,
     presence,
-    hostRestartRequired: hostRestartRequired(presence.sourceFingerprint, canonicalHostFingerprint),
+    hostRestartRequired: presence.restartRequired,
     context,
     contextError,
     plan,
@@ -719,7 +716,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     applyNotice,
     requestApplyCandidate,
   }), [
-    phase, presence, canonicalHostFingerprint, context, contextError, plan, planError, planningStatus, planningStartedAt, providerStartedAt, approvalStatus, run, runHistory, draft, busy,
+    phase, presence, context, contextError, plan, planError, planningStatus, planningStartedAt, providerStartedAt, approvalStatus, run, runHistory, draft, busy,
     scopePacks, scopePackRows, importWarning, scopeStorage, importing, importScopePack, refresh,
     openComposer, closeComposer, editScope, submitScope, retryPlanning, approvePlan, cancelPlanReview, cancelRun,
     applyProgress, applyNotice, requestApplyCandidate,

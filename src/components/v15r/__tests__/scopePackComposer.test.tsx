@@ -25,7 +25,8 @@ vi.mock('@/features/control-tower/controlTowerService', () => ({
 }))
 
 const presence: HostPresenceView = {
-  state: 'connected', repoKey: '0123456789abcdef', providers: ['claude'], providerFleet: [], hostVersion: '0.1.0', lastSeenAt: '2026-09-22T00:00:00Z', hostInstanceId: 'host-1',
+  state: 'healthy', repoKey: '0123456789abcdef', providers: ['claude'], providerFleet: [], hostVersion: '0.1.0', lastSeenAt: '2026-09-22T00:00:00Z', hostInstanceId: 'host-1',
+  restartRequired: false, restartDetectedAt: null, hostHealth: null,
 }
 
 const liveRow: ScopePackRow = {

@@ -54,6 +54,7 @@ import type { ExecutionRequest, ExecutionResult } from '../providers/types.ts';
 import { recoverInterruptedAttempts } from '../providers/executor.ts';
 import './planningDiscovery.test.ts';
 import './applyCandidate.test.ts';
+import './workerResilience.test.ts';
 import type { AttemptExecutionContext } from '../supervisor/supervisor.ts';
 
 /* -------------------------------------------------------------------------- */

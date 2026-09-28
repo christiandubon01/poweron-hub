@@ -367,17 +367,40 @@ export function createWindowsProcessTreeOps(runCommand: (script: string, input: 
 
 export const defaultWindowsProcessTreeOps = createWindowsProcessTreeOps(runWindowsPowerShell);
 
+/**
+ * CT-REL-2 (goal 9): when the bound is hit, the bounded operation settles ON
+ * THE BOUND ITSELF — regardless of whether the underlying child ever closes.
+ * The abort is still issued, but settlement no longer awaits the operation:
+ * a hung child that ignores the abort can never block the kill step. The run
+ * promise's `.then` handlers swallow the eventual (late) rejection so Node
+ * never reports it as unhandled.
+ */
 async function boundedWindowsOperation<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): Promise<{ ok: true; value: T } | { ok: false }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  try {
-    const value = await run(controller.signal);
-    return controller.signal.aborted ? { ok: false } : { ok: true, value };
-  } catch {
-    return { ok: false };
-  } finally {
-    clearTimeout(timer);
-  }
+  return await new Promise<{ ok: true; value: T } | { ok: false }>((resolve) => {
+    let settled = false;
+    const settle = (outcome: { ok: true; value: T } | { ok: false }): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    const timer = setTimeout(() => {
+      controller.abort();
+      settle({ ok: false });
+    }, ms);
+    let runPromise: Promise<T>;
+    try {
+      runPromise = run(controller.signal);
+    } catch {
+      settle({ ok: false });
+      return;
+    }
+    runPromise.then(
+      (value) => settle(controller.signal.aborted ? { ok: false } : { ok: true, value }),
+      () => settle({ ok: false }),
+    );
+  });
 }
 
 export async function terminateWindowsProcessTree(pid: number, killTree: KillProcessTreeFn, ops: WindowsProcessTreeOps, boundMs: number): Promise<{ possibleSurvivors: boolean }> {

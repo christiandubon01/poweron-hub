@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react'
 import { TowerPanel } from './ControlTowerPrimitives'
 import ScopePackReview from './ScopePackReview'
 import type { HostPresenceView, ScopeDraft } from '@/features/control-tower/useControlTowerReal'
+import { isHostUsable } from '@/features/control-tower/controlTowerAdapter'
 import type { ScopePackContract, ScopePackImportDraft, ScopePackListItem } from '@/features/control-tower/scopePack/types'
 import type { ScopePackRow } from '@/features/control-tower/controlTowerService'
 import { parseHandoffDocument, rejectScopePackSource } from '@/features/control-tower/scopePack/handoffParser'
@@ -355,7 +356,7 @@ export default function NewRunComposer({
       <div className="ct-composer-actions">
         {payloadError && <p className="ct-scope-error" role="alert">{payloadError}</p>}
         <button type="button" className="ct-primary" disabled={!canSubmit} onClick={submit} aria-label="Request plan"><Plus size={14} aria-hidden="true" />Request plan</button>
-        <span className="ct-field-note">{presence.state === 'connected' ? (selectedPackId ? 'Reconcile / Continue to plan using the selected Scope Pack.' : 'Sent to the local Host as a typed create_plan request.') : 'Waiting for a connected local Host.'}</span>
+        <span className="ct-field-note">{isHostUsable(presence) ? (selectedPackId ? 'Reconcile / Continue to plan using the selected Scope Pack.' : 'Sent to the local Host as a typed create_plan request.') : 'Waiting for a connected local Host.'}</span>
       </div>
     </TowerPanel>
   </div>

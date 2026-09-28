@@ -50,7 +50,7 @@ describe('ATB-2 provider fleet adapter', () => {
 
   it('computeHostPresence exposes the fleet + derives provider names (object shape)', () => {
     const presence = computeHostPresence([row([CLAUDE_ENTRY])], Date.now())
-    expect(presence.state).toBe('connected')
+    expect(presence.state).toBe('healthy')
     expect(presence.providerFleet).toHaveLength(1)
     expect(presence.providers).toEqual(['Claude Code'])
   })
@@ -59,5 +59,30 @@ describe('ATB-2 provider fleet adapter', () => {
     const presence = computeHostPresence([row(['claude-code', 'codex-cli'])], Date.now())
     expect(presence.providerFleet).toEqual([])
     expect(presence.providers).toEqual(['claude-code', 'codex-cli'])
+  })
+
+  /**
+   * CT-REL-2 amendment 6: the CT-REL-2 host-status marker rides the providers
+   * jsonb under `kind: 'host-status'` — it must NEVER render as a provider in
+   * the MODELS / provider fleet UI, and its restartRequired flag must reach the
+   * presence view for the banner.
+   */
+  it('never renders the namespaced host-status marker as a provider', () => {
+    const marker = {
+      kind: 'host-status',
+      sourceFingerprint: 'a'.repeat(64),
+      restartRequired: true,
+      restartDetectedAt: '2026-09-27T10:00:00.000Z',
+      health: { state: 'healthy', consecutiveFailures: 0, lastFailureAt: null },
+    }
+    const fleet = mapProviderFleet([CLAUDE_ENTRY, marker])
+    expect(fleet.map((provider) => provider.providerId)).toEqual(['claude'])
+    const presence = computeHostPresence([row([CLAUDE_ENTRY, marker])], Date.now())
+    expect(presence.providerFleet.map((provider) => provider.providerId)).toEqual(['claude'])
+    expect(presence.providers).toEqual(['Claude Code'])
+    expect(presence.state).toBe('healthy')
+    expect(presence.restartRequired).toBe(true)
+    expect(presence.restartDetectedAt).toBe('2026-09-27T10:00:00.000Z')
+    expect(presence.hostHealth).toEqual({ state: 'healthy', consecutiveFailures: 0, lastFailureAt: null })
   })
 })

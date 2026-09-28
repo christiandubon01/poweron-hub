@@ -221,13 +221,13 @@ describe('CT-CORE-1 host presence honesty', () => {
   it('reports fresh, stale, and unavailable Hosts honestly from presence rows', () => {
     const now = 1_000_000_000_000
     const fresh = computeHostPresence([presenceRow(new Date(now - 5_000))], now)
-    expect(fresh.state).toBe('connected')
+    expect(fresh.state).toBe('healthy')
     expect(fresh.repoKey).toBe('repo-key-1')
     expect(fresh.providers).toEqual(['claude'])
     const stale = computeHostPresence([presenceRow(new Date(now - 60_000))], now)
-    expect(stale.state).toBe('stale')
+    expect(stale.state).toBe('offline')
     const unavailable = computeHostPresence([], now)
-    expect(unavailable.state).toBe('unavailable')
+    expect(unavailable.state).toBe('offline')
     expect(unavailable.repoKey).toBeNull()
   })
 })
@@ -250,7 +250,7 @@ describe('CT-CORE-1 host presence — multiple rows after Host restart', () => {
     const freshNew = presenceAt({ instance: 'NEW', ageMs: 4_000 })
     for (const rows of [[staleOld, freshNew], [freshNew, staleOld]]) {
       const view = computeHostPresence(rows, NOW_MS)
-      expect(view.state).toBe('connected')
+      expect(view.state).toBe('healthy')
       expect(view.hostInstanceId).toBe('NEW')
       expect(view.lastSeenAt).toBe(freshNew.last_seen_at)
     }
@@ -263,13 +263,13 @@ describe('CT-CORE-1 host presence — multiple rows after Host restart', () => {
       presenceAt({ instance: 'C', ageMs: 45_000 }),
     ]
     const view = computeHostPresence(rows, NOW_MS)
-    expect(view.state).toBe('stale')
+    expect(view.state).toBe('offline')
     expect(view.hostInstanceId).toBe('C') // still the newest of the stale rows
   })
 
   it('3) the newest Host row itself becoming stale flips the derived state to STALE', () => {
-    expect(computeHostPresence([presenceAt({ instance: 'A', ageMs: 40_000 }), presenceAt({ instance: 'B', ageMs: 5_000 })], NOW_MS).state).toBe('connected')
-    expect(computeHostPresence([presenceAt({ instance: 'A', ageMs: 40_000 }), presenceAt({ instance: 'B', ageMs: 31_000 })], NOW_MS).state).toBe('stale')
+    expect(computeHostPresence([presenceAt({ instance: 'A', ageMs: 40_000 }), presenceAt({ instance: 'B', ageMs: 5_000 })], NOW_MS).state).toBe('healthy')
+    expect(computeHostPresence([presenceAt({ instance: 'A', ageMs: 40_000 }), presenceAt({ instance: 'B', ageMs: 31_000 })], NOW_MS).state).toBe('offline')
   })
 
   it('4) org/repo isolation: repo context follows the FRESHEST host, and the query is organization-scoped', () => {
@@ -280,7 +280,7 @@ describe('CT-CORE-1 host presence — multiple rows after Host restart', () => {
       presenceAt({ repo: 'repo-FRESH', instance: 'F', ageMs: 3_000 }),
     ]
     const view = computeHostPresence(rows, NOW_MS)
-    expect(view.state).toBe('connected')
+    expect(view.state).toBe('healthy')
     expect(view.repoKey).toBe('repo-FRESH')
 
     // The live presence read filters strictly by organization_id (RLS + explicit eq).
@@ -292,12 +292,12 @@ describe('CT-CORE-1 host presence — multiple rows after Host restart', () => {
   it('a fresh, newest heartbeat AT or just AHEAD of the reader clock stays CONNECTED (skew-guard regression)', () => {
     // Regression for the ageMs >= 0 guard: a live heartbeat must never read as stale
     // merely because its timestamp is at/ahead of the browser clock (forward skew).
-    expect(computeHostPresence([presenceAt({ instance: 'N', ageMs: 0 })], NOW_MS).state).toBe('connected')
-    expect(computeHostPresence([presenceAt({ instance: 'N', ageMs: -5_000 })], NOW_MS).state).toBe('connected')
+    expect(computeHostPresence([presenceAt({ instance: 'N', ageMs: 0 })], NOW_MS).state).toBe('healthy')
+    expect(computeHostPresence([presenceAt({ instance: 'N', ageMs: -5_000 })], NOW_MS).state).toBe('healthy')
     // A genuinely fresh newer row still wins over an older stale row under skew.
     const rows = [presenceAt({ instance: 'OLD', ageMs: 120_000 }), presenceAt({ instance: 'NEW', ageMs: -2_000 })]
     const view = computeHostPresence(rows, NOW_MS)
-    expect(view.state).toBe('connected')
+    expect(view.state).toBe('healthy')
     expect(view.hostInstanceId).toBe('NEW')
   })
 
@@ -305,10 +305,10 @@ describe('CT-CORE-1 host presence — multiple rows after Host restart', () => {
     const bad = { repo_key: 'repo-key-1', host_instance_id: 'BAD', status: 'connected', host_version: '0.1.0', providers: ['claude'], last_seen_at: 'not-a-date' } as HostPresenceRow
     const good = presenceAt({ instance: 'GOOD', ageMs: 4_000 })
     const view = computeHostPresence([bad, good], NOW_MS)
-    expect(view.state).toBe('connected')
+    expect(view.state).toBe('healthy')
     expect(view.hostInstanceId).toBe('GOOD')
     // All-invalid rows are honestly unavailable, never a fabricated connected/stale.
-    expect(computeHostPresence([bad], NOW_MS).state).toBe('unavailable')
+    expect(computeHostPresence([bad], NOW_MS).state).toBe('offline')
   })
 })
 
@@ -465,7 +465,7 @@ describe('CT-CORE-1 fail-closed and completion truth', () => {
   it('fails closed when the repo key is unknown — no request is inserted', async () => {
     render(React.createElement(HookHarness, { pollIntervalMs: 0 }))
     await settle()
-    expect(latest!.presence.state).toBe('unavailable')
+    expect(latest!.presence.state).toBe('offline')
     expect(latest!.presence.repoKey).toBeNull()
     await act(async () => {
       await expect(latest!.submitScope({ scope: 'Create the smoke marker file', constraints: [], requestedRouting: null })).rejects.toThrow('No connected Host repository.')

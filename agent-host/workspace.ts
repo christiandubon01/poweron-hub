@@ -237,6 +237,11 @@ export async function captureWorkspaceTree(workspacePath: string): Promise<Works
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (isExcludedWorkspacePath(entry.name)) continue;
+      // CT-REL-2 (goal 10): never follow symlinks or directory junctions — a
+      // link escaping the attempt workspace (or pointing back at the canonical
+      // repo) must not leak files into the captured tree. On Windows, junctions
+      // report as symlinks via Dirent.isSymbolicLink().
+      if (entry.isSymbolicLink()) continue;
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         await walk(path.join(directory, entry.name), relativePath);

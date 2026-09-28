@@ -54,7 +54,19 @@ import { configureProviderExecutionLimits } from '../providers/executionLimits.t
 import { supervisorTick } from '../supervisor/supervisor.ts';
 import { shutdownHostRuntime } from '../index.ts';
 
-import { ControlPlane, type ClaimedControlRequest, type ControlPlaneConfig, resolveControlPlaneConfigFromEnv } from './supabaseControl.ts';
+import { ControlPlane, type ClaimedControlRequest, type ControlPlaneConfig, type ControlPlaneHealthSnapshot, resolveControlPlaneConfigFromEnv } from './supabaseControl.ts';
+import { jitteredBackoffDelay } from './retry.ts';
+import { SOURCE_FINGERPRINT_RECHECK_MS, startSourceFingerprintWatch } from './sourceFingerprintWatch.ts';
+import { createLatestWinsPublisher } from './snapshotPublisher.ts';
+import {
+  HOST_CLAIM_LOST_MESSAGE,
+  LOST_CLAIM_CHECK_INTERVAL_MS,
+  createHeldRequestTracker,
+  recoverLostClaims,
+  type HeldRequestTracker,
+} from './lostClaims.ts';
+import { handleUncaughtException, handleUnhandledRejection } from './processGuards.ts';
+import { createHostLog } from '../lib/hostLog.ts';
 import {
   ARCHITECT_TIMEOUT_MS,
   DEFAULT_TASK_TIMEOUT_MS,
@@ -121,6 +133,111 @@ export const ACTIVE_SNAPSHOT_HEARTBEAT_MS = 4_000;
 const PRESENCE_PUBLISH_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const ARCHITECT_EXECUTION_PREFIX = 'control-plan';
 const REQUEST_ERROR_LIMIT = 1_000;
+
+/* -------------------------------------------------------------------------- */
+/* CT-REL-2 Part A: restart-required gating + presence host-status marker        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The exact error a NEW create_plan / approve_plan request receives while the
+ * Host is running older Agent Host source than what is on disk (goal 3). Plain
+ * language so the owner sees the fix right where they submitted the request.
+ */
+export const HOST_RESTART_REQUIRED_REQUEST_ERROR =
+  'HOST_RESTART_REQUIRED: the connected Host is running older Agent Host code. Stop the Host window and run: npm.cmd run agent-host:control';
+
+/**
+ * CT-REL-2 amendment 6: the Host status rides the presence `providers` jsonb as
+ * a clearly namespaced `{ kind: 'host-status', ... }` object — the browser
+ * adapter skips entries without a providerId, so it can never render as a
+ * provider. Carries the startup source fingerprint (goal 2 detection),
+ * restartRequired + detection time, and the Host-reported control-plane health
+ * snapshot (goal 7). NO schema change: everything fits the existing jsonb.
+ */
+export function buildHostStatusMarker(input: {
+  sourceFingerprint: string;
+  restartRequired: boolean;
+  restartDetectedAt: string | null;
+  health: ControlPlaneHealthSnapshot;
+}): Record<string, unknown> {
+  return {
+    kind: 'host-status',
+    sourceFingerprint: input.sourceFingerprint,
+    restartRequired: input.restartRequired,
+    restartDetectedAt: input.restartDetectedAt,
+    health: input.health,
+  };
+}
+
+/**
+ * Only NEW plan work is refused while the Host is stale (goal 3): cancel_run,
+ * apply_candidate, and import_scope_pack keep working, and in-flight attempts
+ * finish normally.
+ */
+export function isRefusedWhileRestartRequired(requestType: ClaimedControlRequest['request_type']): boolean {
+  return requestType === 'create_plan' || requestType === 'approve_plan';
+}
+
+/**
+ * Fail a request that must be refused because the Host is running older code.
+ * Returns true when the request was refused (caller skips dispatch); false when
+ * the request may proceed. A failRequest failure leaves the row claimed — the
+ * lost-claim recovery eventually reports it.
+ */
+export async function gateRestartRequiredRequest(options: {
+  request: ClaimedControlRequest;
+  restartRequired: boolean;
+  failRequest: (id: string, error: string) => Promise<void>;
+}): Promise<boolean> {
+  if (!options.restartRequired || !isRefusedWhileRestartRequired(options.request.request_type)) {
+    return false;
+  }
+  try {
+    await options.failRequest(options.request.id, HOST_RESTART_REQUIRED_REQUEST_ERROR);
+  } catch {
+    // The request stays claimed; the owner can submit a fresh request after restart.
+  }
+  return true;
+}
+
+export interface ClaimedBatchDispatchOptions {
+  requests: ClaimedControlRequest[];
+  /** Held-request tracker shared with lost-claim recovery (CT-REL-2.1 goal 1). */
+  held: HeldRequestTracker;
+  isRunning: () => boolean;
+  dispatch: (request: ClaimedControlRequest) => Promise<void>;
+}
+
+/**
+ * CT-REL-2.1 goal 1: dispatch a claimed batch. EVERY row is held the moment
+ * the batch is received — BEFORE any dispatch — so a sibling still waiting its
+ * turn is just as held as the row being dispatched and lost-claim recovery
+ * never mistakes it for a lost claim, no matter how long earlier rows take.
+ * Each row is released when its handling finishes (completed / failed /
+ * refused), and a row already failed by recovery (poisoned) is skipped without
+ * ever being dispatched, even if it appears in a later batch.
+ */
+export async function dispatchClaimedBatch(options: ClaimedBatchDispatchOptions): Promise<void> {
+  for (const request of options.requests) {
+    options.held.hold(request.id);
+  }
+  for (const request of options.requests) {
+    if (!options.isRunning()) {
+      break;
+    }
+    if (options.held.isPoisoned(request.id)) {
+      // Goal 1c: recovery already failed this row remotely as HOST_CLAIM_LOST —
+      // it must never be dispatched again.
+      options.held.release(request.id);
+      continue;
+    }
+    try {
+      await options.dispatch(request);
+    } finally {
+      options.held.release(request.id);
+    }
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* .env.local loader (server-side keys only; never logged, never bundled)      */
@@ -1251,12 +1368,18 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
 
   const controlPlane = new ControlPlane(config);
 
+  // CT-REL-2 Part B (goal 8): daily Host log files under
+  // %LOCALAPPDATA%\PowerOn\AgentHost\logs — never inside the repo. Errors are
+  // rate-limited (amendment 4); only sanitized summaries are ever logged.
+  const logger = createHostLog({ dir: path.join(statePaths.baseDir, 'logs') });
+
   // Created after discovery below, with the REAL provider registry — the same
   // construction path dispatch.ts uses (adapter dispatch, isolated workspace
   // config, policy adjudication).
   let executor: AttemptExecutor;
 
-  const publishSnapshot = async (runId: string): Promise<void> => {
+  /** The actual snapshot read + publish. May throw; only ever run by the publisher below. */
+  const publishSnapshotNow = async (runId: string): Promise<void> => {
     const snapshot = buildRunSnapshot({
       store,
       runId,
@@ -1282,6 +1405,20 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
       status: snapshot.run.status,
       snapshot: snapshot as unknown as Record<string, unknown>,
     });
+  };
+
+  // CT-REL-2 amendment 2: latest-wins snapshot publishing keyed by run id. A
+  // superseded pending publish is DROPPED, never queued, and publishing never
+  // blocks provider execution or the claim loop — publishSnapshot below resolves
+  // immediately and the latest job runs at most once per run id at a time.
+  // Retries live inside the control-plane call (bounded by the 60s budget).
+  const snapshotPublisher = createLatestWinsPublisher({
+    onError: (error) => {
+      logger.error(`Run snapshot publish failed: ${error instanceof Error ? error.message : String(error)}`);
+    },
+  });
+  const publishSnapshot = async (runId: string): Promise<void> => {
+    snapshotPublisher.publish(runId, () => publishSnapshotNow(runId));
   };
 
   // Bounded, best-effort reporter for active-run snapshot heartbeat publish
@@ -1356,7 +1493,37 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
   );
   // Frozen at process start: later source edits must not look like this process loaded them.
   const hostSourceFingerprint = computeAgentHostSourceFingerprint(canonicalRepoPath);
-  const presenceProviders = [...providerFleet, { sourceFingerprint: hostSourceFingerprint }];
+
+  // CT-REL-2 Part A (goals 2-3): the Host is the single source of truth for
+  // staleness. Every SOURCE_FINGERPRINT_RECHECK_MS (30s) it re-hashes its own
+  // source; a difference vs. the startup fingerprint means THIS process is
+  // running older code. The flag is sticky — only a restart clears it. While
+  // set, presence carries restartRequired + detection time and NEW
+  // create_plan / approve_plan requests are refused with HOST_RESTART_REQUIRED.
+  let restartRequired = false;
+  let restartDetectedAt: string | null = null;
+  const buildPresenceProviders = (): unknown[] => [
+    ...providerFleet,
+    buildHostStatusMarker({
+      sourceFingerprint: hostSourceFingerprint,
+      restartRequired,
+      restartDetectedAt,
+      health: controlPlane.getHealth(),
+    }),
+  ];
+  const sourceFingerprintWatch = startSourceFingerprintWatch({
+    repoRoot: canonicalRepoPath,
+    initialFingerprint: hostSourceFingerprint,
+    intervalMs: SOURCE_FINGERPRINT_RECHECK_MS,
+    onDrift: (drift) => {
+      restartRequired = true;
+      restartDetectedAt = drift.detectedAt;
+      logger.error(`Agent Host source changed since startup (detected ${drift.detectedAt}) — Host restart required.`);
+    },
+    onError: (error) => {
+      logger.error(`Source fingerprint recheck failed: ${error instanceof Error ? error.message : String(error)}`);
+    },
+  });
 
   let shutdownStarted = false;
   let running = true;
@@ -1370,9 +1537,14 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     presenceInFlight = true;
     void (async () => {
       try {
-        await controlPlane.publishPresence({ providers: presenceProviders });
-      } catch {
-        // Best effort — the local heartbeat file remains the host truth.
+        // Built fresh each publish so a drift detected since the last tick is
+        // carried immediately (goal 2) and health reflects the newest calls.
+        await controlPlane.publishPresence({ providers: buildPresenceProviders() });
+      } catch (error) {
+        // Best effort — the local heartbeat file remains the host truth. The
+        // health tracker already counted this failure; it surfaces through the
+        // marker once connectivity returns.
+        logger.error(`Presence publish failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         presenceInFlight = false;
       }
@@ -1396,7 +1568,42 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     })();
   }, HEARTBEAT_INTERVAL_MS);
 
-  const shutdown = async (signal: string): Promise<void> => {
+  // CT-REL-2 amendment 3 + CT-REL-2.1 goal 1: track every request id THIS
+  // instance HOLDS (the whole claim batch from receipt, released only when
+  // handling finishes), and periodically fail rows claimed by THIS instance
+  // that are NOT held and have been claimed for more than
+  // LOST_CLAIM_THRESHOLD_MS (120s) — a claim whose RPC response was lost.
+  // Never re-executed; failed with the exact HOST_CLAIM_LOST message. A
+  // recovered row is poisoned locally so it can never be dispatched later.
+  const heldRequestIds = createHeldRequestTracker();
+  const lostClaimTimer = setInterval(() => {
+    if (shutdownStarted) {
+      return;
+    }
+    void (async () => {
+      await recoverLostClaims({
+        listOwnClaimed: () => controlPlane.listOwnClaimedRequests(),
+        isHeld: heldRequestIds.isHeld,
+        failRequest: (id, error) => controlPlane.failRequest(id, error),
+        onRecovered: (id) => {
+          heldRequestIds.markPoisoned(id);
+          logger.error(`Recovered lost control request ${id} — ${HOST_CLAIM_LOST_MESSAGE}`);
+        },
+        onError: (error) => {
+          logger.error(`Lost-claim recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+        },
+      });
+    })();
+  }, LOST_CLAIM_CHECK_INTERVAL_MS);
+  if (typeof lostClaimTimer.unref === 'function') {
+    lostClaimTimer.unref();
+  }
+
+  /**
+   * CT-REL-2 Part B (goal 8): `forcedExitCode` exists so an uncaughtException
+   * exits NON-ZERO even when graceful shutdown succeeds.
+   */
+  const shutdown = async (signal: string, forcedExitCode?: number): Promise<void> => {
     if (shutdownStarted) {
       return;
     }
@@ -1404,6 +1611,9 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     running = false;
     clearInterval(presenceTimer);
     clearInterval(heartbeatTimer);
+    clearInterval(lostClaimTimer);
+    sourceFingerprintWatch.stop();
+    controlPlane.abort(); // cut in-flight retries short immediately
     try {
       await shutdownHostRuntime({
         refreshRepoStatusIfNeeded,
@@ -1420,9 +1630,13 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
         signal,
       });
     } catch (error) {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      logger.error(`Shutdown failed (${signal}): ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;
     }
+    if (forcedExitCode !== undefined) {
+      process.exitCode = forcedExitCode;
+    }
+    logger.flush();
   };
 
   process.on('SIGINT', () => {
@@ -1431,16 +1645,17 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
   process.on('SIGTERM', () => {
     void shutdown('SIGTERM');
   });
+  // CT-REL-2 Part B (goal 8): an unhandledRejection is LOGGED and the Host keeps
+  // running; an uncaughtException is logged, then shuts down with a FORCED
+  // non-zero exit code.
   process.on('uncaughtException', (error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    void shutdown('uncaughtException');
+    void handleUncaughtException({ log: logger, error, shutdown });
   });
-  process.on('unhandledRejection', (error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    void shutdown('unhandledRejection');
+  process.on('unhandledRejection', (reason) => {
+    handleUnhandledRejection(logger, reason);
   });
 
-  await controlPlane.publishPresence({ providers: presenceProviders });
+  await controlPlane.publishPresence({ providers: buildPresenceProviders() });
 
   // Restart recovery (§28): recoverInterruptedAttempts above only interrupted the
   // previous Host's stale Attempts. Hand every still-resumable Run back to the
@@ -1473,13 +1688,19 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
 
   // Claim/handle loop. Requests are handled sequentially; a run drives to
   // completion (or pause) before the next request is claimed.
+  let claimFailureStreak = 0;
   while (running) {
     let claimed: ClaimedControlRequest[] = [];
     try {
       claimed = await controlPlane.claimPendingRequests();
+      claimFailureStreak = 0;
     } catch (error) {
-      process.stderr.write(`Control-plane claim failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      await sleep(CLAIM_POLL_INTERVAL_MS);
+      claimFailureStreak += 1;
+      logger.error(`Control-plane claim failed: ${error instanceof Error ? error.message : String(error)}`);
+      // CT-REL-2 Part B (goal 6): bounded backoff with jitter so a connectivity
+      // outage does not hammer the control plane. Still polls at least at the
+      // normal cadence.
+      await sleep(Math.max(CLAIM_POLL_INTERVAL_MS, jitteredBackoffDelay(claimFailureStreak - 1)));
       continue;
     }
 
@@ -1488,92 +1709,108 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
       continue;
     }
 
-    for (const request of claimed) {
-      if (!running) {
-        break;
-      }
-      try {
-        if (request.request_type === 'import_scope_pack') {
-          await handleImportScopePack({
-            controlPlane,
+    // CT-REL-2.1 goal 1: dispatchClaimedBatch holds EVERY row from receipt
+    // (before any dispatch), releases each row when its handling finishes, and
+    // skips rows already failed by lost-claim recovery — so batch siblings are
+    // never mistaken for lost claims and recovered rows are never dispatched.
+    await dispatchClaimedBatch({
+      requests: claimed,
+      held: heldRequestIds,
+      isRunning: () => running,
+      dispatch: async (request) => {
+        try {
+          // CT-REL-2 Part A (goal 3): while the Host is running older code, NEW
+          // plan work is refused with HOST_RESTART_REQUIRED. cancel_run and
+          // apply_candidate keep working; in-flight attempts finish normally.
+          if (await gateRestartRequiredRequest({
             request,
-            organizationId: config.organizationId,
-          });
-        } else if (request.request_type === 'create_plan') {
-          await handleCreatePlan({
-            store,
-            registry,
-            controlPlane,
-            request,
-            canonicalRepoPath,
-            orientationCachePath: path.join(statePaths.repoStateDir, 'repo-orientation.json'),
-            organizationId: config.organizationId,
-          });
-        } else if (request.request_type === 'approve_plan') {
-          const outcome = await handleApprovePlan({ store, controlPlane, request, canonicalRepoPath });
-          if (outcome.ok && outcome.runId) {
-            try {
-              await driveRunToCompletion({
-                store,
-                controlPlane,
-                executionPort,
-                runId: outcome.runId,
-                hostInstanceId: instanceIdentity.instanceId,
-                publishSnapshot,
-                onSnapshotError,
-              });
-            } catch (error) {
-              await eventWriter.append('control.run.error', {
-                runId: outcome.runId,
-                message: error instanceof Error ? error.message : String(error),
-              });
+            restartRequired,
+            failRequest: (id, error) => controlPlane.failRequest(id, error),
+          })) {
+            return;
+          }
+          if (request.request_type === 'import_scope_pack') {
+            await handleImportScopePack({
+              controlPlane,
+              request,
+              organizationId: config.organizationId,
+            });
+          } else if (request.request_type === 'create_plan') {
+            await handleCreatePlan({
+              store,
+              registry,
+              controlPlane,
+              request,
+              canonicalRepoPath,
+              orientationCachePath: path.join(statePaths.repoStateDir, 'repo-orientation.json'),
+              organizationId: config.organizationId,
+            });
+          } else if (request.request_type === 'approve_plan') {
+            const outcome = await handleApprovePlan({ store, controlPlane, request, canonicalRepoPath });
+            if (outcome.ok && outcome.runId) {
               try {
-                await publishSnapshot(outcome.runId);
-              } catch {
-                // Snapshot already attempted; nothing else is publishable here.
+                await driveRunToCompletion({
+                  store,
+                  controlPlane,
+                  executionPort,
+                  runId: outcome.runId,
+                  hostInstanceId: instanceIdentity.instanceId,
+                  publishSnapshot,
+                  onSnapshotError,
+                });
+              } catch (error) {
+                await eventWriter.append('control.run.error', {
+                  runId: outcome.runId,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+                try {
+                  await publishSnapshot(outcome.runId);
+                } catch {
+                  // Snapshot already attempted; nothing else is publishable here.
+                }
               }
             }
-          }
-        } else if (request.request_type === 'apply_candidate') {
-          await handleApplyCandidate({
-            store,
-            controlPlane,
-            request,
-            canonicalRepoPath,
-            workspaceRoot: path.join(statePaths.baseDir, 'workspaces'),
-            repoKey: statePaths.repoKey,
-          });
-          const runId = request.payload.runId;
-          if (typeof runId === 'string') {
-            try {
-              await publishSnapshot(runId);
-            } catch {
-              // Apply result is already durable on the control request.
+          } else if (request.request_type === 'apply_candidate') {
+            await handleApplyCandidate({
+              store,
+              controlPlane,
+              request,
+              canonicalRepoPath,
+              workspaceRoot: path.join(statePaths.baseDir, 'workspaces'),
+              repoKey: statePaths.repoKey,
+            });
+            const runId = request.payload.runId;
+            if (typeof runId === 'string') {
+              try {
+                await publishSnapshot(runId);
+              } catch {
+                // Apply result is already durable on the control request.
+              }
             }
-          }
-        } else if (request.request_type === 'cancel_run') {
-          await handleCancelRun({ store, controlPlane, request });
-          if (typeof (request.payload as Record<string, unknown>).runId === 'string') {
-            try {
-              await publishSnapshot((request.payload as Record<string, unknown>).runId as string);
-            } catch {
-              // Cancel snapshot is best effort.
+          } else if (request.request_type === 'cancel_run') {
+            await handleCancelRun({ store, controlPlane, request });
+            if (typeof (request.payload as Record<string, unknown>).runId === 'string') {
+              try {
+                await publishSnapshot((request.payload as Record<string, unknown>).runId as string);
+              } catch {
+                // Cancel snapshot is best effort.
+              }
             }
+          } else {
+            await controlPlane.failRequest(request.id, `UNKNOWN_REQUEST_TYPE: ${String(request.request_type)}`);
           }
-        } else {
-          await controlPlane.failRequest(request.id, `UNKNOWN_REQUEST_TYPE: ${String(request.request_type)}`);
+        } catch (error) {
+          try {
+            await controlPlane.failRequest(
+              request.id,
+              `REQUEST_HANDLER_FAILED: ${error instanceof Error ? error.message : String(error)}`.slice(0, REQUEST_ERROR_LIMIT),
+            );
+          } catch {
+            // The request stays claimed; the owner can retry with a new request.
+          }
         }
-      } catch (error) {
-        try {
-          await controlPlane.failRequest(
-            request.id,
-            `REQUEST_HANDLER_FAILED: ${error instanceof Error ? error.message : String(error)}`.slice(0, REQUEST_ERROR_LIMIT),
-          );
-        } catch {
-          // The request stays claimed; the owner can retry with a new request.
-        }
-      }
-    }
+      },
+    });
   }
 
   return typeof process.exitCode === 'number' ? process.exitCode : 0;

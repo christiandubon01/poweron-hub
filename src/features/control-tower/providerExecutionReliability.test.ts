@@ -4,9 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TaskRow } from '@/components/v15r/app-brain/control-tower/ControlTowerPrimitives'
 import type { PreviewTask } from '@/components/v15r/app-brain/control-tower/controlTowerTypes'
-import { computeHostPresence, mapRunSnapshotRow } from './controlTowerAdapter'
-import HostRestartNotice from './HostRestartNotice'
-import { hostRestartRequired, HOST_RESTART_REQUIRED_MESSAGE, readHostSourceFingerprint } from './hostCodeWarning'
+import { computeHostPresence, mapRunSnapshotRow, readHostStatusMarker } from './controlTowerAdapter'
+import HostRestartNotice, { HOST_RESTART_REQUIRED_MESSAGE } from './HostRestartNotice'
 import { formatOwnerDuration, providerWorkingLabel } from './providerExecutionView'
 import type { RunSnapshotRow } from './controlTowerService'
 
@@ -120,15 +119,23 @@ describe('provider execution reliability view', () => {
     expect(host.textContent).toContain('Provider reached the absolute execution safety limit.')
   })
 
-  it('warns only when the connected Host fingerprint differs', () => {
-    const current = 'a'.repeat(64)
-    const older = 'b'.repeat(64)
-    expect(hostRestartRequired(current, current)).toBe(false)
-    expect(hostRestartRequired(older, current)).toBe(true)
-    expect(hostRestartRequired(null, current)).toBe(false)
-    expect(hostRestartRequired(older, null)).toBe(false)
-    const fleet = [{ providerId: 'claude', providerDisplayName: 'Claude' }, { sourceFingerprint: older }]
-    expect(readHostSourceFingerprint(fleet)).toBe(older)
+  it('reads restartRequired only from the Host presence marker, never by comparing fingerprints', () => {
+    const fleet = [
+      { providerId: 'claude', providerDisplayName: 'Claude Code' },
+      {
+        kind: 'host-status',
+        sourceFingerprint: 'b'.repeat(64),
+        restartRequired: true,
+        restartDetectedAt: '2026-09-27T10:00:00.000Z',
+        health: { state: 'healthy', consecutiveFailures: 0, lastFailureAt: null },
+      },
+    ]
+    // The browser never computes staleness itself: the marker is the ONLY source.
+    expect(readHostStatusMarker(fleet)).toEqual({
+      restartRequired: true,
+      restartDetectedAt: '2026-09-27T10:00:00.000Z',
+      health: { state: 'healthy', consecutiveFailures: 0, lastFailureAt: null },
+    })
     const presence = computeHostPresence([{
       repo_key: 'abcdef0123456789',
       host_instance_id: 'host-1',
@@ -137,8 +144,35 @@ describe('provider execution reliability view', () => {
       providers: fleet,
       last_seen_at: new Date().toISOString(),
     }], Date.now())
+    expect(presence.restartRequired).toBe(true)
+    expect(presence.restartDetectedAt).toBe('2026-09-27T10:00:00.000Z')
+    expect(presence.hostHealth).toEqual({ state: 'healthy', consecutiveFailures: 0, lastFailureAt: null })
+    // Amendment 6: the namespaced host-status marker NEVER renders as a provider.
     expect(presence.providerFleet.map((provider) => provider.providerId)).toEqual(['claude'])
-    expect(presence.sourceFingerprint).toBe(older)
+    expect(presence.providers).toEqual(['Claude Code'])
+  })
+
+  it('shows healthy, delayed, degraded, and offline states honestly by heartbeat age and Host health', () => {
+    const marker = (health: { state: string; consecutiveFailures: number; lastFailureAt: string | null }, restartRequired = false): unknown[] => [
+      { providerId: 'claude', providerDisplayName: 'Claude Code' },
+      { kind: 'host-status', restartRequired, restartDetectedAt: null, health },
+    ]
+    const presenceAt = (providers: unknown[], ageMs: number) => computeHostPresence([{
+      repo_key: 'r', host_instance_id: 'h', status: 'connected', host_version: '0.1.0',
+      providers, last_seen_at: new Date(Date.now() - ageMs).toISOString(),
+    }], Date.now())
+    expect(presenceAt(marker({ state: 'healthy', consecutiveFailures: 0, lastFailureAt: null }), 5_000).state).toBe('healthy')
+    // Amendment 1: 20s-30s old heartbeat → "Host heartbeat delayed" (still usable).
+    expect(presenceAt(marker({ state: 'healthy', consecutiveFailures: 0, lastFailureAt: null }), 25_000).state).toBe('delayed')
+    // Offline at >= HOST_STALE_MS (30s) regardless of what the marker says.
+    expect(presenceAt(marker({ state: 'healthy', consecutiveFailures: 0, lastFailureAt: null }), 40_000).state).toBe('offline')
+    // Host-reported >= 3 consecutive control-plane failures → degraded.
+    const degraded = presenceAt(marker({ state: 'degraded', consecutiveFailures: 4, lastFailureAt: '2026-09-27T10:00:00.000Z' }), 5_000)
+    expect(degraded.state).toBe('degraded')
+    expect(degraded.hostHealth?.state).toBe('degraded')
+    expect(degraded.hostHealth?.consecutiveFailures).toBe(4)
+    // No rows at all → offline, honestly.
+    expect(computeHostPresence([], Date.now()).state).toBe('offline')
   })
 
   it('renders the restart warning and does not offer a restart control', () => {

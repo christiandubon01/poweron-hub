@@ -25,13 +25,16 @@ sessions.push({
 })
 
 const PREVIEW_PRESENCE: HostPresenceView = {
-  state: 'unavailable',
+  state: 'offline',
   repoKey: null,
   providers: PREVIEW_PROVIDER_FLEET.map((item) => item.providerDisplayName),
   providerFleet: PREVIEW_PROVIDER_FLEET,
   hostVersion: 'preview',
   lastSeenAt: null,
   hostInstanceId: null,
+  restartRequired: false,
+  restartDetectedAt: null,
+  hostHealth: null,
 }
 
 export default function ControlTower() {

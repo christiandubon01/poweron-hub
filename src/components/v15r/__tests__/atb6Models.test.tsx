@@ -18,8 +18,9 @@ beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 afterEach(() => { act(() => root.unmount()); container.remove() })
 
 const presence: HostPresenceView = {
-  state: 'connected', repoKey: 'abc', providers: PREVIEW_PROVIDER_FLEET.map((item) => item.providerDisplayName),
+  state: 'healthy', repoKey: 'abc', providers: PREVIEW_PROVIDER_FLEET.map((item) => item.providerDisplayName),
   providerFleet: PREVIEW_PROVIDER_FLEET, hostVersion: '0.1.0', lastSeenAt: '2026-09-22T00:00:00Z', hostInstanceId: 'h1',
+  restartRequired: false, restartDetectedAt: null, hostHealth: null,
 }
 
 it('renders Claude, Codex, Ollama, and Cursor diagnostic cards from real fleet mapping', () => {

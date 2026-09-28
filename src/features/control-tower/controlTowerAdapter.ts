@@ -38,7 +38,6 @@ import type { AppBrainNode } from '@/components/v15r/appBrainMap'
 import type { HostPresenceRow, RunSnapshotRow } from './controlTowerService'
 import { verifierFailureDiagnostics, verifierRejectionConsequence } from './verifierFailure'
 import { ownerTerminalReason, providerWorkingLabel } from './providerExecutionView'
-import { readHostSourceFingerprint } from './hostCodeWarning'
 
 /* ATB-1 defensive caps mirroring the Host projection (bounded even if a Host over-publishes). */
 const MAX_INTERIM_VERDICTS = 20
@@ -60,11 +59,24 @@ const SIGNAL_CATEGORIES: SignalCategory[] = [
 const SIGNAL_SOURCES: SignalView['source'][] = ['guard', 'host', 'supervisor']
 
 export const HOST_STALE_MS = 30_000
+/**
+ * CT-REL-2 amendment 1: a heartbeat older than TWO heartbeat intervals (20s)
+ * but under the offline threshold is shown as "Host heartbeat delayed" — still
+ * usable, but honestly labeled in plain text.
+ */
+export const HOST_HEARTBEAT_DELAYED_MS = 20_000
 
 /* ── Host presence ─────────────────────────────────────────────────────── */
 
+/** Host-reported control-plane health (CT-REL-2 goal 7). Null on older Hosts. */
+export interface HostHealthView {
+  state: 'healthy' | 'degraded'
+  consecutiveFailures: number
+  lastFailureAt: string | null
+}
+
 export interface HostPresenceView {
-  state: 'connected' | 'stale' | 'unavailable'
+  state: 'healthy' | 'delayed' | 'degraded' | 'offline'
   repoKey: string | null
   /** Provider display names (derived) — kept for existing UI consumers. */
   providers: string[]
@@ -73,17 +85,55 @@ export interface HostPresenceView {
   hostVersion: string | null
   lastSeenAt: string | null
   hostInstanceId: string | null
-  /** Agent Host source fingerprint from presence. Null on older Hosts. */
-  sourceFingerprint?: string | null
+  /**
+   * CT-REL-2 Part A: restart-required truth comes ONLY from the Host's
+   * presence marker (amendment 6 — `kind: 'host-status'` inside providers).
+   * The browser NEVER compares fingerprints itself.
+   */
+  restartRequired: boolean
+  restartDetectedAt: string | null
+  hostHealth: HostHealthView | null
 }
 
-const UNAVAILABLE_HOST_PRESENCE: HostPresenceView = {
-  state: 'unavailable', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null, hostInstanceId: null, sourceFingerprint: null,
+const OFFLINE_HOST_PRESENCE: HostPresenceView = {
+  state: 'offline', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null,
+  hostInstanceId: null, restartRequired: false, restartDetectedAt: null, hostHealth: null,
+}
+
+/**
+ * CT-REL-2 amendment 6: the Host status rides the providers jsonb as a clearly
+ * namespaced `{ kind: 'host-status', ... }` object. Only entries with that kind
+ * are read, and mapProviderFleet below skips entries without a providerId — so
+ * the marker can never render as a provider in the MODELS/fleet UI.
+ */
+export function readHostStatusMarker(raw: unknown): {
+  restartRequired: boolean
+  restartDetectedAt: string | null
+  health: HostHealthView | null
+} {
+  if (!Array.isArray(raw)) return { restartRequired: false, restartDetectedAt: null, health: null }
+  for (const entry of raw) {
+    if (!isRecord(entry) || entry.kind !== 'host-status') continue
+    const healthWire = isRecord(entry.health) ? entry.health : null
+    const health: HostHealthView | null = healthWire
+      ? {
+          state: healthWire.state === 'degraded' ? 'degraded' : 'healthy',
+          consecutiveFailures: typeof healthWire.consecutiveFailures === 'number' && Number.isFinite(healthWire.consecutiveFailures) ? healthWire.consecutiveFailures : 0,
+          lastFailureAt: typeof healthWire.lastFailureAt === 'string' ? healthWire.lastFailureAt : null,
+        }
+      : null
+    return {
+      restartRequired: entry.restartRequired === true,
+      restartDetectedAt: typeof entry.restartDetectedAt === 'string' ? entry.restartDetectedAt : null,
+      health,
+    }
+  }
+  return { restartRequired: false, restartDetectedAt: null, health: null }
 }
 
 export function computeHostPresence(rows: HostPresenceRow[], nowMs: number): HostPresenceView {
   if (!Array.isArray(rows) || rows.length === 0) {
-    return { ...UNAVAILABLE_HOST_PRESENCE }
+    return { ...OFFLINE_HOST_PRESENCE }
   }
   // Newest VALID presence wins: an old/stale row can NEVER override a newer Host,
   // and an unparseable last_seen_at is skipped instead of poisoning the selection
@@ -98,27 +148,49 @@ export function computeHostPresence(rows: HostPresenceRow[], nowMs: number): Hos
     }
   }
   if (!freshest) {
-    return { ...UNAVAILABLE_HOST_PRESENCE }
+    return { ...OFFLINE_HOST_PRESENCE }
   }
-  // Fresh = within the stale window of the reader's clock. A heartbeat AT or just
+  // Reachable = within the stale window of the reader's clock. A heartbeat AT or just
   // AHEAD of now (forward clock skew on the same machine, an NTP correction, or a
   // timezone-parse landing slightly in the future) is a LIVE Host: the old
   // `ageMs >= 0` guard wrongly flipped exactly that fresh, newest row to "stale".
-  // The symmetric window keeps a genuinely fresh heartbeat connected while still
-  // reporting stale (>= 30s old) and rejecting absurd far-future timestamps.
+  // The symmetric window keeps a genuinely fresh heartbeat healthy while still
+  // reporting offline (>= 30s old) and rejecting absurd far-future timestamps.
   const ageMs = nowMs - freshestMs
-  const connected = ageMs < HOST_STALE_MS && ageMs > -HOST_STALE_MS
+  const reachable = ageMs < HOST_STALE_MS && ageMs > -HOST_STALE_MS
   const providerFleet = mapProviderFleet(freshest.providers)
+  const marker = readHostStatusMarker(freshest.providers)
+  // CT-REL-2 amendment 1 precedence: offline (no fresh heartbeat) > delayed
+  // (heartbeat 20-30s old) > degraded (Host-reported health) > healthy.
+  const state: HostPresenceView['state'] = !reachable
+    ? 'offline'
+    : ageMs >= HOST_HEARTBEAT_DELAYED_MS
+      ? 'delayed'
+      : marker.health?.state === 'degraded'
+        ? 'degraded'
+        : 'healthy'
   return {
-    state: connected ? 'connected' : 'stale',
+    state,
     repoKey: freshest.repo_key,
     providers: deriveProviderNames(freshest.providers, providerFleet),
     providerFleet,
     hostVersion: typeof freshest.host_version === 'string' ? freshest.host_version : null,
     lastSeenAt: freshest.last_seen_at,
     hostInstanceId: freshest.host_instance_id,
-    sourceFingerprint: readHostSourceFingerprint(freshest.providers),
+    restartRequired: marker.restartRequired,
+    restartDetectedAt: marker.restartDetectedAt,
+    hostHealth: marker.health,
   }
+}
+
+/**
+ * CT-REL-2: a Host is usable for NEW plan work when it is healthy or merely
+ * "heartbeat delayed". A degraded or offline Host is not. restartRequired is
+ * enforced Host-side (goal 3); the banner (goal 4) is driven only by
+ * presence.restartRequired.
+ */
+export function isHostUsable(presence: HostPresenceView): boolean {
+  return presence.state === 'healthy' || presence.state === 'delayed'
 }
 
 /* ── ATB-2 provider fleet mapping (honest; tolerant of old string[] shape) ─── */
