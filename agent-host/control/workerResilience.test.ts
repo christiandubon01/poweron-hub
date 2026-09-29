@@ -64,6 +64,14 @@ import { createHostLog, HOST_LOG_RETENTION_FILES } from '../lib/hostLog.ts';
 import type { HostLog } from '../lib/hostLog.ts';
 import type { ClaimedControlRequest } from './supabaseControl.ts';
 import type { OrchestrationStore } from '../lib/store.ts';
+import { ControlRequestScheduler } from './requestPump.ts';
+import {
+  HOST_CLAIM_ORPHAN_MESSAGE,
+  ORPHAN_CLAIM_THRESHOLD_MS,
+  findOrphanClaims,
+  sweepOrphanClaims,
+} from './orphanClaims.ts';
+import { HEARTBEAT_STALE_MS } from '../types.ts';
 
 const NOW = '2026-09-27T10:00:00.000Z';
 
@@ -234,28 +242,43 @@ test('a restart-required Host refuses create_plan and approve_plan with the exac
 
 test('cancel_run still completes while the Host is restart-required (in-flight / ungated work is unaffected)', async () => {
   const transitions: string[] = [];
+  const events: Array<{ type: string; runId: string }> = [];
   const store = {
     getRun: () => ({ runId: 'run-1', status: 'running' }),
+    listTasks: () => [],
+    listAttempts: () => [],
+    listEvents: () => events,
+    appendEvent: (input: { type: string; runId: string }) => {
+      events.push({ type: input.type, runId: input.runId });
+      return input;
+    },
     transitionRun: (_runId: string, status: string) => {
       transitions.push(status);
     },
   } as unknown as OrchestrationStore;
-  const completed: string[] = [];
+  const completed: Array<{ id: string; result: Record<string, unknown> }> = [];
   const controlPlane = {
-    completeRequest: async (id: string) => {
-      completed.push(id);
+    completeRequest: async (id: string, result: Record<string, unknown>) => {
+      completed.push({ id, result });
     },
     failRequest: async () => {
       throw new Error('cancel_run must not fail while stale');
     },
   } as unknown as ControlPlane;
+  // A non-driving run (no active drive, no running attempts): handleCancelRun
+  // records the durable intent, finalizes the run, and completes the request.
   await handleCancelRun({
     store,
     controlPlane,
     request: controlRequest('cancel_run', { runId: 'run-1' }),
+    isActivelyDriving: () => false,
   });
-  assert.deepEqual(transitions, ['cancelled']);
-  assert.deepEqual(completed, ['req-1']);
+  assert.deepEqual(transitions, ['cancelled'], 'the run is finalized to cancelled');
+  assert.equal(events.length, 1);
+  assert.equal(events[0]!.type, 'control.run.cancel_requested', 'durable owner cancel intent is recorded first');
+  assert.equal(completed.length, 1);
+  assert.equal(completed[0]!.id, 'req-1');
+  assert.equal(completed[0]!.result.status, 'cancelling');
 });
 
 /* -------------------------------------------------------------------------- */
@@ -933,4 +956,253 @@ test('the presence host-status marker is namespaced and can never render as a pr
   assert.deepEqual(marker.health, { state: 'degraded', consecutiveFailures: 4, lastFailureAt: NOW });
   // The browser provider fleet mapper requires a providerId — the marker must not carry one.
   assert.equal('providerId' in marker, false, 'the marker is not a provider entry');
+});
+/* -------------------------------------------------------------------------- */
+/* CT-REL-3 goal 1 + A3: responsive request scheduler                           */
+/* -------------------------------------------------------------------------- */
+
+function typedRequest(id: string, type: ClaimedControlRequest['request_type']): ClaimedControlRequest {
+  return { ...controlRequest(type), id, client_request_id: id };
+}
+
+test('CT-REL-3 scheduler: cancel_run bypasses the FIFO and is handled while a non-cancel job still executes', async () => {
+  const held = createHeldRequestTracker();
+  const jobGate = deferred();
+  const dispatched: string[] = [];
+  const cancels: string[] = [];
+  const scheduler = new ControlRequestScheduler({
+    held,
+    isRunning: () => true,
+    log: { error: () => undefined },
+    dispatchNonCancel: async (request) => {
+      dispatched.push(request.id);
+      await jobGate.promise;
+    },
+    handleCancel: async (request) => {
+      cancels.push(request.id);
+    },
+    failRequest: async () => undefined,
+  });
+
+  await scheduler.offer([typedRequest('job-1', 'approve_plan')]);
+  assert.ok(scheduler.isBusy(), 'the non-cancel job holds the single slot');
+
+  // Cancel arrives WHILE the job is still blocked — it must not wait behind it.
+  await scheduler.offer([typedRequest('cancel-1', 'cancel_run')]);
+  assert.deepEqual(cancels, ['cancel-1'], 'the cancel is handled without waiting for the active job');
+  assert.ok(scheduler.isBusy(), 'the active job is still running');
+
+  jobGate.resolve();
+  await sleep(10);
+  assert.equal(scheduler.isBusy(), false);
+  assert.deepEqual(dispatched, ['job-1']);
+});
+
+test('CT-REL-3 scheduler: non-cancel rows queue behind the active job, stay held (never lost), and dispatch in order', async () => {
+  const held = createHeldRequestTracker();
+  const gates = new Map<string, ReturnType<typeof deferred>>();
+  for (const id of ['r1', 'r2', 'r3']) gates.set(id, deferred());
+  const order: string[] = [];
+  const scheduler = new ControlRequestScheduler({
+    held,
+    isRunning: () => true,
+    log: { error: () => undefined },
+    dispatchNonCancel: async (request) => {
+      order.push(request.id);
+      await gates.get(request.id)!.promise;
+    },
+    handleCancel: async () => undefined,
+    failRequest: async () => undefined,
+  });
+
+  await scheduler.offer([typedRequest('r1', 'create_plan'), typedRequest('r2', 'create_plan'), typedRequest('r3', 'create_plan')]);
+  assert.deepEqual(order, ['r1'], 'only the first job starts — Runs stay serial (no concurrency)');
+  assert.equal(scheduler.queueDepth(), 2);
+  assert.ok(held.isHeld('r2') && held.isHeld('r3'), 'queued siblings stay held');
+
+  // A lost-claim sweep over old-claimed rows must NOT fail the held queued rows.
+  const failed: string[] = [];
+  await recoverLostClaims({
+    listOwnClaimed: async () => [
+      { id: 'r2', claimed_at: new Date(0).toISOString() },
+      { id: 'r3', claimed_at: new Date(0).toISOString() },
+    ],
+    isHeld: held.isHeld,
+    failRequest: async (id) => { failed.push(id); },
+    now: () => LOST_CLAIM_THRESHOLD_MS + 1_000,
+  });
+  assert.deepEqual(failed, [], 'a queued-but-held row is never a lost claim');
+
+  gates.get('r1')!.resolve();
+  await sleep(5);
+  gates.get('r2')!.resolve();
+  await sleep(5);
+  gates.get('r3')!.resolve();
+  await sleep(5);
+  assert.deepEqual(order, ['r1', 'r2', 'r3'], 'queued rows dispatch in FIFO order after the active job');
+  assert.ok(!held.isHeld('r1') && !held.isHeld('r2') && !held.isHeld('r3'), 'every row is released once handled');
+  assert.equal(scheduler.isBusy(), false);
+});
+
+test('CT-REL-3 scheduler: a queued create_plan is refused with HOST_RESTART_REQUIRED if the Host went stale while it waited', async () => {
+  const held = createHeldRequestTracker();
+  let restartRequired = false;
+  const gate = deferred();
+  const dispatched: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  const failRequest = async (id: string, error: string): Promise<void> => { failed.push({ id, error }); };
+  const scheduler = new ControlRequestScheduler({
+    held,
+    isRunning: () => true,
+    log: { error: () => undefined },
+    dispatchNonCancel: async (request) => {
+      if (request.request_type === 'approve_plan') {
+        await gate.promise; // the blocking active job
+        return;
+      }
+      // The restart gate is applied at DISPATCH time, not at claim time.
+      if (await gateRestartRequiredRequest({ request, restartRequired, failRequest })) return;
+      dispatched.push(request.id);
+    },
+    handleCancel: async () => undefined,
+    failRequest,
+  });
+
+  await scheduler.offer([typedRequest('a1', 'approve_plan'), typedRequest('r1', 'create_plan')]);
+  assert.equal(scheduler.queueDepth(), 1, 'create_plan waits behind the active approve');
+
+  // The Host goes stale WHILE r1 waits its turn.
+  restartRequired = true;
+  gate.resolve();
+  await sleep(10);
+
+  assert.deepEqual(dispatched, [], 'the stale-gated create_plan never dispatched');
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0]!.id, 'r1');
+  assert.equal(failed[0]!.error, HOST_RESTART_REQUIRED_REQUEST_ERROR, 'refused at dispatch time with the exact message');
+});
+
+test('CT-REL-3 scheduler A3: a throwing background job is caught, logged, and the request is failed safely — no unhandled rejection', async () => {
+  const held = createHeldRequestTracker();
+  const logs: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  const scheduler = new ControlRequestScheduler({
+    held,
+    isRunning: () => true,
+    log: { error: (message) => logs.push(message) },
+    dispatchNonCancel: async () => { throw new Error('job blew up'); },
+    handleCancel: async () => undefined,
+    failRequest: async (id, error) => { failed.push({ id, error }); },
+  });
+
+  await scheduler.offer([typedRequest('r1', 'create_plan')]);
+  await sleep(10);
+
+  assert.equal(scheduler.isBusy(), false, 'the slot is freed after a throwing job');
+  assert.equal(held.isHeld('r1'), false, 'the row is released');
+  assert.equal(failed.length, 1);
+  assert.match(failed[0]!.error, /REQUEST_HANDLER_FAILED/u);
+  assert.ok(logs.some((line) => line.includes('job blew up')), 'the failure is logged safely');
+});
+
+test('CT-REL-3 scheduler A3: shutdown stops new jobs and drain is bounded (the loop never hangs)', async () => {
+  const held = createHeldRequestTracker();
+  const gate = deferred();
+  let runningFlag = true;
+  const dispatched: string[] = [];
+  const scheduler = new ControlRequestScheduler({
+    held,
+    isRunning: () => runningFlag,
+    log: { error: () => undefined },
+    dispatchNonCancel: async (request) => {
+      dispatched.push(request.id);
+      await gate.promise;
+    },
+    handleCancel: async () => undefined,
+    failRequest: async () => undefined,
+  });
+
+  await scheduler.offer([typedRequest('r1', 'approve_plan')]);
+  assert.ok(scheduler.isBusy());
+
+  // Shutdown: no NEW job starts even though one is offered.
+  runningFlag = false;
+  await scheduler.offer([typedRequest('r2', 'create_plan')]);
+  assert.equal(scheduler.queueDepth(), 1, 'no new job starts during shutdown');
+  assert.deepEqual(dispatched, ['r1']);
+
+  // drain honors its bound while the active job is still blocked — never hangs.
+  assert.equal(await scheduler.drain(30), false, 'drain returns within its bound instead of hanging');
+
+  // Once the active job settles, drain resolves.
+  gate.resolve();
+  await sleep(10);
+  assert.equal(await scheduler.drain(1_000), true);
+});
+
+/* -------------------------------------------------------------------------- */
+/* CT-REL-3 goal 6: previous-Host orphan-claim sweep                            */
+/* -------------------------------------------------------------------------- */
+
+test('CT-REL-3 goal 6: findOrphanClaims fails a dead instance stale claim, and spares live instances + young claims', () => {
+  const now = Date.parse(NOW);
+  const rows = [
+    { id: 'orphan', claimed_by_host: 'HOST-DEAD', claimed_at: new Date(now - (ORPHAN_CLAIM_THRESHOLD_MS + 5_000)).toISOString() },
+    { id: 'live', claimed_by_host: 'HOST-LIVE', claimed_at: new Date(now - 300_000).toISOString() },
+    { id: 'young', claimed_by_host: 'HOST-DEAD', claimed_at: new Date(now - 60_000).toISOString() },
+    { id: 'no-claimer', claimed_by_host: null, claimed_at: new Date(0).toISOString() },
+    { id: 'no-time', claimed_by_host: 'HOST-DEAD', claimed_at: null },
+  ];
+  const presence = [
+    { host_instance_id: 'HOST-LIVE', last_seen_at: new Date(now - 5_000).toISOString() }, // fresh → alive
+  ];
+  assert.deepEqual(
+    findOrphanClaims({ rows, presence, now }),
+    ['orphan'],
+    'only a stale claim by a gone instance is orphaned; live instance + young claim + unattributed rows are spared',
+  );
+});
+
+test('CT-REL-3 goal 6: an instance with only a STALE presence row is treated as gone; a fresh row spares it', () => {
+  const now = Date.parse(NOW);
+  const rows = [{ id: 'orphan', claimed_by_host: 'HOST-X', claimed_at: new Date(now - 300_000).toISOString() }];
+  const stale = [{ host_instance_id: 'HOST-X', last_seen_at: new Date(now - (HEARTBEAT_STALE_MS + 5_000)).toISOString() }];
+  assert.deepEqual(findOrphanClaims({ rows, presence: stale, now }), ['orphan'], 'a stale presence row means gone');
+  const fresh = [{ host_instance_id: 'HOST-X', last_seen_at: new Date(now - 1_000).toISOString() }];
+  assert.deepEqual(findOrphanClaims({ rows, presence: fresh, now }), [], 'a fresh presence row spares the claim');
+});
+
+test('CT-REL-3 goal 6: sweepOrphanClaims fails orphaned rows with the exact message and never executes them', async () => {
+  const now = Date.parse(NOW);
+  const failed: Array<{ id: string; error: string }> = [];
+  const recovered: string[] = [];
+  const count = await sweepOrphanClaims({
+    listForeignClaimed: async () => [
+      { id: 'orphan', claimed_by_host: 'HOST-DEAD', claimed_at: new Date(now - 300_000).toISOString() },
+      { id: 'live', claimed_by_host: 'HOST-LIVE', claimed_at: new Date(now - 300_000).toISOString() },
+    ],
+    listPresence: async () => [{ host_instance_id: 'HOST-LIVE', last_seen_at: new Date(now - 2_000).toISOString() }],
+    failRequest: async (id, error) => { failed.push({ id, error }); },
+    now: () => now,
+    onRecovered: (id) => recovered.push(id),
+  });
+  assert.equal(count, 1);
+  assert.deepEqual(failed, [{ id: 'orphan', error: HOST_CLAIM_ORPHAN_MESSAGE }]);
+  assert.equal(
+    HOST_CLAIM_ORPHAN_MESSAGE,
+    'HOST_CLAIM_LOST: the previous Host stopped before finishing this request — submit it again.',
+  );
+  assert.deepEqual(recovered, ['orphan'], 'only the orphan is swept; a live instance claim is untouched');
+});
+
+test('CT-REL-3 goal 6: a control-plane fault during the sweep is reported and fails nothing', async () => {
+  const errors: unknown[] = [];
+  const count = await sweepOrphanClaims({
+    listForeignClaimed: async () => { throw new Error('control plane down'); },
+    listPresence: async () => [],
+    failRequest: async () => { throw new Error('must never run'); },
+    onError: (error) => errors.push(error),
+  });
+  assert.equal(count, 0);
+  assert.equal(errors.length, 1);
 });

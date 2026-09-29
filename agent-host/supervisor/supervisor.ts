@@ -80,7 +80,12 @@ export type SupervisorTickOutcome =
    */
   | 'paused-for-gate'
   /** The Run is already paused (awaiting human approval); this tick was a no-op. */
-  | 'run-paused';
+  | 'run-paused'
+  /**
+   * A durable owner cancellation is in effect: this tick started no new work and
+   * drove the Run to `cancelled` (CT-REL-3). No Attempt is created; no Task starts.
+   */
+  | 'run-cancelled';
 
 export interface SupervisorRetryScheduled {
   completedAttemptId: string;
@@ -129,6 +134,14 @@ export interface SupervisorTickOptions {
   recoverInterruptedAttempts?: RecoverInterruptedAttemptsFn | undefined;
   /** Emit the optional `supervisor.retry.scheduled` telemetry event. Defaults to true. */
   emitRetryEvent?: boolean | undefined;
+  /**
+   * CT-REL-3 goal 2: live owner-cancellation signal, read at run-evaluate time
+   * (not captured at tick start) so a cancel that arrives WHILE this tick is
+   * awaiting the execution port still drives the Run to `cancelled` — never
+   * `failed`. Backed by the durable cancel-intent fact. Absent → never cancelled
+   * (default behavior; existing callers are unaffected).
+   */
+  cancellationRequested?: (() => boolean) | undefined;
 }
 
 export const SUPERVISOR_RETRY_SCHEDULED_EVENT = 'supervisor.retry.scheduled';
@@ -142,6 +155,8 @@ interface TickContext {
   runId: string;
   recoveredAttemptIds: readonly string[];
   emitRetryEvent: boolean;
+  /** Live owner-cancellation signal (CT-REL-3), read fresh at run-evaluate time. */
+  cancellationRequested: () => boolean;
 }
 
 /**
@@ -164,6 +179,7 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
   const idGenerator = options.idGenerator ?? globalThis.crypto.randomUUID.bind(globalThis.crypto);
   const recover = options.recoverInterruptedAttempts ?? defaultRecoverInterruptedAttempts;
   const emitRetryEvent = options.emitRetryEvent ?? true;
+  const cancellationRequested = (): boolean => options.cancellationRequested?.() ?? false;
 
   const run = store.getRun(runId);
   if (!run) {
@@ -189,12 +205,24 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
     });
   }
 
+  // (A3) CT-REL-3 goal 2: a durable owner cancellation supersedes all new
+  // scheduling. Start no Task, create no Attempt — just drive the Run to
+  // `cancelled` through the existing lifecycle seam. Unstarted Tasks never start
+  // (the run is terminal after this) and remaining non-terminal Tasks are swept
+  // by the worker's finalizer. This guard covers ticks that BEGIN after the
+  // cancel; a cancel that arrives mid-tick is handled by the live signal read in
+  // evaluateAndApplyRun below.
+  if (cancellationRequested()) {
+    const { runAction, run: finalRun } = evaluateAndApplyRun(store, runId, true);
+    return baseResult(finalRun, [], { outcome: 'run-cancelled', runAction });
+  }
+
   // (B) Crash/interrupt recovery. Reuse the shared recovery helper, which turns
   // stale `running` Attempts owned by a non-live Host into `interrupted`. Attempts
   // owned by the current live Host are never touched. This never executes anything.
   const recoveredAttemptIds = recover(store, hostInstanceId).map((attempt) => attempt.attemptId);
 
-  const ctx: TickContext = { store, runId, recoveredAttemptIds, emitRetryEvent };
+  const ctx: TickContext = { store, runId, recoveredAttemptIds, emitRetryEvent, cancellationRequested };
 
   // (C) Reconcile an already-running Task before starting anything new. A running
   // Task is never returned by getReadyTasks, so a terminal (including a freshly
@@ -217,7 +245,7 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
     }
     // Tasks exist but none are ready or running: only evaluate the Run lifecycle
     // (it may legitimately complete or fail based on already-terminal Tasks).
-    const { runAction, run: finalRun } = evaluateAndApplyRun(store, runId);
+    const { runAction, run: finalRun } = evaluateAndApplyRun(store, runId, cancellationRequested());
     return baseResult(finalRun, recoveredAttemptIds, { outcome: 'no-ready-task', runAction });
   }
 
@@ -360,7 +388,10 @@ function applyReconciledTaskAction(
       break;
   }
 
-  const { runAction, run: finalRun } = evaluateAndApplyRun(store, runId);
+  // Read the cancellation signal LIVE: a cancel that arrived while the execution
+  // port was awaited must cancel (never fail) the Run, even though the just-killed
+  // Attempt reconciled its Task to `cancelled` a moment ago (CT-REL-3 goal 2/3).
+  const { runAction, run: finalRun } = evaluateAndApplyRun(store, runId, ctx.cancellationRequested());
   return baseResult(finalRun, ctx.recoveredAttemptIds, {
     outcome: executedOutcome,
     taskId,
@@ -656,6 +687,7 @@ function nestedProcessTimedOut(event: OrchestrationEventRecord): boolean {
 function evaluateAndApplyRun(
   store: OrchestrationStore,
   runId: string,
+  cancellationRequested: boolean = false,
 ): { runAction: SupervisorAction; run: RunRecord } {
   const run = requireRun(store, runId);
   const tasks = store.listTasks(runId);
@@ -668,7 +700,7 @@ function evaluateAndApplyRun(
     retryAvailable: false,
   }));
 
-  const runAction = evaluateRunLifecycle({ run, tasks: snapshots });
+  const runAction = evaluateRunLifecycle({ run, tasks: snapshots, cancellationRequested });
   switch (runAction.type) {
     case 'MARK_RUN_RUNNING':
     case 'MARK_RUN_COMPLETED':

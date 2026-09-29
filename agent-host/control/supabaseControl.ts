@@ -311,6 +311,50 @@ export class ControlPlane implements ScopePackStore {
     });
   }
 
+  /**
+   * CT-REL-3 goal 6: rows still in status 'claimed' that were claimed by SOME
+   * OTHER Host instance (not this one). The orphan sweep fails those whose
+   * claiming instance is gone (no fresh presence) and were claimed long ago —
+   * a previous Host that stopped before finishing. failRequest is NOT guarded by
+   * claimed_by_host and runs with the service role (bypasses RLS), so failing
+   * another instance's row needs no schema/RPC/policy change.
+   */
+  async listForeignClaimedRequests(): Promise<Array<{ id: string; claimed_by_host: string | null; claimed_at: string | null }>> {
+    return await this.call(true, async () => {
+      const { data, error } = await this.client
+        .from('agent_control_requests')
+        .select('id,claimed_by_host,claimed_at')
+        .eq('organization_id', this.config.organizationId)
+        .eq('repo_key', this.config.repoKey)
+        .eq('status', 'claimed')
+        .neq('claimed_by_host', this.config.hostInstanceId);
+      if (error) {
+        throw new Error(`Failed to list foreign claimed control requests: ${error.message}`);
+      }
+      return (data ?? []) as Array<{ id: string; claimed_by_host: string | null; claimed_at: string | null }>;
+    });
+  }
+
+  /**
+   * CT-REL-3 goal 6: presence rows for this org+repo (every Host instance), used
+   * to decide whether a claiming instance is still alive. Freshness authority is
+   * HEARTBEAT_STALE_MS (agent-host/types.ts): an instance with no row, or a row
+   * older than that, is gone.
+   */
+  async listRepoPresence(): Promise<Array<{ host_instance_id: string; last_seen_at: string }>> {
+    return await this.call(true, async () => {
+      const { data, error } = await this.client
+        .from('agent_host_presence')
+        .select('host_instance_id,last_seen_at')
+        .eq('organization_id', this.config.organizationId)
+        .eq('repo_key', this.config.repoKey);
+      if (error) {
+        throw new Error(`Failed to read repo presence: ${error.message}`);
+      }
+      return (data ?? []) as Array<{ host_instance_id: string; last_seen_at: string }>;
+    });
+  }
+
   /** Find the completed create_plan request that produced a plan id (same org). */
   async findPlanByPlanId(planId: string): Promise<{ result: Record<string, unknown>; payload: Record<string, unknown> | null } | null> {
     return await this.call(true, async () => {

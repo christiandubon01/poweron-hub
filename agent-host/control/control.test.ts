@@ -47,7 +47,22 @@ import {
 } from './planning.ts';
 import { parseTaskControlSpec, ProductionExecutionPort, VERIFIER_VERDICT_EVENT, TaskSpecContractError } from './supervisorPort.ts';
 import { buildRunSnapshot, extractTaskPlanMeta } from './snapshots.ts';
-import { handleApprovePlan, handleCreatePlan, parseEnvFile, resumeResumableRuns, RESUMABLE_RUN_STATUSES_SET, type ApprovePlanOutcome } from './worker.ts';
+import {
+  handleApprovePlan,
+  handleCreatePlan,
+  parseEnvFile,
+  resumeResumableRuns,
+  RESUMABLE_RUN_STATUSES_SET,
+  driveRunToCompletion,
+  handleCancelRun,
+  finalizeRunCancellation,
+  recordRunCancelIntent,
+  hasRunCancelIntent,
+  recordOwnerCancelEvidence,
+  EXECUTION_CANCELLED_BY_OWNER,
+  RUN_CANCEL_REQUESTED_EVENT,
+  type ApprovePlanOutcome,
+} from './worker.ts';
 import type { ClaimedControlRequest, ControlPlane } from './supabaseControl.ts';
 import { buildClaudeLaunchDescriptor } from '../providers/claude.ts';
 import type { ExecutionRequest, ExecutionResult } from '../providers/types.ts';
@@ -1800,4 +1815,225 @@ test('CT-LIVE-0B0: Provider default does not inject Opus 4.8', () => {
   const stamped = applyOwnerRoleModels(plan.plan!, parsed.payload.roleRouting ?? null);
   assert.equal(stamped.tasks.every((task) => task.requestedModel === null), true);
   assert.equal(JSON.stringify(stamped).includes('claude-opus-4-8'), false);
+});
+
+/* -------------------------------------------------------------------------- */
+/* CT-REL-3: responsive owner cancellation (integration over the real store)    */
+/* -------------------------------------------------------------------------- */
+
+const CANCEL_HOST = 'host-instance-CANCEL';
+
+function ctRel3Sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * A fake ExecutionPort that models a long provider turn: execute() BLOCKS until
+ * either the test cancels the running Attempt (mirrors executor.cancel → the
+ * Attempt terminalizes `cancelled`) or the turn is allowed to complete normally
+ * (`passed`). This is the seam a cancel must be able to interrupt.
+ */
+function cancellableGatedPort(store: OrchestrationStore) {
+  const started: string[] = [];
+  let release: (() => void) | null = null;
+  const port = {
+    execute: async (ctx: AttemptExecutionContext) => {
+      started.push(ctx.attemptId);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (store.getAttempt(ctx.attemptId)?.status === 'running') {
+        store.transitionAttempt(ctx.attemptId, 'passed');
+      }
+    },
+  };
+  const cancelAttempt = (attemptId: string): void => {
+    if (store.getAttempt(attemptId)?.status === 'running') {
+      store.transitionAttempt(attemptId, 'cancelled');
+    }
+    release?.();
+    release = null;
+  };
+  const completeNormally = (): void => {
+    release?.();
+    release = null;
+  };
+  return { port: port as unknown as ProductionExecutionPort, started, cancelAttempt, completeNormally };
+}
+
+async function waitForRunningAttempt(store: OrchestrationStore, taskId: string, boundMs = 2_000): Promise<string> {
+  const deadline = Date.now() + boundMs;
+  for (;;) {
+    const running = store.listAttempts(taskId).find((attempt) => attempt.status === 'running');
+    if (running) return running.attemptId;
+    if (Date.now() > deadline) throw new Error(`no running attempt for ${taskId} within ${boundMs}ms`);
+    await ctRel3Sleep(5);
+  }
+}
+
+test('CT-REL-3: cancel aborts the executing Attempt, ends the Run cancelled, and no unstarted Task ever starts', async () => {
+  await withStore(async (store) => {
+    const runId = 'run-cancel-live';
+    const task1 = `${runId}:t1`;
+    const task2 = `${runId}:t2`;
+    store.createRun({ runId, title: 'run', goal: 'objective' });
+    store.createTask({ taskId: task1, runId, title: 't1', goal: 'g1', position: 0, spec: taskControlSpec() as never });
+    store.createTask({ taskId: task2, runId, title: 't2', goal: 'g2', position: 1, spec: taskControlSpec() as never });
+    store.addDependency(task2, task1);
+
+    const cancelRequestedRuns = new Set<string>();
+    const { port, started, cancelAttempt } = cancellableGatedPort(store);
+    const { published, publishSnapshot } = capturingPublisher(store);
+
+    const drivePromise = driveRunToCompletion({
+      store,
+      controlPlane: stubControlPlane(),
+      executionPort: port,
+      runId,
+      hostInstanceId: CANCEL_HOST,
+      publishSnapshot,
+      tickIntervalMs: 5,
+      isCancellationRequested: () => cancelRequestedRuns.has(runId),
+    });
+
+    const attempt1 = await waitForRunningAttempt(store, task1);
+
+    const failed: Array<{ id: string; error: string }> = [];
+    const completed: Array<Record<string, unknown>> = [];
+    const controlPlane = {
+      completeRequest: async (_id: string, result: Record<string, unknown>) => { completed.push(result); },
+      failRequest: async (id: string, error: string) => { failed.push({ id, error }); },
+    } as unknown as ControlPlane;
+
+    await handleCancelRun({
+      store,
+      controlPlane,
+      request: { id: 'cancel-1', repo_key: 'repo-key-1', request_type: 'cancel_run', client_request_id: 'c1', payload: { runId }, status: 'claimed', created_at: new Date().toISOString() },
+      markCancelRequested: (id) => cancelRequestedRuns.add(id),
+      abortRunAttempts: (id) => {
+        for (const task of store.listTasks(id)) {
+          for (const attempt of store.listAttempts(task.taskId)) {
+            if (attempt.status === 'running') {
+              recordOwnerCancelEvidence(store, id, task.taskId, attempt.attemptId);
+              cancelAttempt(attempt.attemptId);
+            }
+          }
+        }
+      },
+      isActivelyDriving: () => true,
+    });
+
+    await drivePromise;
+
+    assert.equal(store.getRun(runId)?.status, 'cancelled', 'the Run ends cancelled');
+    assert.equal(store.getAttempt(attempt1)?.status, 'cancelled', 'the executing Attempt is aborted');
+    assert.equal(store.getTask(task1)?.status, 'cancelled');
+    assert.equal(store.getTask(task2)?.status, 'cancelled', 'the unstarted Task is swept to cancelled');
+    assert.equal(started.length, 1, 'the unstarted Task never started a provider turn');
+    assert.equal(completed.length, 1, 'the cancel request completes (accepted)');
+    assert.equal(completed[0]!.status, 'cancelling');
+    assert.equal(failed.length, 0);
+
+    const snapshot = buildRunSnapshot({ store, runId, verification: null });
+    const attemptView = snapshot?.attempts.find((attempt) => attempt.attemptId === attempt1);
+    assert.equal(attemptView?.terminalErrorCode, EXECUTION_CANCELLED_BY_OWNER, 'attempt reports Cancelled by owner');
+    assert.equal(snapshot?.changeset, null, 'a cancelled Attempt produces no changeset');
+    assert.equal(snapshot?.candidateApply.attemptId ?? null, null, 'a cancelled Attempt is never a candidate');
+    assert.ok(published.some((entry) => entry.status === 'cancelled'), 'a cancelled snapshot was published');
+  });
+});
+
+test('CT-REL-3: cancel of an already-terminal Run returns RUN_ALREADY_TERMINAL; duplicate cancels are idempotent', async () => {
+  await withStore(async (store) => {
+    store.createRun({ runId: 'run-done', title: 'run', goal: 'g' });
+    store.transitionRun('run-done', 'running');
+    store.transitionRun('run-done', 'completed');
+    const failedA: string[] = [];
+    await handleCancelRun({
+      store,
+      controlPlane: { failRequest: async (_id: string, error: string) => { failedA.push(error); }, completeRequest: async () => { throw new Error('must not complete'); } } as unknown as ControlPlane,
+      request: { id: 'c-done', repo_key: 'repo-key-1', request_type: 'cancel_run', client_request_id: 'cd', payload: { runId: 'run-done' }, status: 'claimed', created_at: new Date().toISOString() },
+    });
+    assert.equal(failedA.length, 1);
+    assert.match(failedA[0]!, /RUN_ALREADY_TERMINAL/u);
+    assert.equal(store.getRun('run-done')?.status, 'completed', 'a completed Run is untouched');
+
+    store.createRun({ runId: 'run-live', title: 'run', goal: 'g' });
+    store.createTask({ taskId: 'run-live:t1', runId: 'run-live', title: 't1', goal: 'g', spec: taskControlSpec() as never });
+    store.transitionRun('run-live', 'running');
+    const completed: number[] = [];
+    const failedB: string[] = [];
+    const cp = { completeRequest: async () => { completed.push(1); }, failRequest: async (_id: string, error: string) => { failedB.push(error); } } as unknown as ControlPlane;
+    const req = (id: string) => ({ id, repo_key: 'repo-key-1', request_type: 'cancel_run' as const, client_request_id: id, payload: { runId: 'run-live' }, status: 'claimed', created_at: new Date().toISOString() });
+    await handleCancelRun({ store, controlPlane: cp, request: req('c1') });
+    await handleCancelRun({ store, controlPlane: cp, request: req('c2') });
+    assert.equal(store.getRun('run-live')?.status, 'cancelled');
+    assert.equal(store.getTask('run-live:t1')?.status, 'cancelled', 'the pending Task was swept');
+    assert.equal(completed.length, 1, 'the first cancel is accepted');
+    assert.equal(failedB.length, 1, 'the duplicate cancel is RUN_ALREADY_TERMINAL');
+    assert.match(failedB[0]!, /RUN_ALREADY_TERMINAL/u);
+    const intents = store.listEvents().filter((event) => event.runId === 'run-live' && event.type === RUN_CANCEL_REQUESTED_EVENT);
+    assert.equal(intents.length, 1, 'cancel intent is recorded exactly once (deterministic id)');
+  });
+});
+
+test('CT-REL-3 goal 3: finalizeRunCancellation is terminal-first — a normal completion that already won is never overwritten', async () => {
+  await withStore(async (store) => {
+    store.createRun({ runId: 'run-c', title: 'run', goal: 'g' });
+    store.transitionRun('run-c', 'running');
+    store.transitionRun('run-c', 'completed');
+    assert.equal(finalizeRunCancellation(store, 'run-c'), false, 'a completed Run is not re-terminalized');
+    assert.equal(store.getRun('run-c')?.status, 'completed');
+
+    store.createRun({ runId: 'run-d', title: 'run', goal: 'g' });
+    store.transitionRun('run-d', 'running');
+    assert.equal(finalizeRunCancellation(store, 'run-d'), true);
+    assert.equal(store.getRun('run-d')?.status, 'cancelled');
+    assert.equal(finalizeRunCancellation(store, 'run-d'), true, 'idempotent — already cancelled');
+  });
+});
+
+test('CT-REL-3 A1: a Host-shutdown interruption is NOT owner-cancelled and the Run stays resumable', async () => {
+  await withStore(async (store) => {
+    const runId = 'run-shutdown';
+    const seeded = seedInterruptedVerifierRun(store, runId, 3);
+    recoverInterruptedAttempts(store, 'host-instance-NEW-2');
+
+    assert.equal(hasRunCancelIntent(store, runId), false, 'shutdown never records owner cancel intent');
+    assert.equal(
+      store.listEvents().some((event) => {
+        const payload = event.payload as Record<string, unknown> | null;
+        return payload?.errorCode === EXECUTION_CANCELLED_BY_OWNER;
+      }),
+      false,
+      'no attempt is recorded as owner-cancelled',
+    );
+
+    const { executions, port } = recordingPort(store, 'passed');
+    const { publishSnapshot } = capturingPublisher(store);
+    await resumeResumableRuns({ store, controlPlane: stubControlPlane(), executionPort: port, hostInstanceId: 'host-instance-NEW-2', publishSnapshot, tickIntervalMs: 5 });
+
+    assert.ok(executions.length > 0, 'the interrupted Run is resumed, not cancelled');
+    assert.notEqual(store.getRun(runId)?.status, 'cancelled', 'a shutdown interruption never yields a cancelled Run');
+    assert.equal(store.getAttempt(seeded.verifierAttempt1Id)?.status, 'interrupted', 'kept interrupted semantics');
+  });
+});
+
+test('CT-REL-3 A2: a durable cancel intent that survived a crash finalizes the Run on restart — nothing re-executes', async () => {
+  await withStore(async (store) => {
+    const runId = 'run-crash-cancel';
+    store.createRun({ runId, title: 'run', goal: 'g' });
+    store.createTask({ taskId: `${runId}:t1`, runId, title: 't1', goal: 'g', position: 0, spec: taskControlSpec() as never });
+    store.transitionRun(runId, 'running');
+    recordRunCancelIntent(store, runId);
+
+    const { executions, port } = recordingPort(store, 'passed');
+    const { published, publishSnapshot } = capturingPublisher(store);
+    await resumeResumableRuns({ store, controlPlane: stubControlPlane(), executionPort: port, hostInstanceId: 'host-instance-NEW-3', publishSnapshot, tickIntervalMs: 5 });
+
+    assert.equal(store.getRun(runId)?.status, 'cancelled', 'the Run ends cancelled on restart');
+    assert.equal(store.getTask(`${runId}:t1`)?.status, 'cancelled', 'its Task is cancelled, never started');
+    assert.equal(executions.length, 0, 'NOTHING is re-executed for a cancel-intent Run');
+    assert.ok(published.some((entry) => entry.runId === runId && entry.status === 'cancelled'));
+  });
 });

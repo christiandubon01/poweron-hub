@@ -162,13 +162,44 @@ export const APPROVAL_STATUS_LINES = [
   'Starting tasks',
 ] as const
 
+/**
+ * CT-REL-3 A4: the factual queued status the Host publishes (through the existing
+ * per-request `result` channel) while a non-cancel request waits behind an active
+ * run. Shown instead of an unexplained spinner. Absent on non-queued rows.
+ */
+export function queuedStatusLine(result: Record<string, unknown> | null | undefined): string | null {
+  const line = result?.queuedStatus
+  return typeof line === 'string' && line.length > 0 ? line : null
+}
+
 function approvalStatusForRow(row: ControlRequestRow): string {
+  // A4: a queued approval shows the Host's factual "waiting for the current run" line.
+  const queued = queuedStatusLine(row.result)
+  if ((row.status === 'pending' || row.status === 'claimed') && queued) return queued
   if (row.status === 'pending') return 'Approval queued'
   if (row.status === 'claimed') {
     return row.result?.approvalStatus === 'Creating run' ? 'Creating run' : 'Host processing approval'
   }
   if (row.status === 'completed' && typeof row.result?.runId === 'string' && row.result.runId.length > 0) return 'Run created'
   return 'Host processing approval'
+}
+
+/**
+ * CT-REL-3 A5: the owner-facing cancel status, driven ONLY by the real cancel_run
+ * request row. "Cancelled" is NOT produced here — it comes solely from the run's
+ * own state (runState === 'cancelled'), so nothing is optimistic.
+ *   pending  → "Cancel requested" (submitted, not yet claimed)
+ *   claimed  → "Cancelling"       (Host is acting on it)
+ *   failed   → the safe failure reason (e.g. RUN_ALREADY_TERMINAL), surfaced near
+ *              the Cancel control instead of silently clearing.
+ *   other    → null (completed is handled by the caller: keep "Cancelling" until
+ *              the run state confirms cancelled).
+ */
+export function cancelStatusForRow(row: ControlRequestRow): string | null {
+  if (row.status === 'pending') return 'Cancel requested'
+  if (row.status === 'claimed') return 'Cancelling'
+  if (row.status === 'failed') return (row.error ?? 'The Host could not cancel this run.').slice(0, 300)
+  return null
 }
 
 function approvalFailureMessage(row: ControlRequestRow): string {
@@ -232,6 +263,9 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   const [applyRequestId, setApplyRequestId] = useState<string | null>(null)
   const [applyProgress, setApplyProgress] = useState<string | null>(null)
   const [applyNotice, setApplyNotice] = useState<ApplyNotice | null>(null)
+  // CT-REL-3 A5: the transient owner-facing cancel status ("Cancel requested" →
+  // "Cancelling" → the safe failure reason), tracked from the real cancel_run row.
+  const [cancelStatus, setCancelStatus] = useState<string | null>(null)
 
   const phaseRef = useRef(phase)
   phaseRef.current = phase
@@ -250,6 +284,8 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   const applyIdRef = useRef(applyRequestId)
   applyIdRef.current = applyRequestId
   const applySubmitLock = useRef(false)
+  // The in-flight cancel_run request id (client id) whose row we poll for A5 status.
+  const cancelIdRef = useRef<string | null>(null)
 
   const applySnapshots = useCallback((rows: RunSnapshotRow[], options: { preferredId: string | null; allowHistory: boolean }) => {
     const views = rows.map(mapRunSnapshotRow).filter((view): view is ControlTowerRunView => view !== null)
@@ -312,7 +348,10 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
           setPlanError(row.error ?? 'The Host failed to create the plan.')
           setPhase('plan-error')
         } else {
-          const line = planningStatusLine(row?.result ?? null)
+          // A4: a create_plan waiting behind an active run shows the Host's factual
+          // queued line instead of an unexplained spinner.
+          const queued = queuedStatusLine(row?.result ?? null)
+          const line = queued ?? planningStatusLine(row?.result ?? null)
           if (line) {
             setPlanningStatus(line)
             if (PROVIDER_PLANNING_LINES.has(line)) {
@@ -384,10 +423,12 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     if (applyId) {
       try {
         const row = await service.fetchControlRequest(org, applyId)
+        const queued = queuedStatusLine(row?.result)
         if (row?.status === 'pending') {
-          setApplyProgress('Apply requested')
+          setApplyProgress(queued ?? 'Apply requested')
         } else if (row && (row.status === 'claimed')) {
-          const label = applyProgressLabel(row.result?.phase)
+          // A4: a queued apply shows the factual waiting line until it is dispatched.
+          const label = queued ?? applyProgressLabel(row.result?.phase)
           if (label) setApplyProgress(label)
         } else if (row && (row.status === 'completed' || row.status === 'failed')) {
           setApplyNotice(noticeFromApplyResult(row.status, row.result, row.error))
@@ -397,6 +438,28 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
         }
       } catch {
         // A transient poll miss keeps the last honest apply state.
+      }
+    }
+
+    // CT-REL-3 A5: cancel poll — surface the real cancel_run row status. "Cancelled"
+    // itself is never set here; it comes only from the run's own state below.
+    const cancelId = cancelIdRef.current
+    if (cancelId) {
+      try {
+        const row = await service.fetchControlRequest(org, cancelId)
+        if (row?.status === 'failed') {
+          // A5: show the safe reason (e.g. RUN_ALREADY_TERMINAL) instead of clearing.
+          cancelIdRef.current = null
+          setCancelStatus(cancelStatusForRow(row))
+        } else if (row && (row.status === 'pending' || row.status === 'claimed')) {
+          setCancelStatus(cancelStatusForRow(row))
+        } else if (row?.status === 'completed') {
+          // The Host accepted the cancel; keep "Cancelling" until the run state
+          // confirms cancelled (no optimistic "Cancelled").
+          setCancelStatus('Cancelling')
+        }
+      } catch {
+        // A transient poll miss keeps the last honest cancel status.
       }
     }
 
@@ -419,6 +482,12 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
         const nextPhase = selected && ACTIVE_RUN_STATES.has(selected.runState) ? 'run' : 'idle'
         phaseRef.current = nextPhase
         setPhase(nextPhase)
+      }
+      // A5: once the run's OWN state confirms cancelled, the transient cancel
+      // status is done — the run label ("Run cancelled") now tells the story.
+      if (cancelIdRef.current && selected && selected.runState === 'cancelled') {
+        cancelIdRef.current = null
+        setCancelStatus(null)
       }
     } catch {
       // Snapshot fetch failures leave the last-known state; presence stays honest.
@@ -638,14 +707,19 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     if (!org) throw new Error('Not authenticated.')
     if (!presence.repoKey) throw new Error('No connected Host repository.')
     setBusy(true)
+    const clientRequestId = makeClientRequestId()
     try {
       await service.insertControlRequest({
         organizationId: org,
         repoKey: presence.repoKey,
         requestType: 'cancel_run',
-        clientRequestId: makeClientRequestId(),
+        clientRequestId,
         payload: { runId: targetRunId },
       })
+      // A5: track the real request row; the poll drives Cancel requested → Cancelling
+      // → (safe reason on failure). "Cancelled" comes only from real run state.
+      cancelIdRef.current = clientRequestId
+      setCancelStatus('Cancel requested')
     } finally {
       setBusy(false)
     }
@@ -712,13 +786,14 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     approvePlan,
     cancelPlanReview,
     cancelRun,
+    cancelStatus,
     applyProgress,
     applyNotice,
     requestApplyCandidate,
   }), [
     phase, presence, context, contextError, plan, planError, planningStatus, planningStartedAt, providerStartedAt, approvalStatus, run, runHistory, draft, busy,
     scopePacks, scopePackRows, importWarning, scopeStorage, importing, importScopePack, refresh,
-    openComposer, closeComposer, editScope, submitScope, retryPlanning, approvePlan, cancelPlanReview, cancelRun,
+    openComposer, closeComposer, editScope, submitScope, retryPlanning, approvePlan, cancelPlanReview, cancelRun, cancelStatus,
     applyProgress, applyNotice, requestApplyCandidate,
   ])
 }

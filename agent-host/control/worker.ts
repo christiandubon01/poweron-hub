@@ -65,6 +65,12 @@ import {
   recoverLostClaims,
   type HeldRequestTracker,
 } from './lostClaims.ts';
+import { ControlRequestScheduler } from './requestPump.ts';
+import {
+  HOST_CLAIM_ORPHAN_MESSAGE,
+  ORPHAN_SWEEP_INTERVAL_MS,
+  sweepOrphanClaims,
+} from './orphanClaims.ts';
 import { handleUncaughtException, handleUnhandledRejection } from './processGuards.ts';
 import { createHostLog } from '../lib/hostLog.ts';
 import {
@@ -123,6 +129,12 @@ import {
 export const CLAIM_POLL_INTERVAL_MS = 2_000;
 export const SUPERVISOR_TICK_INTERVAL_MS = 1_000;
 /**
+ * CT-REL-3 A3: upper bound the shutdown waits for the single background job to
+ * drain after the executor shutdown aborts its in-flight Attempt. The loop never
+ * hangs — if the job somehow does not settle within this bound, shutdown proceeds.
+ */
+export const SCHEDULER_DRAIN_TIMEOUT_MS = 20_000;
+/**
  * ATB-1B: cadence for the active-run SAFE snapshot heartbeat. While a provider
  * Attempt is awaiting completion inside supervisorTick, this timer republishes
  * the current safe snapshot so the owner keeps seeing fresh state (elapsed time,
@@ -133,6 +145,126 @@ export const ACTIVE_SNAPSHOT_HEARTBEAT_MS = 4_000;
 const PRESENCE_PUBLISH_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const ARCHITECT_EXECUTION_PREFIX = 'control-plan';
 const REQUEST_ERROR_LIMIT = 1_000;
+
+/* -------------------------------------------------------------------------- */
+/* CT-REL-3: responsive owner cancellation                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Safe, owner-facing terminal code + copy for an Attempt the OWNER cancelled via
+ * cancel_run (amendment A1). This is distinct from a Host shutdown (which keeps
+ * today's interrupted → restart-resume semantics and never writes this code) and
+ * from a provider timeout. Recorded as CT-REL-1-style failure evidence on the
+ * aborted Attempt so the safe snapshot surfaces "Cancelled by owner".
+ */
+export const EXECUTION_CANCELLED_BY_OWNER = 'EXECUTION_CANCELLED_BY_OWNER';
+export const CANCELLED_BY_OWNER_MESSAGE = 'Cancelled by owner';
+
+/**
+ * Durable, immutable owner cancel-intent event (amendment A2). Recorded in the
+ * EXISTING local orchestration events table before anything is aborted, so the
+ * live cancellation signal and startup restart-resume both read one durable
+ * fact. No schema change. Deterministic id per run → idempotent for duplicate
+ * cancel_run requests.
+ */
+export const RUN_CANCEL_REQUESTED_EVENT = 'control.run.cancel_requested';
+
+/** A4: factual queued status published through the existing per-request result channel. */
+export const QUEUED_STATUS_MESSAGE = 'Queued — waiting for the current run to finish';
+
+/** Record the durable owner cancel intent for a run (idempotent). */
+export function recordRunCancelIntent(store: OrchestrationStore, runId: string): void {
+  store.appendEvent({
+    eventId: `${RUN_CANCEL_REQUESTED_EVENT}:${runId}`,
+    runId,
+    type: RUN_CANCEL_REQUESTED_EVENT,
+    payload: { reason: CANCELLED_BY_OWNER_MESSAGE },
+  });
+}
+
+/** True when the run carries a durable owner cancel intent (survives restart). */
+export function hasRunCancelIntent(store: OrchestrationStore, runId: string): boolean {
+  return store
+    .listEvents()
+    .some((event) => event.runId === runId && event.type === RUN_CANCEL_REQUESTED_EVENT);
+}
+
+/**
+ * CT-REL-1 follow-up-event pattern: record owner-cancel failure evidence on an
+ * Attempt aborted by cancel_run so the safe snapshot reports the owner code +
+ * copy. Best-effort — evidence never blocks cancellation. The Attempt itself is
+ * terminalized `cancelled` by the executor's existing cancel path.
+ */
+export function recordOwnerCancelEvidence(
+  store: OrchestrationStore,
+  runId: string,
+  taskId: string,
+  attemptId: string,
+): void {
+  try {
+    store.appendEvent({
+      eventId: `execution.failure_evidence:owner-cancel:${attemptId}`,
+      runId,
+      taskId,
+      attemptId,
+      type: 'execution.failure_evidence',
+      payload: {
+        errorCode: EXECUTION_CANCELLED_BY_OWNER,
+        errorMessage: CANCELLED_BY_OWNER_MESSAGE,
+        elapsedMs: null,
+        lastActivityAt: null,
+        limitFired: 'none',
+        limitMs: null,
+        changedFileCount: 0,
+        sessionId: null,
+      } as JsonValue,
+    });
+  } catch {
+    // Evidence is best-effort; the executor still terminalizes the Attempt.
+  }
+}
+
+const RUN_TERMINAL_STATUS_SET = new Set(['completed', 'failed', 'cancelled']);
+const TASK_NON_TERMINAL_STATUS_SET = new Set(['pending', 'running', 'blocked']);
+
+/**
+ * Idempotent, single-authority run cancellation finalizer (CT-REL-3 goal 2/3).
+ *
+ * Exactly-one-terminal-outcome: this checks the run's terminal status FIRST, so a
+ * normal completion/failure that already won is never overwritten. Otherwise it
+ * cancels every still-non-terminal Task (so nothing is left to start) and then
+ * cancels the Run. Returns true iff the run is `cancelled` after this call.
+ *
+ * Safe to call more than once and from more than one path (handleCancelRun for a
+ * non-driving run; the drive loop after an aborted Attempt returns; startup
+ * restart-resume for a run with durable cancel intent).
+ */
+export function finalizeRunCancellation(store: OrchestrationStore, runId: string): boolean {
+  const run = store.getRun(runId);
+  if (!run) {
+    return false;
+  }
+  // Exactly-one-terminal-outcome: a NON-cancel terminal (completed / failed) that
+  // already won is never overwritten. A run that is already `cancelled` still
+  // falls through so the Task sweep below stays idempotent (the run may have been
+  // cancelled by the supervisor tick before its unstarted Tasks were swept).
+  if (run.status === 'completed' || run.status === 'failed') {
+    return false;
+  }
+  for (const task of store.listTasks(runId)) {
+    if (TASK_NON_TERMINAL_STATUS_SET.has(task.status)) {
+      try {
+        store.transitionTask(task.taskId, 'cancelled');
+      } catch {
+        // Best-effort per task; the run transition below is the critical write.
+      }
+    }
+  }
+  if (run.status !== 'cancelled') {
+    store.transitionRun(runId, 'cancelled');
+  }
+  return true;
+}
 
 /* -------------------------------------------------------------------------- */
 /* CT-REL-2 Part A: restart-required gating + presence host-status marker        */
@@ -1014,6 +1146,25 @@ export async function handleCancelRun(options: {
   store: OrchestrationStore;
   controlPlane: ControlPlane;
   request: ClaimedControlRequest;
+  /**
+   * Mark the live in-memory cancel signal for this run (CT-REL-3). The durable
+   * intent is always recorded here regardless; this only speeds the running
+   * drive's read. Optional so simple callers/tests need not wire it.
+   */
+  markCancelRequested?: ((runId: string) => void) | undefined;
+  /**
+   * Abort the run's currently-running Attempt(s) through the executor's existing
+   * cancel path (adapter.cancel → tree kill) and record owner-cancel evidence.
+   * Optional; absent → no live Attempt to abort (e.g. a pending or idle run).
+   */
+  abortRunAttempts?: ((runId: string) => void) | undefined;
+  /**
+   * True when a background drive is actively driving this run. When true, that
+   * drive is the sole authority that finalizes the Run (after the aborted Attempt
+   * returns), so this handler does NOT finalize — it only records intent + aborts.
+   * When false/absent, this handler finalizes immediately (idempotent).
+   */
+  isActivelyDriving?: ((runId: string) => boolean) | undefined;
 }): Promise<void> {
   const { request, controlPlane, store } = options;
   const payload = request.payload as Record<string, unknown>;
@@ -1027,12 +1178,30 @@ export async function handleCancelRun(options: {
     await controlPlane.failRequest(request.id, `RUN_NOT_FOUND: ${runId}`);
     return;
   }
-  if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+  // Exactly-one-terminal-outcome (goal 3): a run that already reached a terminal
+  // state — including one that completed a heartbeat before this cancel was
+  // claimed — cannot be cancelled. Duplicate cancels are naturally idempotent
+  // (the first transitions the run; the rest see it terminal here).
+  if (RUN_TERMINAL_STATUS_SET.has(run.status)) {
     await controlPlane.failRequest(request.id, `RUN_ALREADY_TERMINAL: ${runId} is ${run.status}.`);
     return;
   }
-  store.transitionRun(runId, 'cancelled');
-  await controlPlane.completeRequest(request.id, { runId, status: 'cancelled' });
+
+  // A2: record the owner's intent DURABLY before aborting anything, so a crash
+  // between here and finalization still ends the run cancelled on restart.
+  recordRunCancelIntent(store, runId);
+  options.markCancelRequested?.(runId);
+  // Abort the live provider turn (if any) through the executor's tree kill.
+  options.abortRunAttempts?.(runId);
+
+  // A run actively being driven is finalized by that drive once the aborted
+  // Attempt returns (single authority). A pending/idle run has no drive to
+  // finalize it, so do it here. finalizeRunCancellation is idempotent either way.
+  if (!(options.isActivelyDriving?.(runId) ?? false)) {
+    finalizeRunCancellation(store, runId);
+  }
+
+  await controlPlane.completeRequest(request.id, { runId, status: 'cancelling' });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1053,10 +1222,17 @@ export async function driveRunToCompletion(options: {
   snapshotHeartbeatMs?: number | undefined;
   /** Bounded, best-effort report of a heartbeat publish failure. Never affects the run. */
   onSnapshotError?: ((runId: string, error: unknown) => void | Promise<void>) | undefined;
+  /**
+   * CT-REL-3: live owner-cancellation signal for THIS run. Passed to supervisorTick
+   * (read at run-evaluate time so a cancel arriving mid-tick cancels, never fails,
+   * the run) and checked by this loop so it exits and finalizes promptly.
+   */
+  isCancellationRequested?: (() => boolean) | undefined;
 }): Promise<void> {
   const { store, executionPort, runId } = options;
   const tickIntervalMs = options.tickIntervalMs ?? SUPERVISOR_TICK_INTERVAL_MS;
   const heartbeatMs = options.snapshotHeartbeatMs ?? ACTIVE_SNAPSHOT_HEARTBEAT_MS;
+  const isCancellationRequested = options.isCancellationRequested ?? (() => false);
 
   // Single coalescing publisher shared by the authoritative (pre/post-tick)
   // publishes and the observability heartbeat, so the two never overlap into a
@@ -1134,6 +1310,7 @@ export async function driveRunToCompletion(options: {
         runId,
         hostInstanceId: options.hostInstanceId,
         executionPort,
+        cancellationRequested: isCancellationRequested,
       });
 
       await authoritativePublish();
@@ -1149,6 +1326,17 @@ export async function driveRunToCompletion(options: {
   } finally {
     disposed = true;
     clearInterval(heartbeat);
+    // CT-REL-3: if an owner cancel is in effect, ensure the run is finalized and
+    // every remaining non-terminal Task is swept (idempotent; a normal terminal
+    // outcome that already won is preserved by the terminal-first check).
+    if (isCancellationRequested()) {
+      finalizeRunCancellation(store, runId);
+      try {
+        await options.publishSnapshot(runId);
+      } catch {
+        // The run's durable state is authoritative; snapshot retry is best-effort.
+      }
+    }
   }
 }
 
@@ -1225,6 +1413,20 @@ export async function resumeResumableRuns(options: {
     // terminalized or paused since discovery (idempotency + §28 no-auto-resume).
     const current = store.getRun(runId);
     if (!current || !RESUMABLE_RUN_STATUSES_SET.has(current.status)) {
+      continue;
+    }
+
+    // A2: a Run carrying a durable owner cancel intent from a previous session is
+    // FINALIZED (tasks cancelled, Run → cancelled), never resumed — nothing is
+    // re-executed. The intent survived the crash in the events table.
+    if (hasRunCancelIntent(store, runId)) {
+      finalizeRunCancellation(store, runId);
+      try {
+        await options.publishSnapshot(runId);
+      } catch {
+        // Durable state is authoritative; snapshot retry is best-effort.
+      }
+      resumedRunIds.push(runId);
       continue;
     }
 
@@ -1599,6 +1801,185 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     lostClaimTimer.unref();
   }
 
+  /* ---------------------------------------------------------------------- */
+  /* CT-REL-3: responsive cancellation + orphan sweep wiring                 */
+  /* ---------------------------------------------------------------------- */
+
+  // Durable owner-cancellation. The in-memory set is the FAST live signal read
+  // by an active drive; the durable RUN_CANCEL_REQUESTED event (events table) is
+  // the persistent fact, seeded here so a cancel that survived a crash is honored.
+  const cancelRequestedRuns = new Set<string>();
+  for (const existingRun of store.listRuns()) {
+    if (hasRunCancelIntent(store, existingRun.runId)) {
+      cancelRequestedRuns.add(existingRun.runId);
+    }
+  }
+  const isRunCancelRequested = (runId: string): boolean => cancelRequestedRuns.has(runId);
+
+  // The run currently owned by the single background drive slot, so cancel_run
+  // knows whether that drive (its sole authority) will finalize the run.
+  let activeDriveRunId: string | null = null;
+
+  // Abort the run's currently-running Attempt(s) through the executor's existing
+  // tree-kill cancel path, recording owner-cancel evidence for the safe snapshot.
+  const abortRunAttempts = (runId: string): void => {
+    for (const task of store.listTasks(runId)) {
+      for (const attempt of store.listAttempts(task.taskId)) {
+        if (attempt.status === 'running') {
+          recordOwnerCancelEvidence(store, runId, task.taskId, attempt.attemptId);
+          try {
+            executor.cancel(attempt.attemptId);
+          } catch {
+            // Best-effort; the durable intent + finalizer still cancel the run.
+          }
+        }
+      }
+    }
+  };
+
+  const handleCancel = async (request: ClaimedControlRequest): Promise<void> => {
+    await handleCancelRun({
+      store,
+      controlPlane,
+      request,
+      markCancelRequested: (runId) => cancelRequestedRuns.add(runId),
+      abortRunAttempts,
+      isActivelyDriving: (runId) => activeDriveRunId === runId,
+    });
+    const runId = (request.payload as Record<string, unknown>).runId;
+    if (typeof runId === 'string') {
+      try {
+        await publishSnapshot(runId);
+      } catch {
+        // Cancel snapshot is best effort; the durable run state is authoritative.
+      }
+    }
+  };
+
+  const dispatchNonCancel = async (request: ClaimedControlRequest): Promise<void> => {
+    // CT-REL-2 Part A (goal 3) / CT-REL-3: the restart gate is applied at DISPATCH
+    // time, so a queued create_plan / approve_plan is refused with
+    // HOST_RESTART_REQUIRED if the Host became stale while the row waited.
+    if (await gateRestartRequiredRequest({
+      request,
+      restartRequired,
+      failRequest: (id, error) => controlPlane.failRequest(id, error),
+    })) {
+      return;
+    }
+    if (request.request_type === 'import_scope_pack') {
+      await handleImportScopePack({
+        controlPlane,
+        request,
+        organizationId: config.organizationId,
+      });
+    } else if (request.request_type === 'create_plan') {
+      await handleCreatePlan({
+        store,
+        registry,
+        controlPlane,
+        request,
+        canonicalRepoPath,
+        orientationCachePath: path.join(statePaths.repoStateDir, 'repo-orientation.json'),
+        organizationId: config.organizationId,
+      });
+    } else if (request.request_type === 'approve_plan') {
+      const outcome = await handleApprovePlan({ store, controlPlane, request, canonicalRepoPath });
+      if (outcome.ok && outcome.runId) {
+        const driveRunId = outcome.runId;
+        activeDriveRunId = driveRunId;
+        try {
+          await driveRunToCompletion({
+            store,
+            controlPlane,
+            executionPort,
+            runId: driveRunId,
+            hostInstanceId: instanceIdentity.instanceId,
+            publishSnapshot,
+            onSnapshotError,
+            isCancellationRequested: () => isRunCancelRequested(driveRunId),
+          });
+        } catch (error) {
+          await eventWriter.append('control.run.error', {
+            runId: driveRunId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          try {
+            await publishSnapshot(driveRunId);
+          } catch {
+            // Snapshot already attempted; nothing else is publishable here.
+          }
+        } finally {
+          activeDriveRunId = null;
+        }
+      }
+    } else if (request.request_type === 'apply_candidate') {
+      await handleApplyCandidate({
+        store,
+        controlPlane,
+        request,
+        canonicalRepoPath,
+        workspaceRoot: path.join(statePaths.baseDir, 'workspaces'),
+        repoKey: statePaths.repoKey,
+      });
+      const runId = request.payload.runId;
+      if (typeof runId === 'string') {
+        try {
+          await publishSnapshot(runId);
+        } catch {
+          // Apply result is already durable on the control request.
+        }
+      }
+    } else {
+      await controlPlane.failRequest(request.id, `UNKNOWN_REQUEST_TYPE: ${String(request.request_type)}`);
+    }
+  };
+
+  // A4: factual queued status through the existing per-request result channel.
+  const publishQueuedStatus = async (request: ClaimedControlRequest): Promise<void> => {
+    if (!controlPlane.notePlanningProgress) {
+      return;
+    }
+    try {
+      await controlPlane.notePlanningProgress(request.id, { queuedStatus: QUEUED_STATUS_MESSAGE });
+    } catch {
+      // Queued-status publishing is observational only.
+    }
+  };
+
+  // CT-REL-3 goal 1: the single-slot scheduler. cancel_run bypasses the FIFO;
+  // every other type runs one-at-a-time in the background so the claim loop is
+  // never blocked and a cancel is dispatched within one poll.
+  const scheduler = new ControlRequestScheduler({
+    held: heldRequestIds,
+    isRunning: () => running,
+    log: logger,
+    handleCancel,
+    dispatchNonCancel,
+    failRequest: (id, error) => controlPlane.failRequest(id, error),
+    onQueued: publishQueuedStatus,
+  });
+
+  // CT-REL-3 goal 6: previous-Host orphan-claim sweep — startup + every 60s.
+  const runOrphanSweep = async (): Promise<void> => {
+    await sweepOrphanClaims({
+      listForeignClaimed: () => controlPlane.listForeignClaimedRequests(),
+      listPresence: () => controlPlane.listRepoPresence(),
+      failRequest: (id, error) => controlPlane.failRequest(id, error),
+      onRecovered: (id) => logger.error(`Swept orphaned control request ${id} — ${HOST_CLAIM_ORPHAN_MESSAGE}`),
+      onError: (error) => logger.error(`Orphan-claim sweep failed: ${error instanceof Error ? error.message : String(error)}`),
+    });
+  };
+  const orphanSweepTimer = setInterval(() => {
+    if (shutdownStarted) {
+      return;
+    }
+    void runOrphanSweep();
+  }, ORPHAN_SWEEP_INTERVAL_MS);
+  if (typeof orphanSweepTimer.unref === 'function') {
+    orphanSweepTimer.unref();
+  }
+
   /**
    * CT-REL-2 Part B (goal 8): `forcedExitCode` exists so an uncaughtException
    * exits NON-ZERO even when graceful shutdown succeeds.
@@ -1612,6 +1993,7 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     clearInterval(presenceTimer);
     clearInterval(heartbeatTimer);
     clearInterval(lostClaimTimer);
+    clearInterval(orphanSweepTimer);
     sourceFingerprintWatch.stop();
     controlPlane.abort(); // cut in-flight retries short immediately
     try {
@@ -1619,7 +2001,12 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
         refreshRepoStatusIfNeeded,
         writeCurrentHeartbeat,
         appendLifecycleEvent: (type, data) => eventWriter.append(type, data).then(() => undefined),
-        executorShutdown: () => executor.shutdown(),
+        // A3: abort the in-flight Attempt through the executor, then drain the
+        // single background job slot within a bound so the loop never hangs.
+        executorShutdown: async () => {
+          await executor.shutdown();
+          await scheduler.drain(SCHEDULER_DRAIN_TIMEOUT_MS);
+        },
         closeOrchestrationStore: () => {
           store.close();
         },
@@ -1686,8 +2073,16 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     );
   }
 
-  // Claim/handle loop. Requests are handled sequentially; a run drives to
-  // completion (or pause) before the next request is claimed.
+  // CT-REL-3 goal 6: one orphan sweep at startup, before ordinary polling, so a
+  // request stuck 'claimed' by a previous (dead) Host is cleared to a resubmit
+  // prompt instead of an endless browser spinner.
+  void runOrphanSweep();
+
+  // CT-REL-3 goal 1: the claim loop NEVER blocks on execution. Every poll it
+  // claims pending rows and hands them to the scheduler, which handles cancel_run
+  // inline and runs every other type one-at-a-time in a single background slot.
+  // A cancel_run submitted mid-run is therefore claimed and dispatched within one
+  // poll (~seconds), no matter how long the active run takes.
   let claimFailureStreak = 0;
   while (running) {
     let claimed: ClaimedControlRequest[] = [];
@@ -1704,113 +2099,16 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
       continue;
     }
 
-    if (claimed.length === 0) {
-      await sleep(CLAIM_POLL_INTERVAL_MS);
-      continue;
+    if (claimed.length > 0) {
+      // offer() holds every row on receipt (lost-claim safety), routes cancel_run
+      // inline, enqueues the rest, and pumps the single job slot. Only the fast
+      // inline cancel handling is awaited here; background jobs run detached.
+      await scheduler.offer(claimed);
     }
 
-    // CT-REL-2.1 goal 1: dispatchClaimedBatch holds EVERY row from receipt
-    // (before any dispatch), releases each row when its handling finishes, and
-    // skips rows already failed by lost-claim recovery — so batch siblings are
-    // never mistaken for lost claims and recovered rows are never dispatched.
-    await dispatchClaimedBatch({
-      requests: claimed,
-      held: heldRequestIds,
-      isRunning: () => running,
-      dispatch: async (request) => {
-        try {
-          // CT-REL-2 Part A (goal 3): while the Host is running older code, NEW
-          // plan work is refused with HOST_RESTART_REQUIRED. cancel_run and
-          // apply_candidate keep working; in-flight attempts finish normally.
-          if (await gateRestartRequiredRequest({
-            request,
-            restartRequired,
-            failRequest: (id, error) => controlPlane.failRequest(id, error),
-          })) {
-            return;
-          }
-          if (request.request_type === 'import_scope_pack') {
-            await handleImportScopePack({
-              controlPlane,
-              request,
-              organizationId: config.organizationId,
-            });
-          } else if (request.request_type === 'create_plan') {
-            await handleCreatePlan({
-              store,
-              registry,
-              controlPlane,
-              request,
-              canonicalRepoPath,
-              orientationCachePath: path.join(statePaths.repoStateDir, 'repo-orientation.json'),
-              organizationId: config.organizationId,
-            });
-          } else if (request.request_type === 'approve_plan') {
-            const outcome = await handleApprovePlan({ store, controlPlane, request, canonicalRepoPath });
-            if (outcome.ok && outcome.runId) {
-              try {
-                await driveRunToCompletion({
-                  store,
-                  controlPlane,
-                  executionPort,
-                  runId: outcome.runId,
-                  hostInstanceId: instanceIdentity.instanceId,
-                  publishSnapshot,
-                  onSnapshotError,
-                });
-              } catch (error) {
-                await eventWriter.append('control.run.error', {
-                  runId: outcome.runId,
-                  message: error instanceof Error ? error.message : String(error),
-                });
-                try {
-                  await publishSnapshot(outcome.runId);
-                } catch {
-                  // Snapshot already attempted; nothing else is publishable here.
-                }
-              }
-            }
-          } else if (request.request_type === 'apply_candidate') {
-            await handleApplyCandidate({
-              store,
-              controlPlane,
-              request,
-              canonicalRepoPath,
-              workspaceRoot: path.join(statePaths.baseDir, 'workspaces'),
-              repoKey: statePaths.repoKey,
-            });
-            const runId = request.payload.runId;
-            if (typeof runId === 'string') {
-              try {
-                await publishSnapshot(runId);
-              } catch {
-                // Apply result is already durable on the control request.
-              }
-            }
-          } else if (request.request_type === 'cancel_run') {
-            await handleCancelRun({ store, controlPlane, request });
-            if (typeof (request.payload as Record<string, unknown>).runId === 'string') {
-              try {
-                await publishSnapshot((request.payload as Record<string, unknown>).runId as string);
-              } catch {
-                // Cancel snapshot is best effort.
-              }
-            }
-          } else {
-            await controlPlane.failRequest(request.id, `UNKNOWN_REQUEST_TYPE: ${String(request.request_type)}`);
-          }
-        } catch (error) {
-          try {
-            await controlPlane.failRequest(
-              request.id,
-              `REQUEST_HANDLER_FAILED: ${error instanceof Error ? error.message : String(error)}`.slice(0, REQUEST_ERROR_LIMIT),
-            );
-          } catch {
-            // The request stays claimed; the owner can retry with a new request.
-          }
-        }
-      },
-    });
+    // Always poll at the normal cadence — even while a run executes — so cancels
+    // stay responsive. The scheduler keeps the run serial in its background slot.
+    await sleep(CLAIM_POLL_INTERVAL_MS);
   }
 
   return typeof process.exitCode === 'number' ? process.exitCode : 0;
