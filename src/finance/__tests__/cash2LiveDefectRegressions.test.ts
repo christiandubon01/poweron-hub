@@ -2,11 +2,11 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const transferFix = readFileSync(
-  new URL('../../../supabase/migrations/20260929074707_cash_transfer_conflict_target_fix.sql', import.meta.url),
+  new URL('../../../supabase/migrations/141_cash_transfer_conflict_target_fix.sql', import.meta.url),
   'utf8',
 )
 const voidFix = readFileSync(
-  new URL('../../../supabase/migrations/20260929074856_cash_pair_void_link_lock_fix.sql', import.meta.url),
+  new URL('../../../supabase/migrations/142_cash_pair_void_link_lock_fix.sql', import.meta.url),
   'utf8',
 )
 

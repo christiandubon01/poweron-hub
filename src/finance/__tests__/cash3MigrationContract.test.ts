@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const sql = readFileSync(
-  new URL('../../../supabase/migrations/20260929100000_cash_dated_obligations.sql', import.meta.url),
+  new URL('../../../supabase/migrations/143_cash_dated_obligations.sql', import.meta.url),
   'utf8',
 )
 
