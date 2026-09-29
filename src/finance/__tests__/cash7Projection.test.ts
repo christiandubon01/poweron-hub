@@ -208,6 +208,26 @@ describe('CASH-7 deterministic projection', () => {
     expect(result.datedEvents.filter(e => e.sourceKey.endsWith(':oct'))).toHaveLength(1)
   })
 
+  it('matches CASH-4 Day-0 protection for an October occurrence moved to September 30', () => {
+    const o = obligation({ recurrence: { kind: 'monthly', interval: 1,
+      anchorDate: '2026-10-31', startDate: '2026-10-31' } })
+    const occurrence: ObligationOccurrence = { id: 'oct', organizationId: ORG, obligationId: 'rent',
+      scheduledDate: '2026-10-31', overrideDate: '2026-09-30',
+      overrideAmount: { currency: 'USD', minor: 1200 }, status: 'scheduled',
+      reconciliationState: 'unreconciled' }
+    const input = makeInput({ obligations: [o], occurrences: [occurrence],
+      allocation: { protectionHorizonDays: 1 } })
+    expect(input.allocationSnapshot.allocationResult.requirements).toHaveLength(1)
+    expect(input.allocationSnapshot.allocationResult.requirements[0]).toMatchObject({
+      dedupeKey: `${ORG}:financial_obligation_occurrence:oct`, amountMinor: 1200 })
+    const result = computeCashProjection(input)
+    expect(result.anchor.totalProtectedRequirementMinor).toBe(1200)
+    expect(result.datedEvents.filter(e => e.sourceKey === `${ORG}:financial_obligation_occurrence:oct`))
+      .toHaveLength(1)
+    expect(result.days[0]).toMatchObject({ outflowMinor: 1200, closingCashMinor: 3800,
+      totalProtectedRequirementMinor: 0, trulyFreeCashMinor: 3800 })
+  })
+
   it('excludes reconciled, satisfied, and optional plans unless policy includes optional', () => {
     const plans = [commitment('reconciled', '2026-10-01', 1000, { status: 'satisfied',
       reconciliationState: 'reconciled', actualTransactionId: 'tx1' }),
@@ -394,6 +414,64 @@ describe('CASH-7 deterministic projection', () => {
     expect(result.days[3].outflowMinor).toBe(1000)
     expect(input.commitments[0].expectedDate).toBe('2026-09-30')
     expect(input.scenarioEvents?.[1].date).toBe('2026-10-03')
+  })
+
+  it('moves a planned commitment payment and protection date without changing its input', () => {
+    const input = makeInput({ allocation: { protectionHorizonDays: 0 },
+      commitments: [commitment('c', '2026-10-01', 1000)],
+      scenarioEvents: [{ scenarioId: 'delay', action: 'replace',
+        replacesSourceKey: `${ORG}:cash_commitment:c`, date: '2026-10-05',
+        direction: 'outflow', amountMinor: 1000, confidence: 'confirmed',
+        requirement: 'required', label: 'Delayed purchase' }] })
+    const result = computeCashProjection(input)
+    expect(result.days[1]).toMatchObject({ date: '2026-10-01', outflowMinor: 0,
+      totalProtectedRequirementMinor: 0 })
+    expect(result.days[5]).toMatchObject({ date: '2026-10-05', outflowMinor: 1000,
+      totalProtectedRequirementMinor: 0, closingCashMinor: 4000 })
+    expect(result.datedEvents.some(e => e.sourceKey === `${ORG}:cash_commitment:c`)).toBe(false)
+    expect(result.datedEvents.filter(e => e.sourceKey === 'scenario:delay')).toHaveLength(1)
+    expect(input.commitments[0]).toMatchObject({ expectedDate: '2026-10-01', amount: { minor: 1000 } })
+  })
+
+  it('uses a replacement planned amount once in future protection and payment', () => {
+    const result = computeCashProjection(makeInput({ allocation: { protectionHorizonDays: 1 },
+      commitments: [commitment('c', '2026-10-01', 1000)],
+      scenarioEvents: [{ scenarioId: 'larger', action: 'replace',
+        replacesSourceKey: `${ORG}:cash_commitment:c`, date: '2026-10-05',
+        direction: 'outflow', amountMinor: 1500, confidence: 'confirmed',
+        requirement: 'required', label: 'Larger purchase' }] }))
+    expect(result.days[4]).toMatchObject({ date: '2026-10-04', outflowMinor: 0,
+      totalProtectedRequirementMinor: 1500, trulyFreeCashMinor: 3500 })
+    expect(result.days[5]).toMatchObject({ outflowMinor: 1500,
+      totalProtectedRequirementMinor: 0, closingCashMinor: 3500 })
+    expect(result.days[5].events).toHaveLength(1)
+  })
+
+  it('moves a linked ledger payment while retaining the underlying claim date and amount', () => {
+    const input = makeInput({ allocation: { protectionHorizonDays: 0 },
+      transactions: [tx('opening', DAY, 5000), tx('paid', '2026-10-01', -1000)],
+      commitments: [commitment('c', '2026-10-01', 1000, { actualTransactionId: 'paid' })],
+      scenarioEvents: [{ scenarioId: 'move-payment', action: 'replace',
+        replacesSourceKey: `${ORG}:financial_transaction:paid`, date: '2026-10-05',
+        direction: 'outflow', amountMinor: 1000, confidence: 'confirmed',
+        requirement: 'required', label: 'Moved ledger payment' }] })
+    const result = computeCashProjection(input)
+    expect(result.days[1]).toMatchObject({ date: '2026-10-01', outflowMinor: 0,
+      totalProtectedRequirementMinor: 1000, trulyFreeCashMinor: 4000 })
+    expect(result.days[5]).toMatchObject({ date: '2026-10-05', outflowMinor: 1000,
+      totalProtectedRequirementMinor: 0, closingCashMinor: 4000 })
+    expect(input.commitments[0].expectedDate).toBe('2026-10-01')
+  })
+
+  it('rejects changed linked-ledger payment cents instead of settling the full claim', () => {
+    const input = makeInput({ transactions: [tx('opening', DAY, 5000),
+      tx('paid', '2026-10-01', -1000)],
+      commitments: [commitment('c', '2026-10-01', 1000, { actualTransactionId: 'paid' })],
+      scenarioEvents: [{ scenarioId: 'partial', action: 'replace',
+        replacesSourceKey: `${ORG}:financial_transaction:paid`, date: '2026-10-05',
+        direction: 'outflow', amountMinor: 500, confidence: 'confirmed',
+        requirement: 'required', label: 'Partial ledger payment' }] })
+    expect(() => computeCashProjection(input)).toThrow(/Unsupported partial settlement/)
   })
 
   it('does not create project income from missing stored terms or timeline defaults', () => {

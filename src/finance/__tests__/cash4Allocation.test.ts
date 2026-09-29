@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { usd } from '../domain'
 import { computeCashAllocation } from '../allocationEngine'
+import { buildRecurringObligationEventsIncludingOverrides } from '../obligationCalculations'
 import type { CashAllocationPolicy } from '../allocationTypes'
 import type { FinancialAccountRow, FinancialTransactionRow } from '../ledgerTypes'
 import type { CashCommitment, ObligationOccurrence, RecurringObligation } from '../obligationsTypes'
@@ -148,6 +149,58 @@ const BASE_ACCOUNTS = [account()]
 const BASE_TRANSACTIONS = [tx({ amount_minor: 1_000_000, economic_amount_minor: 1_000_000 })]
 
 describe('CASH-4 Protected Cash / Truly Free Cash allocation engine', () => {
+
+  it('protects one valid monthly occurrence moved into the Day-0 window from October', () => {
+    const recurring = obligation({ recurrence: { kind: 'monthly', interval: 1,
+      anchorDate: '2026-10-31', startDate: '2026-10-31' } })
+    const occurrence: ObligationOccurrence = {
+      id: 'oct-override', organizationId: 'org-1', obligationId: recurring.id,
+      scheduledDate: '2026-10-31', overrideDate: '2026-09-30', overrideAmount: usd(70_000),
+      status: 'scheduled', reconciliationState: 'unreconciled', actualTransactionId: null,
+    }
+    const events = buildRecurringObligationEventsIncludingOverrides(
+      recurring, [occurrence, occurrence], recurring.recurrence.startDate, '2026-09-30')
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ sourceRecordId: 'oct-override', date: '2026-09-30',
+      amount: usd(70_000), status: 'scheduled', reconciliationState: 'unreconciled' })
+    const snap = computeCashAllocation(BASE_ACCOUNTS, BASE_TRANSACTIONS, [recurring],
+      [occurrence], [], policy({ protectionHorizonDays: 1 }))
+    expect(snap.totalProtectedRequirementMinor).toBe(70_000)
+    expect(snap.allocationResult.requirements).toHaveLength(1)
+    expect(snap.allocationResult.requirements[0].dedupeKey)
+      .toBe('org-1:financial_obligation_occurrence:oct-override')
+  })
+
+  it('does not include an override whose scheduled date is not a real recurrence', () => {
+    const recurring = obligation({ recurrence: { kind: 'monthly', interval: 1,
+      anchorDate: '2026-10-31', startDate: '2026-10-31' } })
+    const invalid: ObligationOccurrence = { id: 'invalid', organizationId: 'org-1',
+      obligationId: recurring.id, scheduledDate: '2026-10-30', overrideDate: '2026-09-30',
+      status: 'scheduled', reconciliationState: 'unreconciled' }
+    expect(buildRecurringObligationEventsIncludingOverrides(
+      recurring, [invalid], recurring.recurrence.startDate, '2026-09-30')).toEqual([])
+  })
+
+  it('sorts crossing overrides by effective date and identity while preserving materialized state', () => {
+    const recurring = obligation({ recurrence: { kind: 'monthly', interval: 1,
+      anchorDate: '2026-10-31', startDate: '2026-10-31' } })
+    const rows: ObligationOccurrence[] = [
+      { id: 'b', organizationId: 'org-1', obligationId: recurring.id,
+        scheduledDate: '2026-10-31', overrideDate: '2026-09-30', overrideAmount: usd(12_345),
+        status: 'skipped', reconciliationState: 'unreconciled', actualTransactionId: 'linked' },
+      { id: 'a', organizationId: 'org-1', obligationId: recurring.id,
+        scheduledDate: '2026-11-30', overrideDate: '2026-09-30',
+        status: 'scheduled', reconciliationState: 'reconciled', actualTransactionId: 'posted' },
+      { id: 'foreign', organizationId: 'other', obligationId: recurring.id,
+        scheduledDate: '2026-12-31', overrideDate: '2026-09-30',
+        status: 'scheduled', reconciliationState: 'unreconciled' },
+    ]
+    const events = buildRecurringObligationEventsIncludingOverrides(
+      recurring, rows, recurring.recurrence.startDate, '2026-09-30')
+    expect(events.map(event => event.sourceRecordId)).toEqual(['a', 'b'])
+    expect(events[1]).toMatchObject({ date: '2026-09-30', amount: usd(12_345),
+      status: 'skipped', reconciliationState: 'unreconciled', actualTransactionId: 'linked' })
+  })
 
   // ── Test 1 ──────────────────────────────────────────────────────────────────
   it('empty protection requirements: truly free equals positive total cash', () => {

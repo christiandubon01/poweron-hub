@@ -1,6 +1,6 @@
 import { financialReconciliationKey } from './domain'
 import { totalCashMinor } from './ledgerCalculations'
-import { buildCommitmentEvent, buildRecurringObligationEvents } from './obligationCalculations'
+import { buildCommitmentEvent, buildRecurringObligationEventsIncludingOverrides } from './obligationCalculations'
 import { addCalendarDays, parseCalendarDate } from './recurrence'
 import type { FinancialAccountRow, FinancialTransactionRow } from './ledgerTypes'
 import type {
@@ -122,14 +122,11 @@ export function computeCashAllocation(
   const labeledEvents: LabeledEvent[] = []
 
   for (const obligation of orgObligations) {
-    // Skip obligations that haven't started yet relative to the horizon window.
-    // generateRecurrenceDates throws when rangeStart > rangeEnd, so guard here.
-    if (obligation.recurrence.startDate > horizonEnd) continue
-
     // Generate from the obligation's own startDate through the horizon end.
     // No arbitrary historical cutoff: an old overdue obligation whose occurrences
     // remain scheduled/unreconciled must still appear as protected.
-    const events = buildRecurringObligationEvents(
+    // Explicit valid occurrences moved into this window by override are included.
+    const events = buildRecurringObligationEventsIncludingOverrides(
       obligation,
       orgOccurrences,
       obligation.recurrence.startDate,

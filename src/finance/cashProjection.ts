@@ -1,10 +1,10 @@
 import { financialReconciliationKey, type FinancialConfidence, type FinancialAttribution } from './domain'
 import { totalCashMinor } from './ledgerCalculations'
-import { buildCommitmentEvent, buildRecurringObligationEvents } from './obligationCalculations'
+import { buildCommitmentEvent, buildRecurringObligationEventsIncludingOverrides } from './obligationCalculations'
 import { addCalendarDays, parseCalendarDate } from './recurrence'
 import { deriveProjectCollectionSignals } from './projectCollectionClock'
 import type { AllocationBucket, ProtectedRequirement } from './allocationTypes'
-import type { PlannedCashOutflowEvent, RecurringObligation, ObligationOccurrence } from './obligationsTypes'
+import type { PlannedCashOutflowEvent } from './obligationsTypes'
 import type {
   CashProjectionInput, CashProjectionResult, DailyCashProjection, ProjectionCashEvent,
   ProjectionMarker, ProjectionProtectedClaim, ProjectionUncertainty,
@@ -102,28 +102,6 @@ function validateAnchor(input: CashProjectionInput, claims: readonly ProjectionP
   }
 }
 
-function recurrenceEvents(
-  obligation: RecurringObligation, occurrences: readonly ObligationOccurrence[], end: string,
-): PlannedCashOutflowEvent[] {
-  const own = occurrences.filter(row => row.organizationId === obligation.organizationId && row.obligationId === obligation.id)
-  const generated = obligation.recurrence.startDate <= end
-    ? buildRecurringObligationEvents(obligation, own, obligation.recurrence.startDate, end) : []
-  const seen = new Set(generated.map(plannedKey))
-  for (const occurrence of own) {
-    if (!occurrence.overrideDate || occurrence.overrideDate > end || seen.has(financialReconciliationKey({
-      organizationId: obligation.organizationId, kind: 'financial_obligation_occurrence', recordId: occurrence.id,
-    }))) continue
-    parseCalendarDate(occurrence.scheduledDate)
-    parseCalendarDate(occurrence.overrideDate)
-    // Ask CASH-3 whether this scheduled date truly belongs to the recurrence.
-    const exact = buildRecurringObligationEvents(obligation, own, occurrence.scheduledDate, occurrence.scheduledDate)
-    if (exact.length !== 1 || exact[0].sourceRecordId !== occurrence.id) continue
-    generated.push(exact[0])
-    seen.add(plannedKey(exact[0]))
-  }
-  return generated
-}
-
 function uncertainty(events: readonly ProjectionCashEvent[], markers: readonly ProjectionMarker[]): ProjectionUncertainty {
   let highestIncludedConfidence: FinancialConfidence | null = null
   let includedExpectedEventCount = 0
@@ -213,7 +191,9 @@ export function computeCashProjection(input: CashProjectionInput): CashProjectio
   const planned: { event: PlannedCashOutflowEvent; label: string }[] = []
   for (const obligation of input.obligations) {
     if (obligation.organizationId !== org) continue
-    planned.push(...recurrenceEvents(obligation, input.occurrences, internalEnd).map(event => ({ event, label: obligation.name })))
+    planned.push(...buildRecurringObligationEventsIncludingOverrides(
+      obligation, input.occurrences, obligation.recurrence.startDate, internalEnd,
+    ).map(event => ({ event, label: obligation.name })))
   }
   for (const commitment of input.commitments) {
     if (commitment.organizationId === org) planned.push({ event: buildCommitmentEvent(commitment), label: commitment.title })
@@ -332,13 +312,22 @@ export function computeCashProjection(input: CashProjectionInput): CashProjectio
       original = events.get(scenario.replacesSourceKey)
       if (!original) throw new Error(`Scenario replacement source missing: ${scenario.replacesSourceKey}`)
       if (original.direction !== scenario.direction) throw new Error('Scenario replacement direction mismatch')
+      if (original.requirement !== scenario.requirement) throw new Error('Scenario replacement requirement mismatch')
+      const originalSourceKey = original.sourceKey
+      const plannedClaim = claims.get(originalSourceKey)
+      const linkedClaim = plannedClaim ? undefined
+        : [...claims.values()].find(c => c.paymentEventSourceKey === originalSourceKey)
+      if (linkedClaim && scenario.amountMinor !== linkedClaim.amountMinor) {
+        throw new Error('Unsupported partial settlement for linked ledger scenario replacement')
+      }
       replaced.add(scenario.replacesSourceKey)
       events.delete(scenario.replacesSourceKey)
-      const claim = claims.get(scenario.replacesSourceKey)
-        ?? [...claims.values()].find(c => c.paymentEventSourceKey === scenario.replacesSourceKey)
-      if (claim) {
-        claim.paymentEventSourceKey = key
-        claim.amountMinor = scenario.amountMinor
+      if (plannedClaim) {
+        plannedClaim.paymentEventSourceKey = key
+        plannedClaim.amountMinor = scenario.amountMinor
+        plannedClaim.protectionDate = scenario.date
+      } else if (linkedClaim) {
+        linkedClaim.paymentEventSourceKey = key
       }
     } else if (scenario.action !== 'add') throw new Error('Invalid scenario action')
     const event: ProjectionCashEvent = { id: key, organizationId: org, date: scenario.date,
