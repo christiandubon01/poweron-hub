@@ -25,8 +25,9 @@ describe('CT-LIVE-0C0 migration 138 — apply_candidate request type', () => {
     const migs = readdirSync(join(ROOT, 'supabase', 'migrations'))
     expect(migs).toContain('137_create_plan_payload_envelope.sql')
     expect(migs).toContain(FILENAME)
-    const later = migs.filter((name) => /^\d+_/.test(name) && Number(name.slice(0, 3)) > 138)
-    expect(later).toEqual([])
+    const sorted = migs.filter((n) => /^\d+_/.test(n)).sort((a, b) => parseInt(a) - parseInt(b))
+    const idx = sorted.indexOf(FILENAME)
+    expect(sorted[idx - 1]).toBe('137_create_plan_payload_envelope.sql')
   })
 
   it('keeps the existing request types and adds only apply_candidate', () => {

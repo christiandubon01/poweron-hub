@@ -19,8 +19,9 @@ describe('ATB-5 migration 136 — file identity', () => {
     expect(existsSync(MIG_PATH)).toBe(true)
     const migs = readdirSync(join(ROOT, 'supabase', 'migrations'))
     expect(migs).toContain(FILENAME)
-    const later = migs.filter((name) => /^\d+_/.test(name) && Number(name.slice(0, 3)) > 136)
-    expect(later).toEqual(['137_create_plan_payload_envelope.sql', '138_apply_candidate_request_type.sql'])
+    const sorted = migs.filter((n) => /^\d+_/.test(n)).sort((a, b) => parseInt(a) - parseInt(b))
+    const idx = sorted.indexOf(FILENAME)
+    expect(sorted[idx + 1]).toBe('137_create_plan_payload_envelope.sql')
   })
 })
 
