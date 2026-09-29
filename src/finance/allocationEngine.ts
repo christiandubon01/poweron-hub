@@ -13,6 +13,7 @@ import type {
   AllocationBucket,
   CashAllocationPolicy,
   CashAllocationSnapshot,
+  FinancialLiabilityInput,
   ProtectedAllocationResult,
   ProtectedRequirement,
   ProtectedRequirementReason,
@@ -94,6 +95,7 @@ export function computeCashAllocation(
   occurrences: readonly ObligationOccurrence[],
   commitments: readonly CashCommitment[],
   policy: CashAllocationPolicy,
+  derivedLiabilities: readonly FinancialLiabilityInput[] = [],
 ): CashAllocationSnapshot {
   validatePolicy(policy)
 
@@ -188,6 +190,38 @@ export function computeCashAllocation(
       sourceType: event.sourceType,
       sourceRecordId: event.sourceRecordId,
       attribution: event.attribution,
+    })
+  }
+
+  // ── Step 4b: Derived liabilities (CASH-5+ payroll exposure, etc.) ──────────
+  // Each liability retains its canonical source provenance — never masquerades
+  // as a commitment or obligation occurrence.
+  const orgLiabilities = derivedLiabilities.filter((l) => l.organizationId === orgId)
+  for (const liability of orgLiabilities) {
+    if (liability.provenance.reconciliationState === 'reconciled') continue
+    if (liability.requirement !== 'required' && !policy.includeOptionalObligations) continue
+    if (liability.dueDate > horizonEnd) continue
+    if (!Number.isSafeInteger(liability.amountMinor) || liability.amountMinor < 0) {
+      throw new Error(
+        `FinancialLiabilityInput ${liability.provenance.source.recordId} has invalid amountMinor ${liability.amountMinor}; must be a non-negative safe integer`,
+      )
+    }
+    const key = financialReconciliationKey(liability.provenance.source)
+    if (seen.has(key)) {
+      suppressedDuplicateSourceKeys.push(key)
+      continue
+    }
+    seen.add(key)
+    requirements.push({
+      dedupeKey: key,
+      label: liability.label,
+      bucket: classifyBucket(liability.attribution),
+      amountMinor: liability.amountMinor,
+      reason: reasonForDate(liability.dueDate, policy.asOfDate),
+      confidence: liability.provenance.confidence,
+      sourceType: 'derived_liability',
+      sourceRecordId: liability.provenance.source.recordId,
+      attribution: liability.attribution,
     })
   }
 

@@ -1,4 +1,4 @@
-import type { FinancialAttribution, FinancialConfidence } from './domain'
+import type { FinancialAttribution, FinancialConfidence, FinancialProvenance } from './domain'
 
 // ── Policy ──────────────────────────────────────────────────────────────────
 
@@ -61,10 +61,37 @@ export interface ProtectedRequirement {
   amountMinor: number
   reason: ProtectedRequirementReason
   confidence: FinancialConfidence
-  sourceType: 'obligation_occurrence' | 'cash_commitment' | 'policy'
+  sourceType: 'obligation_occurrence' | 'cash_commitment' | 'policy' | 'derived_liability'
   /** null for policy-driven slots. */
   sourceRecordId: string | null
   attribution: FinancialAttribution
+}
+
+// ── Derived liability input ──────────────────────────────────────────────────
+
+/**
+ * A canonical derived liability that CASH-4 can protect alongside CASH-3
+ * obligations and commitments. Used by CASH-5+ to inject payroll exposure
+ * (and future project-gap liabilities) without masquerading as obligations.
+ *
+ * Provenance must retain the original source kind ('employee_time_entry' or
+ * 'employee_work_session'). Callers must never use 'cash_commitment' or
+ * 'financial_obligation_occurrence' here.
+ *
+ * The dedup key is derived from provenance.source via financialReconciliationKey,
+ * so the same canonical source record is never counted twice even across
+ * CASH-3 and CASH-5 inputs.
+ */
+export interface FinancialLiabilityInput {
+  organizationId: string
+  /** YYYY-MM-DD. The date the liability became due / was earned. */
+  dueDate: string
+  /** Non-negative integer cents. */
+  amountMinor: number
+  requirement: 'required' | 'optional'
+  provenance: FinancialProvenance
+  attribution: FinancialAttribution
+  label: string
 }
 
 // ── Allocation result ────────────────────────────────────────────────────────
