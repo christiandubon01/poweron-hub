@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, cp, lstat, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, readdir, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -78,12 +78,13 @@ export type FileLineEnding = 'lf' | 'crlf' | 'mixed' | 'binary';
 
 /**
  * Classify a file's bytes for line-ending-aware comparison. A file is `binary` if a
- * NUL byte appears in its first 8 KiB; otherwise `lf` (no CR), `crlf` (every CR is
- * part of a CRLF pair), or `mixed` (a lone CR survives CRLF→LF folding).
+ * NUL byte appears ANYWHERE in the buffer (CT-GATE-FIX-3 goal 2: the whole file is
+ * scanned, not only the first 8 KiB, so a NUL past 8 KiB still prevents CRLF/LF
+ * folding); otherwise `lf` (no CR), `crlf` (every CR is part of a CRLF pair), or
+ * `mixed` (a lone CR survives CRLF→LF folding).
  */
 export function classifyLineEndings(content: Buffer): FileLineEnding {
-  const head = content.subarray(0, 8192);
-  if (head.includes(0)) return 'binary';
+  if (content.includes(0)) return 'binary';
   if (content.indexOf(0x0d) === -1) return 'lf';
   return stripCRLF(content).indexOf(0x0d) === -1 ? 'crlf' : 'mixed';
 }
@@ -150,7 +151,15 @@ export async function materializeAttemptWorkspace(options: {
   workspaceRoot: string;
   identity: AttemptWorkspaceIdentity;
   baselineHeadSha?: string;
+  /**
+   * CT-GATE-FIX-4 goal 2: injectable realpath seam. Production callers omit it and
+   * get the real `fs/promises` realpath; tests pass a fake to force a realpath
+   * failure (ELOOP/ENOENT) on the root or a source and assert fail-closed behavior.
+   * Production behavior is identical when omitted.
+   */
+  realpath?: (filePath: string) => Promise<string>;
 }): Promise<AttemptWorkspace> {
+  const resolveReal = options.realpath ?? realpath;
   const workspacePath = resolveAttemptWorkspacePath({ workspaceRoot: options.workspaceRoot, identity: options.identity });
   const baselineHeadSha = await resolvePinnedHead(options.canonicalRepoPath, options.baselineHeadSha);
   await rejectTrackedSensitivePaths(options.canonicalRepoPath, baselineHeadSha);
@@ -178,7 +187,8 @@ export async function materializeAttemptWorkspace(options: {
     // The archive is committed HEAD. Overlay the eligible canonical working
     // tree before the baseline fingerprint so inherited owner work is the
     // pre-provider baseline, not a later candidate delta.
-    await overlayEligibleWorkingTree(options.canonicalRepoPath, workspacePath);
+    const sourceGuard = createSourceLinkGuard(options.canonicalRepoPath, resolveReal);
+    await overlayEligibleWorkingTree(options.canonicalRepoPath, workspacePath, sourceGuard, resolveReal);
     // CT-GATE-FIX-1 goal 1: `git archive` honors core.autocrlf and smudges LF blobs
     // to CRLF, so the extracted clean-tracked files carry the wrong line endings
     // and the captured baseline no longer equals the canonical on-disk bytes
@@ -189,10 +199,13 @@ export async function materializeAttemptWorkspace(options: {
     // existing exclusions are preserved: sensitive paths are skipped here and
     // rejected up front by rejectTrackedSensitivePaths, node_modules/.git is
     // skipped, and symlinks/junctions are never followed (copyWorkspaceFile's
-    // lstat().isFile() guard).
-    await overlayTrackedWorkingTree(options.canonicalRepoPath, workspacePath);
+    // lstat().isFile() guard). CT-GATE-FIX-2 goal 1: the source guard also fails
+    // closed with WORKSPACE_SOURCE_LINK_ESCAPE if any ancestor directory of a
+    // tracked source file is a symlink/junction pointing outside the repo.
+    await overlayTrackedWorkingTree(options.canonicalRepoPath, workspacePath, sourceGuard, resolveReal);
   } catch (error) {
     await rm(workspacePath, { recursive: true, force: true });
+    if (error instanceof WorkspacePreparationError) throw error;
     throw new WorkspacePreparationError(`Failed to materialize isolated workspace: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     await unlink(archivePath).catch(() => undefined);
@@ -490,12 +503,63 @@ interface PorcelainRecord {
 }
 
 /**
+ * CT-GATE-FIX-2 goal 1: guard that verifies a canonical source path's ancestor
+ * directories are all real directories (not symlinks/junctions) and that the
+ * resolved real path stays inside the repo root, before any source byte is read.
+ * Created once per materialization so the ancestor lstat results can be cached
+ * across the many files copied by the overlay passes.
+ */
+interface SourceLinkGuard {
+  assert(repoPath: string): Promise<void>;
+  realRoot(): Promise<string>;
+}
+
+function createSourceLinkGuard(canonicalRepoPath: string, resolveReal: (filePath: string) => Promise<string>): SourceLinkGuard {
+  const root = path.resolve(canonicalRepoPath);
+  const verified = new Set<string>();
+  let realRootPromise: Promise<string> | null = null;
+  return {
+    async assert(repoPath: string): Promise<void> {
+      const absolute = path.resolve(root, ...repoPath.split('/'));
+      const relative = path.relative(root, absolute);
+      if (relative.length === 0 || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new WorkspacePreparationError(`WORKSPACE_SOURCE_LINK_ESCAPE: ${repoPath}`);
+      }
+      const parts = relative.split(path.sep).filter((part) => part.length > 0);
+      let cursor = root;
+      // Walk every ancestor directory from the repo root down to the file's
+      // parent (parts.length - 1 excludes the file itself, so a final-file
+      // symlink/junction is NOT checked here and keeps today's skip behavior).
+      for (let index = 0; index < parts.length - 1; index += 1) {
+        cursor = path.join(cursor, parts[index] ?? '');
+        if (verified.has(cursor)) continue;
+        const info = await lstat(cursor).catch(() => null);
+        if (!info || info.isSymbolicLink() || !info.isDirectory()) {
+          throw new WorkspacePreparationError(`WORKSPACE_SOURCE_LINK_ESCAPE: ${repoPath}`);
+        }
+        verified.add(cursor);
+      }
+    },
+    realRoot(): Promise<string> {
+      // CT-GATE-FIX-3 goal 1: a realpath(root) failure must NOT fall back to the
+      // lexical root. The cached promise rejects on failure; callers wrap the
+      // rejection into a WORKSPACE_SOURCE_LINK_ESCAPE error. CT-GATE-FIX-4 goal 2:
+      // the realpath implementation is the injected seam (real fs in production).
+      if (!realRootPromise) {
+        realRootPromise = resolveReal(root);
+      }
+      return realRootPromise;
+    },
+  };
+}
+
+/**
  * Eligible canonical working-tree files copied onto the committed archive.
  * Ignored paths never appear in `git status`. Sensitive paths and untracked
  * temp/binary junk stay out. Tracked modifications and deletions are the
  * owner's real tree, including files the provider may later edit further.
  */
-async function overlayEligibleWorkingTree(canonicalRepoPath: string, workspacePath: string): Promise<void> {
+async function overlayEligibleWorkingTree(canonicalRepoPath: string, workspacePath: string, guard: SourceLinkGuard, resolveReal: (filePath: string) => Promise<string>): Promise<void> {
   const result = await execFileAsync('git', ['status', '--porcelain=v1', '-z', '-uall'], {
     cwd: canonicalRepoPath,
     windowsHide: true,
@@ -527,7 +591,7 @@ async function overlayEligibleWorkingTree(canonicalRepoPath: string, workspacePa
       await removeWorkspacePath(workspacePath, repoPath);
       continue;
     }
-    await copyWorkspaceFile(canonicalRepoPath, workspacePath, repoPath);
+    await copyWorkspaceFile(canonicalRepoPath, workspacePath, repoPath, guard, resolveReal);
   }
 }
 
@@ -540,7 +604,7 @@ async function overlayEligibleWorkingTree(canonicalRepoPath: string, workspacePa
  * files are removed so they stay deletions. Exclusions match the eligible overlay:
  * sensitive paths, node_modules/.git, and symlinks/junctions are never copied.
  */
-async function overlayTrackedWorkingTree(canonicalRepoPath: string, workspacePath: string): Promise<void> {
+async function overlayTrackedWorkingTree(canonicalRepoPath: string, workspacePath: string, guard: SourceLinkGuard, resolveReal: (filePath: string) => Promise<string>): Promise<void> {
   const result = await execFileAsync('git', ['ls-files', '-z'], {
     cwd: canonicalRepoPath,
     windowsHide: true,
@@ -570,7 +634,7 @@ async function overlayTrackedWorkingTree(canonicalRepoPath: string, workspacePat
       // if any, is left for captureWorkspaceTree to skip (symlinks are not captured).
       continue;
     }
-    await copyWorkspaceFile(canonicalRepoPath, workspacePath, repoPath);
+    await copyWorkspaceFile(canonicalRepoPath, workspacePath, repoPath, guard, resolveReal);
   }
 }
 
@@ -618,15 +682,44 @@ function parsePorcelainZ(stdout: Buffer | string): PorcelainRecord[] {
   return records;
 }
 
-async function copyWorkspaceFile(canonicalRepoPath: string, workspacePath: string, repoPath: string): Promise<void> {
+async function copyWorkspaceFile(canonicalRepoPath: string, workspacePath: string, repoPath: string, guard: SourceLinkGuard, resolveReal: (filePath: string) => Promise<string>): Promise<void> {
   const source = path.resolve(canonicalRepoPath, ...repoPath.split('/'));
   const destination = path.resolve(workspacePath, ...repoPath.split('/'));
   if (!isPathInside(path.resolve(canonicalRepoPath), source) || !isPathInside(path.resolve(workspacePath), destination)) {
     return;
   }
+  // CT-GATE-FIX-2 goal 1: before reading ANY canonical source byte, verify every
+  // ancestor directory from the repo root down to this file is a real directory
+  // (not a symlink/junction that points outside the repo). A junction placed on
+  // an ancestor would otherwise let `cp` copy bytes from outside the repo. Final-
+  // file symlinks still take today's skip path below (the guard only walks
+  // ancestors, never the file itself).
+  await guard.assert(repoPath);
   const info = await lstat(source).catch(() => null);
   if (!info?.isFile()) {
     return;
+  }
+  // CT-GATE-FIX-2 goal 1 / CT-GATE-FIX-3 goal 1: the resolved real path of the
+  // source file must stay inside the repo root, and a realpath failure on EITHER
+  // the root or the source must fail closed — never fall back to the lexical path.
+  // With real-directory ancestors this is always true, so this is defense-in-depth
+  // that also satisfies the explicit "resolved real path stays inside the repo
+  // root" requirement; a final-file symlink never reaches here (it was skipped
+  // above).
+  let realRoot: string;
+  try {
+    realRoot = await guard.realRoot();
+  } catch {
+    throw new WorkspacePreparationError(`WORKSPACE_SOURCE_LINK_ESCAPE: ${repoPath}`);
+  }
+  let realSource: string;
+  try {
+    realSource = await resolveReal(source);
+  } catch {
+    throw new WorkspacePreparationError(`WORKSPACE_SOURCE_LINK_ESCAPE: ${repoPath}`);
+  }
+  if (!isPathInside(realRoot, realSource)) {
+    throw new WorkspacePreparationError(`WORKSPACE_SOURCE_LINK_ESCAPE: ${repoPath}`);
   }
   await mkdir(path.dirname(destination), { recursive: true });
   await cp(source, destination);

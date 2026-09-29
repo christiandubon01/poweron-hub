@@ -44,6 +44,7 @@ export const APPLY_OWNER_REASONS = {
   unsafe: 'Unsafe path',
   filesystem: 'Filesystem apply failed',
   rollback: 'Rollback failed',
+  partial: 'Rollback partial',
   verify: 'Verification mismatch',
   already: 'Already applied',
   empty: 'No candidate changes to apply',
@@ -61,6 +62,23 @@ export const APPLY_PHASES = [
 ] as const;
 
 export type ApplyPhase = (typeof APPLY_PHASES)[number];
+
+/**
+ * CT-GATE-FIX-3 goal 5: typed abort for the write/verify loops. Replaces the
+ * earlier message-prefix matching ("conflict:…" / "verify") so an unrelated I/O
+ * error can never be misclassified as a conflict. `kind` is the abort category and
+ * `path` is the repo-relative path that drifted (when known).
+ */
+class ApplyAbort extends Error {
+  readonly kind: 'conflict' | 'unsafe' | 'verify';
+  readonly path?: string;
+  constructor(kind: 'conflict' | 'unsafe' | 'verify', path?: string) {
+    super(kind);
+    this.name = 'ApplyAbort';
+    this.kind = kind;
+    this.path = path;
+  }
+}
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
@@ -369,7 +387,9 @@ export async function handleApplyCandidate(options: {
 
     await controlPlane.notePlanningProgress(request.id, { phase: 'Applying candidate' });
     const applied = await commitPreparedWrites({
+      canonicalRepoPath: options.canonicalRepoPath,
       planned: prepared.planned,
+      baseline: baseline.files,
       io: options.io ?? DEFAULT_IO,
       afterWrite: options.afterWrite,
       beforeVerify: async () => {
@@ -377,10 +397,16 @@ export async function handleApplyCandidate(options: {
       },
     });
     if (!applied.ok) {
-      const reason = applied.rollback === 'FAIL' ? APPLY_OWNER_REASONS.rollback : applied.reason;
-      await controlPlane.failRequest(request.id, reason, {
-        ...failureResult(parsed, 'Applying candidate', reason),
+      // CT-GATE-FIX-3 goal 5: outcome priority. commitPreparedWrites already folded
+      // the rollback status into `reason` (FAIL→rollback, PARTIAL→partial, both
+      // taking priority over the abort category). The phase label still reflects the
+      // triggering event (conflict vs. a generic apply failure) for the owner's log.
+      const phase = applied.reason === APPLY_OWNER_REASONS.conflict ? 'Conflict detected' : 'Applying candidate';
+      await controlPlane.failRequest(request.id, applied.reason, {
+        ...failureResult(parsed, phase, applied.reason),
         rollback: applied.rollback,
+        ...(applied.conflictPaths ? { conflictPaths: applied.conflictPaths } : {}),
+        ...(applied.partialPaths ? { partialPaths: applied.partialPaths } : {}),
       });
       return;
     }
@@ -479,9 +505,9 @@ export async function prepareCandidateWrites(options: {
     }
     const canonical = await readCanonical(options.io, absolute);
     if (canonical.unsafe) return { ok: false, reason: APPLY_OWNER_REASONS.unsafe };
-    if (change.kind === 'add') {
-      if (baselineFile || canonical.existed) conflicts.push(relative);
-    } else if (!baselineFile || !canonical.existed || sha256(canonical.bytes ?? Buffer.alloc(0)) !== baselineFile.sha256 || (canonical.bytes?.byteLength ?? -1) !== baselineFile.sizeBytes) {
+    // CT-GATE-FIX-2 goal 3: the preflight conflict check and the per-write re-check
+    // share one definition of "canonical still matches the captured baseline".
+    if (!canonicalMatchesBaseline(change.kind, baselineFile, canonical)) {
       conflicts.push(relative);
     }
     // CT-GATE-FIX-1 goal 2: preserve the canonical file's line-ending style on
@@ -492,7 +518,17 @@ export async function prepareCandidateWrites(options: {
     // a real owner edit still conflicts and applies nothing).
     let intendedBytes = candidateBytes;
     if (change.kind === 'modify' && candidateBytes && canonical.bytes) {
-      intendedBytes = convertLineEndings(candidateBytes, classifyLineEndings(canonical.bytes));
+      // CT-GATE-FIX-2 goal 2: convert line endings ONLY when BOTH the canonical
+      // file and the candidate classify as text. If either side is binary (a NUL
+      // anywhere in the buffer, per classifyLineEndings' full-buffer scan), write
+      // the candidate bytes exactly so a binary payload is never corrupted by
+      // CRLF/LF folding. For text-but-mixed canonical the conversion is a no-op
+      // anyway, so this guard only matters when one side is binary.
+      const canonicalEnding = classifyLineEndings(canonical.bytes);
+      const candidateEnding = classifyLineEndings(candidateBytes);
+      if (canonicalEnding !== 'binary' && candidateEnding !== 'binary') {
+        intendedBytes = convertLineEndings(candidateBytes, canonicalEnding);
+      }
     }
     planned.push({
       kind: change.kind,
@@ -511,17 +547,46 @@ export async function prepareCandidateWrites(options: {
 }
 
 async function commitPreparedWrites(options: {
+  canonicalRepoPath: string;
   planned: readonly PlannedWrite[];
+  baseline: ReadonlyMap<string, { sha256: string; sizeBytes: number }>;
   io: CandidateApplyIo;
   afterWrite?: (() => Promise<void>) | undefined;
   beforeVerify?: (() => Promise<void>) | undefined;
-}): Promise<{ ok: true } | { ok: false; reason: string; rollback: 'PASS' | 'FAIL' }> {
+}): Promise<
+  | { ok: true }
+  | { ok: false; reason: string; rollback: 'PASS' | 'FAIL' | 'PARTIAL'; conflictPaths?: string[]; partialPaths?: string[] }
+> {
   const touched: PlannedWrite[] = [];
   try {
     for (const entry of options.planned) {
+      // CT-GATE-FIX-3 goal 3: immediately before EACH write/delete, re-run the same
+      // full path-safety resolution used in preflight (resolveSafePath — every
+      // ancestor must still be a real directory inside the repo and the target must
+      // not be a symlink), THEN the baseline content re-check. A junction swapped
+      // onto an ancestor between preflight and this write fails closed as unsafe.
+      try {
+        await resolveSafePath(options.canonicalRepoPath, entry.relative, options.io);
+      } catch {
+        throw new ApplyAbort('unsafe', entry.relative);
+      }
+      // CT-GATE-FIX-2 goal 3: re-read the canonical target and re-check it still
+      // matches the captured baseline (MODIFY/DELETE: raw bytes equal; ADD: absent).
+      if (!(await recheckCanonicalBeforeWrite(entry, options.baseline, options.io))) {
+        throw new ApplyAbort('conflict', entry.relative);
+      }
       if (entry.kind === 'delete') {
         await options.io.rm(entry.absolute, { force: false });
       } else {
+        // CT-GATE-FIX-3 goal 6 (accepted residual limit): the per-write re-check
+        // above confirmed every ancestor is a real directory and the target is not a
+        // symlink, but an ancestor directory swapped for a junction in the short
+        // interval between that re-check and this write syscall is NOT prevented —
+        // the design does not lock the owner's working tree, so a deliberate local
+        // tamper in that window could redirect the write. The awaited mkdir below
+        // also falls inside this window (it creates the target's parent directory
+        // before the write). This residual is accepted in exchange for not locking
+        // the owner out of their repo.
         await options.io.mkdir(path.dirname(entry.absolute), { recursive: true });
         await options.io.writeFile(entry.absolute, entry.intendedBytes ?? Buffer.alloc(0));
       }
@@ -532,47 +597,115 @@ async function commitPreparedWrites(options: {
     for (const entry of options.planned) {
       if (entry.kind === 'delete') {
         if (await exists(options.io, entry.absolute)) {
-          throw new Error('verify');
+          throw new ApplyAbort('verify', entry.relative);
         }
       } else {
         const current = await options.io.readFile(entry.absolute);
         const expected = entry.intendedBytes ?? Buffer.alloc(0);
-        if (!current.equals(expected)) throw new Error('verify');
+        if (!current.equals(expected)) throw new ApplyAbort('verify', entry.relative);
       }
     }
     return { ok: true };
   } catch (error) {
-    const verifyFailed = error instanceof Error && error.message === 'verify';
-    const rollback = await rollbackTouched(touched, options.io);
-    return {
-      ok: false,
-      reason: verifyFailed ? APPLY_OWNER_REASONS.verify : APPLY_OWNER_REASONS.filesystem,
-      rollback,
-    };
+    const abort = error instanceof ApplyAbort ? error : null;
+    const rollback = await rollbackTouched(touched, options.canonicalRepoPath, options.io);
+    const conflictPaths = abort?.path ? [abort.path] : [];
+    // CT-GATE-FIX-3 goal 5: outcome priority. A bad rollback (FAIL or PARTIAL) takes
+    // priority over the abort category — the user must hear that rollback did not
+    // cleanly restore the tree, not the conflict that triggered it. An unrelated I/O
+    // error (abort === null) is never classified as a conflict.
+    if (rollback.status === 'FAIL') {
+      return { ok: false, reason: APPLY_OWNER_REASONS.rollback, rollback: 'FAIL', conflictPaths };
+    }
+    if (rollback.status === 'PARTIAL') {
+      return { ok: false, reason: APPLY_OWNER_REASONS.partial, rollback: 'PARTIAL', conflictPaths, partialPaths: rollback.partialPaths };
+    }
+    const reason = abort?.kind === 'conflict' ? APPLY_OWNER_REASONS.conflict
+      : abort?.kind === 'unsafe' ? APPLY_OWNER_REASONS.unsafe
+        : abort?.kind === 'verify' ? APPLY_OWNER_REASONS.verify
+          : APPLY_OWNER_REASONS.filesystem;
+    return { ok: false, reason, rollback: 'PASS', conflictPaths };
   }
 }
 
-async function rollbackTouched(touched: readonly PlannedWrite[], io: CandidateApplyIo): Promise<'PASS' | 'FAIL'> {
+async function rollbackTouched(
+  touched: readonly PlannedWrite[],
+  canonicalRepoPath: string,
+  io: CandidateApplyIo,
+): Promise<{ status: 'PASS' | 'FAIL' | 'PARTIAL'; partialPaths: string[] }> {
+  // CT-GATE-FIX-3 goal 4: rollback never clobbers a later owner edit. Before
+  // restoring each already-written file, prove Apply's own change is still intact
+  // on disk (a delete is still absent; an add/modify still holds exactly the bytes
+  // Apply wrote). If it does not — the owner edited the file after Apply wrote it —
+  // do NOT restore: leave the owner's bytes in place, record the path, and report
+  // PARTIAL. Only undo what Apply itself did and can prove is unchanged.
+  //
+  // CT-GATE-FIX-4 goal 1: before EVERY rollback write or delete, re-run the full
+  // path-safety resolution (resolveSafePath) used in preflight and per-write. If the
+  // path is no longer safe (an ancestor was swapped for a junction, the target became
+  // a symlink, etc.), do NOT restore it — record it in partialPaths and report PARTIAL,
+  // so nothing is ever written or deleted outside the repo during rollback. An
+  // unexpected error from the path-safety check itself (not the 'unsafe' sentinel)
+  // is a genuine I/O failure → FAIL.
+  const partialPaths: string[] = [];
+  const restored: PlannedWrite[] = [];
   try {
     for (const entry of [...touched].reverse()) {
-      if (entry.canonicalExisted) {
+      try {
+        await resolveSafePath(canonicalRepoPath, entry.relative, io);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'unsafe') {
+          partialPaths.push(entry.relative);
+          continue;
+        }
+        throw error;
+      }
+      if (!(await canProveApplyChangeStillIntact(entry, io))) {
+        partialPaths.push(entry.relative);
+        continue;
+      }
+      if (entry.kind === 'add') {
+        await io.rm(entry.absolute, { force: false });
+      } else {
+        // modify or delete: restore the captured canonical baseline bytes.
         await io.mkdir(path.dirname(entry.absolute), { recursive: true });
         await io.writeFile(entry.absolute, entry.canonicalBytes ?? Buffer.alloc(0));
-      } else if (await exists(io, entry.absolute)) {
-        await io.rm(entry.absolute, { force: false });
       }
+      restored.push(entry);
     }
-    for (const entry of touched) {
-      if (entry.canonicalExisted) {
+    // Verify every restore actually landed.
+    for (const entry of restored) {
+      if (entry.kind === 'add') {
+        if (await exists(io, entry.absolute)) return { status: 'FAIL', partialPaths };
+      } else {
         const current = await io.readFile(entry.absolute);
-        if (!current.equals(entry.canonicalBytes ?? Buffer.alloc(0))) return 'FAIL';
-      } else if (await exists(io, entry.absolute)) {
-        return 'FAIL';
+        if (!current.equals(entry.canonicalBytes ?? Buffer.alloc(0))) {
+          return { status: 'FAIL', partialPaths };
+        }
       }
     }
-    return 'PASS';
+    if (partialPaths.length > 0) return { status: 'PARTIAL', partialPaths };
+    return { status: 'PASS', partialPaths };
   } catch {
-    return 'FAIL';
+    return { status: 'FAIL', partialPaths };
+  }
+}
+
+/**
+ * CT-GATE-FIX-3 goal 4: prove Apply's own change is still intact on disk. A delete
+ * is intact when the path is still absent; an add/modify is intact when the file
+ * still holds exactly the bytes Apply wrote (`intendedBytes`). If the owner edited
+ * the file after Apply wrote it, this returns false and rollback leaves it alone.
+ */
+async function canProveApplyChangeStillIntact(entry: PlannedWrite, io: CandidateApplyIo): Promise<boolean> {
+  if (entry.kind === 'delete') {
+    return !(await exists(io, entry.absolute));
+  }
+  try {
+    const current = await io.readFile(entry.absolute);
+    return current.equals(entry.intendedBytes ?? Buffer.alloc(0));
+  } catch {
+    return false;
   }
 }
 
@@ -619,6 +752,45 @@ async function exists(io: CandidateApplyIo, absolute: string): Promise<boolean> 
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw error;
   }
+}
+
+/**
+ * CT-GATE-FIX-2 goal 3: one definition of "the canonical target still matches the
+ * captured pre-provider baseline", shared by the preflight conflict check and the
+ * per-write re-check. ADD is a match only when neither a baseline entry nor a
+ * canonical file exists; MODIFY/DELETE is a match only when the canonical file
+ * still exists and its raw bytes equal the baseline sha256 + size. The comparison
+ * is deliberately a RAW byte compare (no line-ending folding): the baseline
+ * already equals the canonical on-disk bytes (CT-GATE-FIX-1 goal 1), so any real
+ * owner edit flips this to a conflict.
+ */
+function canonicalMatchesBaseline(
+  kind: 'add' | 'modify' | 'delete',
+  baselineFile: { sha256: string; sizeBytes: number } | undefined | null,
+  canonical: { existed: boolean; bytes: Buffer | null },
+): boolean {
+  if (kind === 'add') {
+    return !baselineFile && !canonical.existed;
+  }
+  return Boolean(baselineFile) && canonical.existed
+    && sha256(canonical.bytes ?? Buffer.alloc(0)) === baselineFile!.sha256
+    && (canonical.bytes?.byteLength ?? -1) === baselineFile!.sizeBytes;
+}
+
+/**
+ * CT-GATE-FIX-2 goal 3: re-read the canonical target immediately before a write/
+ * delete and confirm it still matches the baseline. Returns true when it is safe
+ * to proceed, false when an owner edit has drifted the canonical tree since the
+ * preflight (the caller stops, rolls back, and reports a conflict).
+ */
+async function recheckCanonicalBeforeWrite(
+  entry: PlannedWrite,
+  baseline: ReadonlyMap<string, { sha256: string; sizeBytes: number }>,
+  io: CandidateApplyIo,
+): Promise<boolean> {
+  const canonical = await readCanonical(io, entry.absolute);
+  if (canonical.unsafe) return false;
+  return canonicalMatchesBaseline(entry.kind, baseline.get(entry.relative), canonical);
 }
 
 function findAttempt(store: OrchestrationStore, runId: string, attemptId: string): { task: TaskRecord; attempt: { status: string; taskId: string } } | null {
@@ -670,7 +842,8 @@ function sha256(value: Buffer): string {
  * CT-GATE-FIX-1 goal 2: convert candidate bytes to the canonical file's
  * line-ending style. Uniform LF → fold CRLF to LF; uniform CRLF → expand LF to
  * CRLF. Mixed-ending and binary canonical files keep the candidate bytes exactly
- * (a NUL in the first 8 KiB is treated as binary, matching classifyLineEndings).
+ * (a NUL anywhere in the buffer is treated as binary, matching classifyLineEndings'
+ * full-buffer scan).
  */
 function convertLineEndings(candidate: Buffer, target: FileLineEnding): Buffer {
   if (target === 'mixed' || target === 'binary') return candidate;

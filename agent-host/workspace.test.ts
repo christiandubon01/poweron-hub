@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -486,4 +486,161 @@ test('workspace: a tracked file inside node_modules stays excluded from the base
   });
   assert.equal(workspace.baselineTree.files.has('node_modules/tracked.js'), false, 'node_modules stays excluded from the baseline fingerprint even when tracked');
   assert.equal([...workspace.baselineTree.files.keys()].some((key) => key.startsWith('node_modules/')), false, 'no node_modules path leaks into the baseline');
+});
+
+test('workspace: a tracked file whose parent directory is a junction to outside fails closed with WORKSPACE_SOURCE_LINK_ESCAPE (CT-GATE-FIX-2 goal 1)', async () => {
+  const fixture = await createRepo();
+  // Commit a nested tracked file under src/features.
+  await mkdir(path.join(fixture.repoPath, 'src', 'features'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'src', 'features', 'foo.ts'), 'COMMITTED\n');
+  await git(fixture.repoPath, ['add', '.']);
+  await git(fixture.repoPath, ['commit', '-m', 'nested tracked file']);
+  // An outside dir holding a DIFFERENT foo.ts; src/features becomes a junction to it.
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'workspace-junction-outside-'));
+  try {
+    await writeFile(path.join(outside, 'foo.ts'), 'OUTSIDE_BYTES\n');
+    // Replace the real src/features directory with a junction to the outside dir.
+    await rm(path.join(fixture.repoPath, 'src', 'features'), { recursive: true, force: true });
+    await symlink(outside, path.join(fixture.repoPath, 'src', 'features'), 'junction');
+    await assert.rejects(
+      materializeAttemptWorkspace({
+        canonicalRepoPath: fixture.repoPath,
+        workspaceRoot: fixture.runtimePath,
+        identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+      }),
+      (error) => error instanceof WorkspacePreparationError
+        && /WORKSPACE_SOURCE_LINK_ESCAPE: src\/features\/foo\.ts/u.test(error.message),
+      'materialization must fail closed naming the repo-relative path only',
+    );
+    // No workspace left behind (materialization cleans up on failure) and no outside bytes copied.
+    await assert.rejects(readFile(path.join(fixture.runtimePath, 'repo-key', 'run-1', 'attempt-1', 'src', 'features', 'foo.ts')), /ENOENT/u);
+    assert.equal(await readFile(path.join(outside, 'foo.ts'), 'utf8'), 'OUTSIDE_BYTES\n', 'the outside target is untouched');
+  } finally {
+    await rm(path.join(fixture.repoPath, 'src', 'features')).catch(() => undefined);
+    await rm(path.dirname(fixture.runtimePath), { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('workspace: a normal deeply nested tracked file still materializes with on-disk bytes (CT-GATE-FIX-2 goal 1)', async () => {
+  const fixture = await createRepo();
+  await mkdir(path.join(fixture.repoPath, 'src', 'a', 'b', 'c'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'src', 'a', 'b', 'c', 'nested.ts'), 'export const nested = true;\n');
+  await git(fixture.repoPath, ['add', '.']);
+  await git(fixture.repoPath, ['commit', '-m', 'deeply nested']);
+  const onDisk = await readFile(path.join(fixture.repoPath, 'src', 'a', 'b', 'c', 'nested.ts'));
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: (await git(fixture.repoPath, ['rev-parse', 'HEAD'])).trim(),
+  });
+  const baseline = workspace.baselineTree.files.get('src/a/b/c/nested.ts');
+  assert.equal(baseline?.sha256, sha256(onDisk), 'the ancestor guard does not reject real nested directories');
+  assert.equal((await readFile(path.join(workspace.workspacePath, 'src', 'a', 'b', 'c', 'nested.ts'))).equals(onDisk), true);
+});
+
+test('workspace: a top-level directory junction to outside fails closed with WORKSPACE_SOURCE_LINK_ESCAPE (CT-GATE-FIX-3 goal 1)', async () => {
+  const fixture = await createRepo();
+  // Commit a tracked file directly under a TOP-LEVEL directory (not nested under src/).
+  await mkdir(path.join(fixture.repoPath, 'features'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'features', 'foo.ts'), 'COMMITTED\n');
+  await git(fixture.repoPath, ['add', '.']);
+  await git(fixture.repoPath, ['commit', '-m', 'top-level tracked dir']);
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'workspace-top-junction-outside-'));
+  try {
+    await writeFile(path.join(outside, 'foo.ts'), 'OUTSIDE_BYTES\n');
+    // Replace the top-level features/ directory with a junction to the outside dir.
+    await rm(path.join(fixture.repoPath, 'features'), { recursive: true, force: true });
+    await symlink(outside, path.join(fixture.repoPath, 'features'), 'junction');
+    await assert.rejects(
+      materializeAttemptWorkspace({
+        canonicalRepoPath: fixture.repoPath,
+        workspaceRoot: fixture.runtimePath,
+        identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+      }),
+      (error) => error instanceof WorkspacePreparationError
+        && /WORKSPACE_SOURCE_LINK_ESCAPE: features\/foo\.ts/u.test(error.message),
+      'a top-level junction ancestor must fail closed naming the repo-relative path only',
+    );
+    await assert.rejects(readFile(path.join(fixture.runtimePath, 'repo-key', 'run-1', 'attempt-1', 'features', 'foo.ts')), /ENOENT/u, 'no workspace left behind');
+    assert.equal(await readFile(path.join(outside, 'foo.ts'), 'utf8'), 'OUTSIDE_BYTES\n', 'the outside target is untouched — nothing copied through the junction');
+  } finally {
+    await rm(path.join(fixture.repoPath, 'features')).catch(() => undefined);
+    await rm(path.dirname(fixture.runtimePath), { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('workspace: a top-level tracked file with no nested ancestors still materializes with on-disk bytes (CT-GATE-FIX-3 goal 1 positive control)', async () => {
+  // Pairs with the top-level junction test above: a top-level file has zero
+  // ancestor directories, so guard.assert walks nothing and must still let the
+  // real file through. This confirms the fail-closed guard does not over-reject
+  // the zero-ancestor case. (The realpath try/catch in copyWorkspaceFile is
+  // defense-in-depth: guard.assert catches ancestor junctions first, and a leaf
+  // symlink is skipped by the lstat().isFile() guard before realpath runs, so no
+  // real on-disk state reaches the realpath branch — it is verified by inspection
+  // and by the ancestor-junction tests.)
+  const fixture = await createRepo();
+  await writeFile(path.join(fixture.repoPath, 'top.txt'), 'COMMITTED_TOP\n');
+  await git(fixture.repoPath, ['add', '.']);
+  await git(fixture.repoPath, ['commit', '-m', 'top-level file']);
+  const onDisk = await readFile(path.join(fixture.repoPath, 'top.txt'));
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: (await git(fixture.repoPath, ['rev-parse', 'HEAD'])).trim(),
+  });
+  const baseline = workspace.baselineTree.files.get('top.txt');
+  assert.equal(baseline?.sha256, sha256(onDisk), 'the zero-ancestor top-level file is captured');
+  assert.equal((await readFile(path.join(workspace.workspacePath, 'top.txt'))).equals(onDisk), true);
+  await rm(path.dirname(fixture.runtimePath), { recursive: true, force: true });
+});
+
+test('workspace: a realpath(root) failure fails closed with WORKSPACE_SOURCE_LINK_ESCAPE and copies nothing (CT-GATE-FIX-4 goal 2)', async () => {
+  const fixture = await createRepo();
+  const root = path.resolve(fixture.repoPath);
+  // Injectable realpath seam: force realpath(root) to reject (simulating ELOOP/ENOENT
+  // on the root). Production behavior is identical when the seam is omitted.
+  const forcedRootFail = async (filePath: string): Promise<string> => {
+    if (filePath === root) throw new Error('forced realpath root failure');
+    return realpath(filePath);
+  };
+  await assert.rejects(
+    materializeAttemptWorkspace({
+      canonicalRepoPath: fixture.repoPath,
+      workspaceRoot: fixture.runtimePath,
+      identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+      realpath: forcedRootFail,
+    }),
+    (error) => error instanceof WorkspacePreparationError && /WORKSPACE_SOURCE_LINK_ESCAPE/u.test(error.message),
+    'a realpath(root) failure must fail closed, never fall back to the lexical root',
+  );
+  await assert.rejects(readFile(path.join(fixture.runtimePath, 'repo-key', 'run-1', 'attempt-1', 'README.md')), /ENOENT/u, 'no workspace left behind — nothing copied');
+  await rm(path.dirname(fixture.repoPath), { recursive: true, force: true });
+});
+
+test('workspace: a realpath(source) failure fails closed with WORKSPACE_SOURCE_LINK_ESCAPE and copies nothing (CT-GATE-FIX-4 goal 2)', async () => {
+  const fixture = await createRepo();
+  const root = path.resolve(fixture.repoPath);
+  // Injectable realpath seam: let realpath(root) resolve normally but force every
+  // SOURCE path to reject. guard.realRoot() succeeds; the per-source realpath then
+  // fails and copyWorkspaceFile wraps it into WORKSPACE_SOURCE_LINK_ESCAPE.
+  const forcedSourceFail = async (filePath: string): Promise<string> => {
+    if (filePath === root) return realpath(filePath);
+    throw new Error('forced realpath source failure');
+  };
+  await assert.rejects(
+    materializeAttemptWorkspace({
+      canonicalRepoPath: fixture.repoPath,
+      workspaceRoot: fixture.runtimePath,
+      identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+      realpath: forcedSourceFail,
+    }),
+    (error) => error instanceof WorkspacePreparationError && /WORKSPACE_SOURCE_LINK_ESCAPE/u.test(error.message),
+    'a realpath(source) failure must fail closed, never fall back to the lexical path',
+  );
+  await assert.rejects(readFile(path.join(fixture.runtimePath, 'repo-key', 'run-1', 'attempt-1', 'README.md')), /ENOENT/u, 'no workspace left behind — nothing copied');
+  await rm(path.dirname(fixture.repoPath), { recursive: true, force: true });
 });

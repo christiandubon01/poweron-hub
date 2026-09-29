@@ -16,7 +16,9 @@ import { openOrchestrationStore, type OrchestrationStore } from '../lib/store.ts
 import { VERIFIER_VERDICT_EVENT } from './supervisorPort.ts';
 import {
   captureWorkspaceTree,
+  capturedBaselineSidecarPath,
   describeWorkspaceDelta,
+  readCapturedBaseline,
   writeCandidateChangeIndex,
   writeCapturedBaseline,
 } from '../workspace.ts';
@@ -377,42 +379,62 @@ test('a second-file write failure and a verification mismatch roll back only can
     const staged = await stage([{ path: 'notes/smoke.txt', baseline: 'base\n', candidate: 'next\n' }], { path: 'notes/unrelated.txt', contents: 'stay\n' });
     const recorded = await apply(store, staged, {
       afterWrite: async () => {
+        // CT-GATE-FIX-3 goal 4: a real on-disk owner edit to the ALREADY-WRITTEN
+        // file. Verify catches the mismatch against intendedBytes, but rollback can
+        // no longer prove Apply's change is intact (the bytes differ from what Apply
+        // wrote), so it leaves the owner's edit in place and reports PARTIAL — the
+        // partial reason takes priority over the verify abort (goal 5).
         await writeFile(path.join(staged.canonical, 'notes/smoke.txt'), 'tampered\n');
       },
     });
-    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.verify);
-    assert.equal(recorded.failed?.result?.rollback, 'PASS');
-    assert.equal(await readFile(path.join(staged.canonical, 'notes/smoke.txt'), 'utf8'), 'base\n');
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.partial);
+    assert.equal(recorded.failed?.result?.rollback, 'PARTIAL');
+    assert.deepEqual(recorded.failed?.result?.partialPaths, ['notes/smoke.txt']);
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/smoke.txt'), 'utf8'), 'tampered\n', "the owner's edit is preserved — rollback did not clobber it");
     assert.equal(await readFile(path.join(staged.canonical, 'notes/unrelated.txt'), 'utf8'), 'stay\n');
     await rm(staged.root, { recursive: true, force: true });
   });
 });
 
-test('rollback failure is reported and does not claim success', async () => {
+test('rollback write itself fails after a conflict: the recorded reason is the rollback failure, not the conflict (CT-GATE-FIX-3 goal 5)', async () => {
   await withStore(async (store) => {
-    seedRun(store, { paths: ['notes/smoke.txt'], changes: [{ path: 'notes/smoke.txt', kind: 'modify' }] });
-    const staged = await stage([{ path: 'notes/smoke.txt', baseline: 'base\n', candidate: 'next\n' }]);
-    let verifying = false;
+    // Two modifies, alphabetical: first.txt is written, then the owner edits
+    // second.txt on disk so its per-write re-check conflicts. file 1 still holds
+    // exactly what Apply wrote, so rollback attempts to restore it — and that
+    // restore write is made to fail. Outcome priority: FAIL reason = rollback.
+    const files = [
+      { path: 'notes/first.txt', baseline: 'one\n', candidate: 'ONE\n' },
+      { path: 'notes/second.txt', baseline: 'two\n', candidate: 'TWO\n' },
+    ];
+    seedRun(store, { paths: files.map((file) => file.path), changes: [{ path: 'notes/first.txt', kind: 'modify' }, { path: 'notes/second.txt', kind: 'modify' }] });
+    const staged = await stage(files);
+    const firstCanonical = path.join(staged.canonical, 'notes/first.txt');
+    const secondCanonical = path.join(staged.canonical, 'notes/second.txt');
     const io: CandidateApplyIo = {
       readFile: (filePath) => readFile(filePath),
       mkdir: (filePath, options) => mkdir(filePath, options),
       rm: (filePath, options) => rm(filePath, options),
       lstat: (filePath) => lstat(filePath),
       writeFile: async (filePath, data) => {
-        if (verifying) throw new Error('rollback disk');
+        // The rollback restore writes the original baseline 'one\n' back to
+        // first.txt; make ONLY that restore write fail (the apply write is 'ONE\n').
+        if (filePath === firstCanonical && data.toString('utf8') === 'one\n') {
+          throw new Error('rollback disk');
+        }
         await writeFile(filePath, data);
+        // After first.txt is written, the owner edits second.txt on disk so the
+        // per-write re-check for second.txt sees drifted bytes and conflicts.
+        if (filePath === firstCanonical) {
+          await writeFile(secondCanonical, 'OWNER_TWO\n');
+        }
       },
     };
-    const recorded = await apply(store, staged, {
-      io,
-      afterWrite: async () => {
-        verifying = true;
-        await writeFile(path.join(staged.canonical, 'notes/smoke.txt'), 'tampered\n');
-      },
-    });
-    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.rollback);
+    const recorded = await apply(store, staged, { io });
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.rollback, 'rollback FAIL reason takes priority over the conflict');
     assert.equal(recorded.failed?.result?.rollback, 'FAIL');
     assert.equal(recorded.completed, null);
+    assert.equal(await readFile(firstCanonical, 'utf8'), 'ONE\n', 'the apply write landed and the failed rollback left it in place');
+    assert.equal(await readFile(secondCanonical, 'utf8'), 'OWNER_TWO\n', "the owner's edit to second.txt is preserved; Host wrote nothing to it");
     await rm(staged.root, { recursive: true, force: true });
   });
 });
@@ -617,15 +639,380 @@ test('apply verify compares against the line-ending-converted intended bytes, no
     seedRun(store, { paths: ['notes/lf.txt'], changes: [{ path: 'notes/lf.txt', kind: 'modify' }] });
     const staged = await stage([{ path: 'notes/lf.txt', baseline: 'owner\n', candidate: 'owner\r\nprovider\r\n' }]);
     // canonical LF -> intended = 'owner\nprovider\n'. Tamper to the raw CRLF candidate
-    // (exactly what would have been written without goal 2); verify must reject it.
+    // (exactly what would have been written without goal 2). Verify MUST reject it
+    // (proving it compares against intendedBytes, not the raw candidate): if it had
+    // compared against the raw candidate it would have matched and the apply would
+    // have SUCCEEDED. Instead the apply fails. Under CT-GATE-FIX-3 goal 4 the
+    // tampered bytes differ from what Apply wrote, so rollback cannot prove Apply's
+    // change is intact, leaves the owner's edit in place, and reports PARTIAL
+    // (goal 5: partial takes priority over the verify abort).
     const recorded = await apply(store, staged, {
       afterWrite: async () => {
         await writeFile(path.join(staged.canonical, 'notes/lf.txt'), 'owner\r\nprovider\r\n');
       },
     });
-    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.verify);
-    assert.equal(recorded.failed?.result?.rollback, 'PASS');
-    assert.equal(await readFile(path.join(staged.canonical, 'notes/lf.txt'), 'utf8'), 'owner\n', 'rolled back to the original canonical bytes');
+    assert.equal(recorded.completed, null, 'verify rejected the tampered bytes — it did not match the raw candidate');
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.partial, 'partial takes priority over the verify abort');
+    assert.equal(recorded.failed?.result?.rollback, 'PARTIAL');
+    assert.deepEqual(recorded.failed?.result?.partialPaths, ['notes/lf.txt']);
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/lf.txt'), 'utf8'), 'owner\r\nprovider\r\n', "the owner's tamper is preserved — rollback did not restore the baseline");
     await rm(staged.root, { recursive: true, force: true });
   });
+});
+
+test('apply modify with a text canonical and a binary candidate writes the candidate exactly (CT-GATE-FIX-2 goal 2)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, { paths: ['notes/text-bin.txt'], changes: [{ path: 'notes/text-bin.txt', kind: 'modify' }] });
+    // Canonical is text (LF); the candidate is binary (a NUL in the first 8 KiB).
+    const staged = await stage([{ path: 'notes/text-bin.txt', baseline: 'owner\n', candidate: 'owner\n\x00binary-payload\n' }]);
+    const recorded = await apply(store, staged);
+    assert.equal(recorded.completed?.outcome, 'applied');
+    assert.equal(
+      await readFile(path.join(staged.canonical, 'notes/text-bin.txt'), 'utf8'),
+      'owner\n\x00binary-payload\n',
+      'binary candidate written exactly — no CRLF/LF folding when either side is binary',
+    );
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('apply modify with a binary canonical and a text candidate writes the candidate exactly (CT-GATE-FIX-2 goal 2)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, { paths: ['notes/bin-text.dat'], changes: [{ path: 'notes/bin-text.dat', kind: 'modify' }] });
+    // Canonical is binary (NUL); the candidate is text (LF). No folding either way.
+    const staged = await stage([{ path: 'notes/bin-text.dat', baseline: 'owner\x00data\n', candidate: 'owner more data\n' }]);
+    const recorded = await apply(store, staged);
+    assert.equal(recorded.completed?.outcome, 'applied');
+    assert.equal(
+      await readFile(path.join(staged.canonical, 'notes/bin-text.dat'), 'utf8'),
+      'owner more data\n',
+      'text candidate written exactly against a binary canonical — no folding',
+    );
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('an owner edit between preflight and the second write rolls back the first write and reports a conflict (CT-GATE-FIX-2 goal 3)', async () => {
+  await withStore(async (store) => {
+    const files = [
+      { path: 'notes/first.txt', baseline: 'one\n', candidate: 'ONE\n' },
+      { path: 'notes/second.txt', baseline: 'two\n', candidate: 'TWO\n' },
+    ];
+    seedRun(store, {
+      paths: files.map((file) => file.path),
+      changes: [{ path: 'notes/first.txt', kind: 'modify' }, { path: 'notes/second.txt', kind: 'modify' }],
+    });
+    const staged = await stage(files, { path: 'notes/unrelated.txt', contents: 'stay\n' });
+    const firstCanonical = path.join(staged.canonical, 'notes/first.txt');
+    const secondCanonical = path.join(staged.canonical, 'notes/second.txt');
+    // CT-GATE-FIX-3 required test 7: the seam is a REAL on-disk edit, not a fake
+    // readFile. When first.txt is written, the owner physically overwrites
+    // second.txt on disk so its per-write re-check (which re-reads the canonical
+    // file) sees drifted bytes and conflicts. Preflight still saw the unedited
+    // baseline, so the conflict is caught only by the re-check.
+    const io: CandidateApplyIo = {
+      readFile: (filePath) => readFile(filePath),
+      writeFile: async (filePath, data) => {
+        await writeFile(filePath, data);
+        if (filePath === firstCanonical) {
+          await writeFile(secondCanonical, 'OWNER_EDITED\n');
+        }
+      },
+      mkdir: (filePath, options) => mkdir(filePath, options),
+      rm: (filePath, options) => rm(filePath, options),
+      lstat: (filePath) => lstat(filePath),
+    };
+    const recorded = await apply(store, staged, { io });
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.conflict);
+    assert.equal(recorded.failed?.result?.phase, 'Conflict detected');
+    assert.deepEqual(recorded.failed?.result?.conflictPaths, ['notes/second.txt']);
+    assert.equal(recorded.failed?.result?.rollback, 'PASS');
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/first.txt'), 'utf8'), 'one\n', 'first write rolled back to baseline (still intact == intended)');
+    assert.equal(await readFile(secondCanonical, 'utf8'), 'OWNER_EDITED\n', "the owner's on-disk edit to second.txt is preserved; Host wrote nothing to it");
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/unrelated.txt'), 'utf8'), 'stay\n');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('an add target created by the owner after preflight conflicts and writes nothing (CT-GATE-FIX-2 goal 3)', async () => {
+  await withStore(async (store) => {
+    const files = [
+      { path: 'notes/first.txt', baseline: 'one\n', candidate: 'ONE\n' },
+      { path: 'notes/zzz.txt', baseline: null, candidate: 'created\n' },
+    ];
+    seedRun(store, {
+      paths: files.map((file) => file.path),
+      changes: [{ path: 'notes/first.txt', kind: 'modify' }, { path: 'notes/zzz.txt', kind: 'add' }],
+    });
+    const staged = await stage(files, { path: 'notes/unrelated.txt', contents: 'stay\n' });
+    const firstCanonical = path.join(staged.canonical, 'notes/first.txt');
+    const addCanonical = path.join(staged.canonical, 'notes/zzz.txt');
+    // Planned order is alphabetical: first.txt (modify) is written before zzz.txt (add).
+    // Seam: the owner creates the add target on disk AFTER first.txt is written (i.e.
+    // between preflight and the add's per-write re-check). Preflight saw the add path
+    // absent; the re-check sees it present and fails closed. No fake lstat/readFile
+    // counting — the owner-created file is a real file on disk.
+    let ownerCreatedAdd = false;
+    const io: CandidateApplyIo = {
+      readFile: (filePath) => readFile(filePath),
+      writeFile: async (filePath, data) => {
+        await writeFile(filePath, data);
+        if (filePath === firstCanonical && !ownerCreatedAdd) {
+          ownerCreatedAdd = true;
+          await mkdir(path.dirname(addCanonical), { recursive: true });
+          await writeFile(addCanonical, 'OWNER_CREATED\n');
+        }
+      },
+      mkdir: (filePath, options) => mkdir(filePath, options),
+      rm: (filePath, options) => rm(filePath, options),
+      lstat: (filePath) => lstat(filePath),
+    };
+    const recorded = await apply(store, staged, { io });
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.conflict);
+    assert.equal(recorded.failed?.result?.phase, 'Conflict detected');
+    assert.deepEqual(recorded.failed?.result?.conflictPaths, ['notes/zzz.txt']);
+    assert.equal(recorded.failed?.result?.rollback, 'PASS');
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/first.txt'), 'utf8'), 'one\n', 'first write rolled back to baseline');
+    assert.equal(await readFile(addCanonical, 'utf8'), 'OWNER_CREATED\n', 'the add candidate was never written — only the owner-created file remains');
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/unrelated.txt'), 'utf8'), 'stay\n');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('a NUL byte after 8 KiB inside CRLF content is treated as binary and the candidate is written exactly (CT-GATE-FIX-3 goal 2)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, { paths: ['notes/big.txt'], changes: [{ path: 'notes/big.txt', kind: 'modify' }] });
+    // Build CRLF content well past 8 KiB, then plant a single NUL byte at offset
+    // 9000 — past the old 8 KiB scan window. The whole-buffer classifier (goal 2)
+    // must classify this as binary; with a text (CRLF) canonical, no line-ending
+    // folding happens and the candidate bytes are written verbatim.
+    const lines: string[] = [];
+    for (let i = 0; i < 120; i += 1) lines.push('x'.repeat(80));
+    let candidateStr = lines.join('\r\n') + '\r\n'; // 9840 bytes, uniform CRLF
+    const nulPos = 9000;
+    candidateStr = candidateStr.slice(0, nulPos) + '\x00' + candidateStr.slice(nulPos);
+    const expected = Buffer.from(candidateStr, 'utf8');
+    const staged = await stage([{ path: 'notes/big.txt', baseline: 'owner\r\n', candidate: candidateStr }]);
+    const recorded = await apply(store, staged);
+    assert.equal(recorded.completed?.outcome, 'applied');
+    const written = await readFile(path.join(staged.canonical, 'notes/big.txt'));
+    assert.equal(written.equals(expected), true, 'binary candidate (NUL past 8 KiB) written exactly — no CRLF/LF folding');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('a parent directory replaced by a junction after preflight is caught by the per-write path re-check and writes nothing outside the repo (CT-GATE-FIX-3 goal 3)', async () => {
+  await withStore(async (store) => {
+    // first.txt is top-level; deep.txt is under nested/. Alphabetical order writes
+    // first.txt before nested/deep.txt, giving the seam a real write event to swap
+    // nested/ for a junction between first.txt's write and deep.txt's per-write
+    // resolveSafePath re-check.
+    const files = [
+      { path: 'first.txt', baseline: 'one\n', candidate: 'ONE\n' },
+      { path: 'nested/deep.txt', baseline: 'two\n', candidate: 'TWO\n' },
+    ];
+    seedRun(store, { paths: files.map((file) => file.path), changes: [{ path: 'first.txt', kind: 'modify' }, { path: 'nested/deep.txt', kind: 'modify' }] });
+    const staged = await stage(files);
+    const firstCanonical = path.join(staged.canonical, 'first.txt');
+    const nestedCanonical = path.join(staged.canonical, 'nested');
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'apply-junction-outside-'));
+    try {
+      const io: CandidateApplyIo = {
+        readFile: (filePath) => readFile(filePath),
+        mkdir: (filePath, options) => mkdir(filePath, options),
+        rm: (filePath, options) => rm(filePath, options),
+        lstat: (filePath) => lstat(filePath),
+        writeFile: async (filePath, data) => {
+          await writeFile(filePath, data);
+          if (filePath === firstCanonical) {
+            // Owner swaps the real nested/ directory for a junction to an outside
+            // dir AFTER first.txt is written, before deep.txt's per-write re-check.
+            await rm(nestedCanonical, { recursive: true, force: true });
+            await symlink(outside, nestedCanonical, 'junction');
+          }
+        },
+      };
+      const recorded = await apply(store, staged, { io });
+      assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.unsafe, 'the per-write resolveSafePath re-check fails closed on the junction ancestor');
+      assert.equal(recorded.failed?.result?.rollback, 'PASS');
+      assert.deepEqual(recorded.failed?.result?.conflictPaths, ['nested/deep.txt']);
+      assert.equal(await readFile(firstCanonical, 'utf8'), 'one\n', 'first write rolled back to baseline (still intact == intended)');
+      // Nothing was written outside the repo: the outside junction target has no deep.txt.
+      await assert.rejects(readFile(path.join(outside, 'deep.txt')), /ENOENT/u, 'no bytes escaped the repo through the junction');
+    } finally {
+      await rm(nestedCanonical, { force: true }).catch(() => undefined);
+      await rm(staged.root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test('an owner edit to an already-written file followed by a later conflict preserves the owner edit and reports rollback PARTIAL (CT-GATE-FIX-3 goal 4)', async () => {
+  await withStore(async (store) => {
+    // first.txt is written, then the owner edits it on disk. second.txt is also
+    // edited on disk so its per-write re-check conflicts. Rollback of first.txt
+    // cannot prove Apply's change is intact (the owner overwrote it), so it leaves
+    // the owner's bytes in place and reports PARTIAL with that path — the partial
+    // reason taking priority over the conflict (goal 5).
+    const files = [
+      { path: 'notes/first.txt', baseline: 'one\n', candidate: 'ONE\n' },
+      { path: 'notes/second.txt', baseline: 'two\n', candidate: 'TWO\n' },
+    ];
+    seedRun(store, { paths: files.map((file) => file.path), changes: [{ path: 'notes/first.txt', kind: 'modify' }, { path: 'notes/second.txt', kind: 'modify' }] });
+    const staged = await stage(files);
+    const firstCanonical = path.join(staged.canonical, 'notes/first.txt');
+    const secondCanonical = path.join(staged.canonical, 'notes/second.txt');
+    const io: CandidateApplyIo = {
+      readFile: (filePath) => readFile(filePath),
+      mkdir: (filePath, options) => mkdir(filePath, options),
+      rm: (filePath, options) => rm(filePath, options),
+      lstat: (filePath) => lstat(filePath),
+      writeFile: async (filePath, data) => {
+        await writeFile(filePath, data);
+        if (filePath === firstCanonical) {
+          // Owner edits the ALREADY-WRITTEN first.txt, and drifts second.txt so the
+          // later per-write re-check conflicts.
+          await writeFile(firstCanonical, 'OWNER_EDITED\n');
+          await writeFile(secondCanonical, 'OWNER_TWO\n');
+        }
+      },
+    };
+    const recorded = await apply(store, staged, { io });
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.partial, 'partial takes priority over the conflict');
+    assert.equal(recorded.failed?.result?.rollback, 'PARTIAL');
+    assert.deepEqual(recorded.failed?.result?.partialPaths, ['notes/first.txt']);
+    assert.deepEqual(recorded.failed?.result?.conflictPaths, ['notes/second.txt']);
+    assert.equal(await readFile(firstCanonical, 'utf8'), 'OWNER_EDITED\n', "the owner's edit to the already-written file is preserved — rollback did not clobber it");
+    assert.equal(await readFile(secondCanonical, 'utf8'), 'OWNER_TWO\n', "the owner's drifted second.txt is preserved; Host wrote nothing to it");
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('rollback does not write or delete through a parent junction swapped after the first write (CT-GATE-FIX-4 goal 1)', async () => {
+  await withStore(async (store) => {
+    // nested/first.txt is written first (alphabetical), then top.txt. The seam:
+    // when first.txt is written, the owner replaces nested/ with a junction to an
+    // outside dir AND drifts top.txt so the later per-write re-check conflicts. The
+    // conflict triggers rollback of first.txt, whose parent is now a junction. The
+    // per-rollback resolveSafePath re-check must fail closed → PARTIAL with that path,
+    // and rollback must NOT write or delete anything through the junction.
+    const files = [
+      { path: 'nested/first.txt', baseline: 'one\n', candidate: 'ONE\n' },
+      { path: 'top.txt', baseline: 'base\n', candidate: 'NEXT\n' },
+    ];
+    seedRun(store, { paths: files.map((file) => file.path), changes: [{ path: 'nested/first.txt', kind: 'modify' }, { path: 'top.txt', kind: 'modify' }] });
+    const staged = await stage(files);
+    const firstCanonical = path.join(staged.canonical, 'nested', 'first.txt');
+    const nestedCanonical = path.join(staged.canonical, 'nested');
+    const topCanonical = path.join(staged.canonical, 'top.txt');
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'apply-rollback-junction-'));
+    try {
+      const io: CandidateApplyIo = {
+        readFile: (filePath) => readFile(filePath),
+        mkdir: (filePath, options) => mkdir(filePath, options),
+        rm: (filePath, options) => rm(filePath, options),
+        lstat: (filePath) => lstat(filePath),
+        writeFile: async (filePath, data) => {
+          await writeFile(filePath, data);
+          if (filePath === firstCanonical) {
+            // Owner swaps nested/ for a junction to the outside dir, and drifts top.txt
+            // so the next per-write re-check conflicts and forces rollback of first.txt.
+            await rm(nestedCanonical, { recursive: true, force: true });
+            await symlink(outside, nestedCanonical, 'junction');
+            await writeFile(topCanonical, 'OWNER_TOP\n');
+          }
+        },
+      };
+      const recorded = await apply(store, staged, { io });
+      assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.partial, 'partial takes priority over the conflict');
+      assert.equal(recorded.failed?.result?.rollback, 'PARTIAL');
+      assert.deepEqual(recorded.failed?.result?.partialPaths, ['nested/first.txt']);
+      assert.deepEqual(recorded.failed?.result?.conflictPaths, ['top.txt']);
+      // Nothing was written or deleted through the junction: the outside dir has no first.txt.
+      await assert.rejects(readFile(path.join(outside, 'first.txt')), /ENOENT/u, 'rollback did not restore through the junction into the outside dir');
+      // top.txt was never written by Host — the owner's drift is all that is there.
+      assert.equal(await readFile(topCanonical, 'utf8'), 'OWNER_TOP\n');
+    } finally {
+      await rm(nestedCanonical, { force: true }).catch(() => undefined);
+      await rm(staged.root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test('a schema-1 baseline without normalized fields falls back to a raw byte compare in the delta (CT-GATE-FIX-2)', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'apply-schema1-'));
+  const baselineDir = path.join(root, 'baseline');
+  const workspaceRoot = path.join(root, 'workspaces');
+  const workspacePath = path.join(workspaceRoot, REPO_KEY, RUN_ID, ATTEMPT_ID);
+  await mkdir(baselineDir, { recursive: true });
+  await mkdir(workspacePath, { recursive: true });
+  const identity = { repoKey: REPO_KEY, runId: RUN_ID, attemptId: ATTEMPT_ID };
+  // Write a schema-1 sidecar by hand: only path/sha256/sizeBytes, NO normalized fields.
+  const content = 'COMMITTED\n';
+  await writeFile(
+    capturedBaselineSidecarPath({ workspaceRoot, identity }),
+    JSON.stringify({
+      schemaVersion: 1,
+      baselineHeadSha: HEAD,
+      files: [{ path: 'README.md', sha256: createHash('sha256').update(content).digest('hex'), sizeBytes: Buffer.byteLength(content) }],
+    }),
+  );
+  await writeRel(workspacePath, 'README.md', 'COMMITTED\r\n');
+  const baseline = await readCapturedBaseline({ workspaceRoot, identity });
+  assert.ok(baseline);
+  const delta = describeWorkspaceDelta(HEAD, { files: baseline!.files }, await captureWorkspaceTree(workspacePath));
+  assert.equal(delta.length, 1, 'an LE-only difference IS a change under the schema-1 raw fallback');
+  assert.equal(delta[0]?.kind, 'modify');
+  assert.equal(delta[0]?.path, 'README.md');
+  await rm(root, { recursive: true, force: true });
+});
+
+test('delta: binary and mixed-ending files compare exactly, so an LE-only change on a mixed file is a change (CT-GATE-FIX-2)', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'apply-delta-exact-'));
+  const baselineDir = path.join(root, 'baseline');
+  const candidateDir = path.join(root, 'candidate');
+  await mkdir(baselineDir, { recursive: true });
+  await mkdir(candidateDir, { recursive: true });
+  // Binary: a single byte difference (an "LE-only" byte change) is a real change.
+  await writeRel(baselineDir, 'bin.dat', 'before\x00data\n');
+  await writeRel(candidateDir, 'bin.dat', 'before\x00data\r\n');
+  // Mixed: an LE-only change (a CRLF pair becomes a lone LF) is a change because mixed compares raw.
+  await writeRel(baselineDir, 'mixed.txt', 'a\r\nb\rc\n');
+  await writeRel(candidateDir, 'mixed.txt', 'a\nb\rc\n');
+  const baseline = await captureWorkspaceTree(baselineDir);
+  const candidate = await captureWorkspaceTree(candidateDir);
+  const delta = describeWorkspaceDelta(HEAD, baseline, candidate);
+  assert.equal(delta.length, 2);
+  assert.deepEqual(delta.map((entry) => entry.path).sort(), ['bin.dat', 'mixed.txt']);
+  assert.ok(delta.every((entry) => entry.kind === 'modify'));
+  await rm(root, { recursive: true, force: true });
+});
+
+test('delta: a late-NUL binary file (NUL past 8 KiB) changed only in line endings IS a change (binary compares exactly) (CT-GATE-FIX-4 goal 3)', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'apply-delta-latenul-'));
+  const baselineDir = path.join(root, 'baseline');
+  const candidateDir = path.join(root, 'candidate');
+  await mkdir(baselineDir, { recursive: true });
+  await mkdir(candidateDir, { recursive: true });
+  // Build content well past 8 KiB whose ONLY difference is line endings (CRLF vs LF).
+  // The single NUL byte sits at offset 9000 — past the old 8 KiB scan window — so the
+  // file is binary under the full-buffer classifier (CT-GATE-FIX-3 goal 2). Binary
+  // compares raw bytes, so the LE-only difference IS a change (not normalized away).
+  const lines: string[] = [];
+  for (let i = 0; i < 120; i += 1) lines.push('x'.repeat(80));
+  const crlf = lines.join('\r\n') + '\r\n'; // 9840 bytes
+  const lf = lines.join('\n') + '\n'; // 9722 bytes
+  const nulPos = 9000; // > 8192 in both strings
+  const crlfBin = crlf.slice(0, nulPos) + '\x00' + crlf.slice(nulPos);
+  const lfBin = lf.slice(0, nulPos) + '\x00' + lf.slice(nulPos);
+  await writeRel(baselineDir, 'latebin.dat', crlfBin);
+  await writeRel(candidateDir, 'latebin.dat', lfBin);
+  const baseline = await captureWorkspaceTree(baselineDir);
+  const candidate = await captureWorkspaceTree(candidateDir);
+  const delta = describeWorkspaceDelta(HEAD, baseline, candidate);
+  assert.equal(delta.length, 1, 'an LE-only change on a late-NUL binary file IS a change');
+  assert.equal(delta[0]?.kind, 'modify');
+  assert.equal(delta[0]?.path, 'latebin.dat');
+  await rm(root, { recursive: true, force: true });
 });
