@@ -52,6 +52,11 @@ export interface ProjectCollectionSignal {
   timingState: 'overdue' | 'due_today' | 'future' | 'unknown'
 }
 
+export interface ProjectCollectionSchedule {
+  signals: ProjectCollectionSignal[]
+  diagnostics: string[]
+}
+
 export interface PayrollAttributionSession {
   id: string
   employeeProfileId: string

@@ -5,7 +5,7 @@ import type { FinancialLiabilityInput } from './allocationTypes'
 import type {
   ClockProject, CollectionClockEntry, PayrollAttributionSession, PayrollProjectAllocation,
   PayrollProjectSlice, ProjectCollectionClockInput, ProjectCollectionClockResult,
-  ProjectCollectionEvidence, ProjectCollectionSignal, ProjectRequiredCost,
+  ProjectCollectionEvidence, ProjectCollectionSchedule, ProjectCollectionSignal, ProjectRequiredCost,
 } from './projectCollectionClockTypes'
 
 function nonnegativeMinor(value: number, label: string): void {
@@ -106,23 +106,26 @@ interface ScheduledSignal {
   dateEvidence: string
 }
 
-function nextCollection(
-  project: ClockProject, evidence: ProjectCollectionEvidence, asOfDate: string, diagnostics: string[],
-): ProjectCollectionSignal | null {
+/** Strict saved-term schedule shared by the clock and forward projection. */
+export function deriveProjectCollectionSignals(
+  project: ClockProject, evidence: ProjectCollectionEvidence, asOfDate: string,
+): ProjectCollectionSchedule {
+  const diagnostics: string[] = []
+  parseCalendarDate(asOfDate)
   nonnegativeMinor(project.contractMinor, `Project ${project.projectId} contract`)
-  if (project.contractMinor === 0) return null
+  if (project.contractMinor === 0) return { signals: [], diagnostics }
   const remaining = Math.max(0, project.contractMinor - evidence.lifetimeCollectedMinor)
-  if (remaining === 0) return null
+  if (remaining === 0) return { signals: [], diagnostics }
   const phases = project.phaseTimeline
   const percentages = [project.depositPct, ...phases.map(p => p.paymentTriggerPct)]
   if (percentages.some(pct => pct != null && (!Number.isFinite(pct) || pct < 0 || pct > 100))) {
     diagnostics.push('invalid_schedule_percentage')
-    return null
+    return { signals: [], diagnostics }
   }
   const totalPct = percentages.reduce<number>((sum, pct) => sum + (pct ?? 0), 0)
   if (totalPct > 100) {
     diagnostics.push('oversubscribed_schedule')
-    return null
+    return { signals: [], diagnostics }
   }
   const events: ScheduledSignal[] = []
   const phaseStart = (index: number): [string | null, string] => {
@@ -158,7 +161,7 @@ function nextCollection(
   const scheduledMinor = events.reduce((sum, event) => sum + event.amountMinor, 0)
   if (!Number.isSafeInteger(scheduledMinor) || scheduledMinor > project.contractMinor) {
     diagnostics.push('oversubscribed_schedule_cents')
-    return null
+    return { signals: [], diagnostics }
   }
   // A final residual needs at least one stored payment term and an explicit last-phase end.
   if (events.length > 0 && phases.length > 0 && scheduledMinor < project.contractMinor) {
@@ -167,43 +170,54 @@ function nextCollection(
       phase: 'Final Payment', date, amountMinor: project.contractMinor - scheduledMinor, dateEvidence: 'stored_actual_phase_end' })
   }
   const candidates = events.filter(event => event.amountMinor > 0)
-  if (candidates.length === 0) return null
+  if (candidates.length === 0) return { signals: [], diagnostics }
   let previousDatedEvent: string | null = null
   for (const event of candidates) {
     if (!event.date) continue
     if (previousDatedEvent && event.date < previousDatedEvent) {
       diagnostics.push('inconsistent_schedule_dates')
-      return null
+      return { signals: [], diagnostics }
     }
     previousDatedEvent = event.date
   }
   const hasPriorCollections = evidence.lifetimeCollectedMinor > 0
+  const signals = candidates.map(candidate => ({
+    projectId: project.projectId,
+    amountMinor: hasPriorCollections ? null : candidate.amountMinor,
+    expectedDate: candidate.date,
+    confidence: 'possible' as const,
+    phase: candidate.phase,
+    sourceKey: candidate.sourceKey,
+    amountEvidence: hasPriorCollections ? 'unlinked_historical_collections' : 'stored_unverified_percentage_of_contract',
+    dateEvidence: candidate.dateEvidence,
+    timingState: candidate.date === null ? 'unknown' as const
+      : candidate.date < asOfDate ? 'overdue' as const
+      : candidate.date === asOfDate ? 'due_today' as const : 'future' as const,
+  }))
+  return { signals, diagnostics }
+}
+
+function nextCollection(
+  project: ClockProject, evidence: ProjectCollectionEvidence, asOfDate: string, diagnostics: string[],
+): ProjectCollectionSignal | null {
+  const schedule = deriveProjectCollectionSignals(project, evidence, asOfDate)
+  diagnostics.push(...schedule.diagnostics)
+  const candidates = schedule.signals
+  if (candidates.length === 0) return null
+  const hasPriorCollections = evidence.lifetimeCollectedMinor > 0
   const candidate = hasPriorCollections
-    ? candidates.find(event => event.date !== null && event.date >= asOfDate)
+    ? candidates.find(event => event.expectedDate !== null && event.expectedDate >= asOfDate)
     : candidates[0]
   if (!candidate) {
     diagnostics.push('unlinked_historical_collections')
     return null
   }
-  if (hasPriorCollections && candidates.slice(0, candidates.indexOf(candidate)).some(event => event.date === null)) {
+  if (hasPriorCollections && candidates.slice(0, candidates.indexOf(candidate)).some(event => event.expectedDate === null)) {
     diagnostics.push('unknown_prior_schedule_date')
     return null
   }
   if (hasPriorCollections) diagnostics.push('unlinked_historical_collections')
-  const timingState = candidate.date === null ? 'unknown'
-    : candidate.date < asOfDate ? 'overdue'
-    : candidate.date === asOfDate ? 'due_today' : 'future'
-  return {
-    projectId: project.projectId,
-    amountMinor: hasPriorCollections ? null : candidate.amountMinor,
-    expectedDate: candidate.date,
-    confidence: 'possible',
-    phase: candidate.phase,
-    sourceKey: candidate.sourceKey,
-    amountEvidence: hasPriorCollections ? 'unlinked_historical_collections' : 'stored_unverified_percentage_of_contract',
-    dateEvidence: candidate.dateEvidence,
-    timingState,
-  }
+  return candidate
 }
 
 function riskClass(entry: CollectionClockEntry): number {
