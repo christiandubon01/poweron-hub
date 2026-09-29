@@ -5,6 +5,8 @@ import {
   type BackupData,
   type BackupLog,
 } from '@/services/backupDataService'
+import { isSyntheticPaidBackfillLog } from '@/services/collectedRevenueRange'
+import { isDeadProjectLog } from '@/services/projectScopeMerge'
 import {
   dollarsToMinor,
   usd,
@@ -13,6 +15,8 @@ import {
   type FinanceAdapterScope,
   type PlannedCostEvent,
 } from '../domain'
+import { parseCalendarDate } from '../recurrence'
+import type { ClockProject, ProjectCollectionEvidence } from '../projectCollectionClockTypes'
 
 function collectedAmount(log: BackupLog & Record<string, unknown>): number {
   return num((log as any).paymentsCollected ?? (log as any).collected)
@@ -128,4 +132,98 @@ export function readProjectPlannedCostEvents(
         reconciliationState: 'unreconciled' as const,
       },
     }))
+}
+
+function cashMinor(value: unknown): number {
+  const dollars = Number(value ?? 0)
+  if (!Number.isFinite(dollars)) throw new Error(`Invalid project cash amount: ${value}`)
+  return usd(Math.round(dollars * 100)).minor
+}
+
+function compatibilityMinor(value: unknown): number | null {
+  if (value == null) return null
+  try { return cashMinor(value) } catch { return null }
+}
+
+/** CASH-6 collection evidence; unlike dated cash events, includes unknown-date lifetime cash. */
+export function readProjectCollectionEvidence(
+  scope: FinanceAdapterScope,
+  backup: BackupData,
+): ProjectCollectionEvidence[] {
+  return (backup.projects || []).filter(isCashHistoryProject).map((project) => {
+    const adjustmentMinor = cashMinor(project.finance?.manualPaidAdjustment)
+    const evidence: ProjectCollectionEvidence = {
+      organizationId: scope.organizationId,
+      projectId: project.id,
+      lifetimeCollectedMinor: adjustmentMinor,
+      unknownDateCollectedMinor: adjustmentMinor,
+      manualAdjustmentMinor: adjustmentMinor,
+      syntheticBackfillMinor: 0,
+      unresolvedLogMinor: 0,
+      headerPaidMinor: compatibilityMinor(project.paid),
+      headerLastCollectedAmountMinor: compatibilityMinor(project.lastCollectedAmount),
+      datedCollections: [],
+      diagnostics: [],
+    }
+    for (const log of projectLogsFor(backup, project.id)) {
+      if (isDeadProjectLog(log)) continue
+      // Match the existing lifetime readers, including their zero-valued compatibility fallback.
+      const amountMinor = cashMinor((log as any).paymentsCollected || log.collected || 0)
+      evidence.lifetimeCollectedMinor += amountMinor
+      if (!Number.isSafeInteger(evidence.lifetimeCollectedMinor)) throw new Error('Project lifetime cash exceeds safe integer cents')
+      if (amountMinor === 0) continue
+      if (isSyntheticPaidBackfillLog(log)) {
+        evidence.syntheticBackfillMinor += amountMinor
+        evidence.unknownDateCollectedMinor += amountMinor
+        evidence.diagnostics.push(`synthetic_paid_backfill:${log.id}`)
+        continue
+      }
+      try {
+        parseCalendarDate(log.date)
+      } catch {
+        evidence.unresolvedLogMinor += amountMinor
+        evidence.unknownDateCollectedMinor += amountMinor
+        evidence.diagnostics.push(`invalid_collection_date:${log.id}`)
+        continue
+      }
+      const logId = String(log.id || log.logId || '').trim()
+      if (!logId) {
+        evidence.unresolvedLogMinor += amountMinor
+        evidence.unknownDateCollectedMinor += amountMinor
+        evidence.diagnostics.push('missing_collection_source_id')
+        continue
+      }
+      evidence.datedCollections.push({
+        sourceKey: `${scope.organizationId}:project_collection:${logId}`,
+        date: log.date,
+        amountMinor,
+      })
+    }
+    if (!Number.isSafeInteger(evidence.unknownDateCollectedMinor)) throw new Error('Project unknown-date cash exceeds safe integer cents')
+    return evidence
+  })
+}
+
+/** Preserve only stored project fields; timeline defaults are not payment authority. */
+export function readClockProjects(scope: FinanceAdapterScope, backup: BackupData): ClockProject[] {
+  return (backup.projects || []).map((project) => ({
+    organizationId: scope.organizationId,
+    projectId: project.id,
+    projectName: project.name,
+    status: project.status,
+    outcome: project.outcome ?? null,
+    archived: project.archived === true || Boolean(project.archivedAt) || (project as any).isArchived === true,
+    deletedAt: project.deletedAt ?? null,
+    contractMinor: cashMinor(project.contract),
+    depositPct: project.deposit_pct,
+    plannedStart: project.plannedStart ?? null,
+    startDate: (project as any).startDate ?? null,
+    phaseTimeline: (project.phase_timeline || []).map((phase: any) => ({
+      phaseName: String(phase.phase_name || ''),
+      paymentTriggerPct: phase.payment_trigger_pct,
+      confirmedStartDate: phase.confirmed_start_date ?? null,
+      actualStartDate: phase.actual_start_date ?? null,
+      actualEndDate: phase.actual_end_date ?? null,
+    })),
+  }))
 }
