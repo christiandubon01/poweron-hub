@@ -51,6 +51,76 @@ export interface WorkspaceFileFingerprint {
   path: string;
   sha256: string;
   sizeBytes: number;
+  /**
+   * Line-ending class of the captured bytes. Optional so that schema-1 baselines
+   * written before CT-GATE-FIX-1 (which carry only path/sha256/sizeBytes) still
+   * typecheck and fall back to a raw byte comparison (preserving their behavior).
+   */
+  lineEnding?: FileLineEnding;
+  /**
+   * SHA-256 of the bytes with CRLF pairs folded to LF. For uniform-LF, mixed, and
+   * binary files this equals {@link sha256} (no folding); for uniform-CRLF files
+   * it is the stripped form, so a baseline/final pair that differs ONLY in line
+   * endings compares equal and is not treated as a change. Optional for the same
+   * schema-1 back-compat reason as {@link lineEnding}.
+   */
+  sha256Normalized?: string;
+  /** Byte length corresponding to {@link sha256Normalized}. Optional (schema-1 back-compat). */
+  sizeBytesNormalized?: number;
+}
+
+/**
+ * Line-ending classification used to make workspace deltas line-ending-insensitive
+ * (CT-GATE-FIX-1 goal 3) and to preserve a canonical file's line-ending style on
+ * Apply Candidate write-back (goal 2).
+ */
+export type FileLineEnding = 'lf' | 'crlf' | 'mixed' | 'binary';
+
+/**
+ * Classify a file's bytes for line-ending-aware comparison. A file is `binary` if a
+ * NUL byte appears in its first 8 KiB; otherwise `lf` (no CR), `crlf` (every CR is
+ * part of a CRLF pair), or `mixed` (a lone CR survives CRLF→LF folding).
+ */
+export function classifyLineEndings(content: Buffer): FileLineEnding {
+  const head = content.subarray(0, 8192);
+  if (head.includes(0)) return 'binary';
+  if (content.indexOf(0x0d) === -1) return 'lf';
+  return stripCRLF(content).indexOf(0x0d) === -1 ? 'crlf' : 'mixed';
+}
+
+/**
+ * Fold CRLF pairs to LF, leaving every other byte (including lone CR) untouched.
+ * Returns the input buffer unchanged when it contains no CR at all.
+ */
+export function stripCRLF(buf: Buffer): Buffer {
+  if (buf.indexOf(0x0d) === -1) return buf;
+  const out = Buffer.allocUnsafe(buf.length);
+  let w = 0;
+  for (let r = 0; r < buf.length; r += 1) {
+    if (buf[r] === 0x0d && buf[r + 1] === 0x0a) continue;
+    out[w++] = buf[r];
+  }
+  return out.subarray(0, w);
+}
+
+/**
+ * Convert each LF to CRLF in a buffer that contains no CRLF pairs (e.g. the output
+ * of {@link stripCRLF}). Lone CR bytes are preserved as-is. Returns the input
+ * unchanged when it contains no LF.
+ */
+export function lfToCRLF(buf: Buffer): Buffer {
+  if (buf.indexOf(0x0a) === -1) return buf;
+  const out = Buffer.allocUnsafe(buf.length * 2);
+  let w = 0;
+  for (let i = 0; i < buf.length; i += 1) {
+    if (buf[i] === 0x0a) {
+      out[w++] = 0x0d;
+      out[w++] = 0x0a;
+    } else {
+      out[w++] = buf[i];
+    }
+  }
+  return out.subarray(0, w);
 }
 
 export interface WorkspaceChangeSet {
@@ -109,6 +179,18 @@ export async function materializeAttemptWorkspace(options: {
     // tree before the baseline fingerprint so inherited owner work is the
     // pre-provider baseline, not a later candidate delta.
     await overlayEligibleWorkingTree(options.canonicalRepoPath, workspacePath);
+    // CT-GATE-FIX-1 goal 1: `git archive` honors core.autocrlf and smudges LF blobs
+    // to CRLF, so the extracted clean-tracked files carry the wrong line endings
+    // and the captured baseline no longer equals the canonical on-disk bytes
+    // (causing a false Apply Candidate conflict). Overlay the canonical ON-DISK
+    // bytes of EVERY tracked file present in the working tree — clean AND dirty —
+    // so the baseline fingerprint is byte-identical to the working tree. Working-
+    // tree deletions of tracked files are removed so they stay deletions. All
+    // existing exclusions are preserved: sensitive paths are skipped here and
+    // rejected up front by rejectTrackedSensitivePaths, node_modules/.git is
+    // skipped, and symlinks/junctions are never followed (copyWorkspaceFile's
+    // lstat().isFile() guard).
+    await overlayTrackedWorkingTree(options.canonicalRepoPath, workspacePath);
   } catch (error) {
     await rm(workspacePath, { recursive: true, force: true });
     throw new WorkspacePreparationError(`Failed to materialize isolated workspace: ${error instanceof Error ? error.message : String(error)}`);
@@ -248,12 +330,31 @@ export async function captureWorkspaceTree(workspacePath: string): Promise<Works
       } else if (entry.isFile()) {
         const normalized = normalizeRepoRelativePath(relativePath);
         const content = await readFile(path.join(directory, entry.name));
-        files.set(normalized, { path: normalized, sha256: sha256(content), sizeBytes: content.byteLength });
+        files.set(normalized, fingerprintFile(normalized, content));
       }
     }
   }
   await walk(workspacePath, '');
   return { files };
+}
+
+/**
+ * Build a fingerprint that captures both the raw bytes (exact identity) and a
+ * line-ending-folded form. For uniform-CRLF files the normalized form is the
+ * CRLF→LF-stripped bytes; for lf/mixed/binary files it is the raw bytes (mixed and
+ * binary compare exactly, and lf has no CR to fold). This lets the workspace delta
+ * treat a baseline/final pair that differs ONLY in line endings as unchanged
+ * (CT-GATE-FIX-1 goal 3) while binary and mixed files still compare byte-exactly.
+ */
+function fingerprintFile(repoPath: string, content: Buffer): WorkspaceFileFingerprint {
+  const rawSha = sha256(content);
+  const size = content.byteLength;
+  const lineEnding = classifyLineEndings(content);
+  if (lineEnding === 'crlf') {
+    const stripped = stripCRLF(content);
+    return { path: repoPath, sha256: rawSha, sizeBytes: size, lineEnding, sha256Normalized: sha256(stripped), sizeBytesNormalized: stripped.length };
+  }
+  return { path: repoPath, sha256: rawSha, sizeBytes: size, lineEnding, sha256Normalized: rawSha, sizeBytesNormalized: size };
 }
 
 export function isExcludedWorkspacePath(relativePath: string): boolean {
@@ -295,6 +396,26 @@ export function createWorkspacePolicyBaseline(options: {
   };
 }
 
+/**
+ * Line-ending-aware fingerprint equality for workspace deltas (CT-GATE-FIX-1 goal 3).
+ * Two present files are equal when their CRLF-folded forms match, so a provider
+ * re-save that changes ONLY line endings is not a change. When either side lacks a
+ * normalized fingerprint (a schema-1 baseline written before this fix), the
+ * comparison falls back to a raw byte compare — preserving that run's behavior.
+ * Binary and mixed-ending files always compare by raw bytes (no folding benefit).
+ */
+function fingerprintsEqual(
+  a: { sha256: string; sizeBytes: number; sha256Normalized?: string; sizeBytesNormalized?: number } | null | undefined,
+  b: { sha256: string; sizeBytes: number; sha256Normalized?: string; sizeBytesNormalized?: number } | null | undefined,
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.sha256Normalized !== undefined && b.sha256Normalized !== undefined) {
+    return a.sha256Normalized === b.sha256Normalized && a.sizeBytesNormalized === b.sizeBytesNormalized;
+  }
+  return a.sha256 === b.sha256 && a.sizeBytes === b.sizeBytes;
+}
+
 function buildWorkspaceSnapshot(headSha: string, baseline: WorkspaceTree, finalTree: WorkspaceTree): RepoSnapshot {
   const entries: RepoStatusEntryFingerprint[] = [];
   const paths = new Set([...baseline.files.keys(), ...finalTree.files.keys()]);
@@ -302,7 +423,7 @@ function buildWorkspaceSnapshot(headSha: string, baseline: WorkspaceTree, finalT
     if (isExcludedWorkspacePath(repoPath)) continue;
     const before = baseline.files.get(repoPath);
     const after = finalTree.files.get(repoPath);
-    if (before?.sha256 === after?.sha256 && before?.sizeBytes === after?.sizeBytes) {
+    if (fingerprintsEqual(before ?? null, after ?? null)) {
       continue;
     }
     const kind = before && !after ? 'deleted' : before ? 'tracked' : 'untracked';
@@ -410,6 +531,49 @@ async function overlayEligibleWorkingTree(canonicalRepoPath: string, workspacePa
   }
 }
 
+/**
+ * CT-GATE-FIX-1 goal 1: overlay the canonical ON-DISK bytes of EVERY tracked file
+ * onto the committed archive, so the captured baseline is byte-identical to the
+ * working tree regardless of core.autocrlf smudge in `git archive`. Clean tracked
+ * files (which `git status` does not list, so {@link overlayEligibleWorkingTree}
+ * skips them) are the reason this pass exists. Working-tree deletions of tracked
+ * files are removed so they stay deletions. Exclusions match the eligible overlay:
+ * sensitive paths, node_modules/.git, and symlinks/junctions are never copied.
+ */
+async function overlayTrackedWorkingTree(canonicalRepoPath: string, workspacePath: string): Promise<void> {
+  const result = await execFileAsync('git', ['ls-files', '-z'], {
+    cwd: canonicalRepoPath,
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+    encoding: 'buffer',
+  });
+  for (const entry of result.stdout.toString('utf8').split('\0')) {
+    if (entry.length === 0) continue;
+    let repoPath: string;
+    try {
+      repoPath = normalizeRepoRelativePath(entry);
+    } catch {
+      continue;
+    }
+    if (isExcludedWorkspacePath(repoPath) || isSensitiveRepoPath(repoPath) || repoPath === '.git' || repoPath.startsWith('.git/')) {
+      continue;
+    }
+    const source = path.resolve(canonicalRepoPath, ...repoPath.split('/'));
+    const info = await lstat(source).catch(() => null);
+    if (!info) {
+      // Working-tree deletion of a tracked file — keep it deleted in the workspace.
+      await removeWorkspacePath(workspacePath, repoPath);
+      continue;
+    }
+    if (!info.isFile()) {
+      // Symlink or directory (CT-REL-2 goal 10): never follow. The archive entry,
+      // if any, is left for captureWorkspaceTree to skip (symlinks are not captured).
+      continue;
+    }
+    await copyWorkspaceFile(canonicalRepoPath, workspacePath, repoPath);
+  }
+}
+
 function isEligibleUntrackedSource(repoPath: string): boolean {
   if (isSensitiveRepoPath(repoPath)) {
     return false;
@@ -503,6 +667,10 @@ export interface CapturedBaselineFile {
   path: string;
   sha256: string;
   sizeBytes: number;
+  /** Optional CT-GATE-FIX-1 normalized fields; absent on schema-1 baselines written before this fix. */
+  lineEnding?: FileLineEnding;
+  sha256Normalized?: string;
+  sizeBytesNormalized?: number;
 }
 
 export interface CandidateChangeIndexEntry {
@@ -528,7 +696,14 @@ export async function writeCapturedBaseline(options: {
 }): Promise<void> {
   const destination = capturedBaselineSidecarPath(options);
   const files = [...options.tree.files.values()]
-    .map((file) => ({ path: file.path, sha256: file.sha256, sizeBytes: file.sizeBytes }))
+    .map((file) => ({
+      path: file.path,
+      sha256: file.sha256,
+      sizeBytes: file.sizeBytes,
+      ...(file.lineEnding ? { lineEnding: file.lineEnding } : {}),
+      ...(file.sha256Normalized ? { sha256Normalized: file.sha256Normalized } : {}),
+      ...(file.sizeBytesNormalized !== undefined ? { sizeBytesNormalized: file.sizeBytesNormalized } : {}),
+    }))
     .sort((left, right) => left.path.localeCompare(right.path));
   await mkdir(path.dirname(destination), { recursive: true });
   await writeFile(destination, JSON.stringify({
@@ -565,9 +740,19 @@ export async function readCapturedBaseline(options: {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
     const file = entry as Record<string, unknown>;
     if (typeof file.path !== 'string' || typeof file.sha256 !== 'string' || typeof file.sizeBytes !== 'number') return null;
+    const lineEnding = file.lineEnding;
+    const sha256Normalized = typeof file.sha256Normalized === 'string' ? file.sha256Normalized : undefined;
+    const sizeBytesNormalized = typeof file.sizeBytesNormalized === 'number' ? file.sizeBytesNormalized : undefined;
     try {
       const normalized = normalizeRepoRelativePath(file.path);
-      files.set(normalized, { path: normalized, sha256: file.sha256, sizeBytes: file.sizeBytes });
+      files.set(normalized, {
+        path: normalized,
+        sha256: file.sha256,
+        sizeBytes: file.sizeBytes,
+        ...(lineEnding === 'lf' || lineEnding === 'crlf' || lineEnding === 'mixed' || lineEnding === 'binary' ? { lineEnding } : {}),
+        ...(sha256Normalized ? { sha256Normalized } : {}),
+        ...(sizeBytesNormalized !== undefined ? { sizeBytesNormalized } : {}),
+      });
     } catch {
       return null;
     }

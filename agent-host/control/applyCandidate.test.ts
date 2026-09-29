@@ -551,3 +551,81 @@ test('malformed apply requests fail before any canonical read', async () => {
     assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.payload);
   });
 });
+
+test('apply modify preserves a uniform-LF canonical file when the candidate is CRLF (CT-GATE-FIX-1 goal 2)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, { paths: ['notes/lf.txt'], changes: [{ path: 'notes/lf.txt', kind: 'modify' }] });
+    const staged = await stage([{ path: 'notes/lf.txt', baseline: 'owner\n', candidate: 'owner\r\nprovider\r\n' }]);
+    const recorded = await apply(store, staged);
+    assert.equal(recorded.completed?.outcome, 'applied');
+    const written = await readFile(path.join(staged.canonical, 'notes/lf.txt'), 'utf8');
+    assert.equal(written, 'owner\nprovider\n', 'content change applied in the canonical LF style');
+    assert.equal(written.indexOf('\r'), -1, 'no CRLF leaked into a uniform-LF file');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('apply modify preserves a uniform-CRLF canonical file when the candidate is LF (CT-GATE-FIX-1 goal 2)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, { paths: ['notes/crlf.txt'], changes: [{ path: 'notes/crlf.txt', kind: 'modify' }] });
+    const staged = await stage([{ path: 'notes/crlf.txt', baseline: 'owner\r\n', candidate: 'owner\nprovider\n' }]);
+    const recorded = await apply(store, staged);
+    assert.equal(recorded.completed?.outcome, 'applied');
+    const written = await readFile(path.join(staged.canonical, 'notes/crlf.txt'), 'utf8');
+    assert.equal(written, 'owner\r\nprovider\r\n', 'content change applied in the canonical CRLF style');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('apply modify writes mixed-ending and binary candidates exactly (CT-GATE-FIX-1 goal 2)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, {
+      paths: ['notes/mixed.txt', 'notes/bin.dat'],
+      changes: [
+        { path: 'notes/mixed.txt', kind: 'modify' },
+        { path: 'notes/bin.dat', kind: 'modify' },
+      ],
+    });
+    const staged = await stage([
+      { path: 'notes/mixed.txt', baseline: 'a\r\nb\rc\n', candidate: 'a\r\nb\rc\nprovider\n' },
+      { path: 'notes/bin.dat', baseline: 'before\x00data\n', candidate: 'before\x00data\nmore\n' },
+    ]);
+    const recorded = await apply(store, staged);
+    assert.equal(recorded.completed?.outcome, 'applied');
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/mixed.txt'), 'utf8'), 'a\r\nb\rc\nprovider\n', 'mixed-ending candidate written exactly');
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/bin.dat'), 'utf8'), 'before\x00data\nmore\n', 'binary candidate written exactly');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('apply modify still conflicts when the owner edited the canonical file, even a line-ending-only edit (CT-GATE-FIX-1 conflict detection unchanged)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, { paths: ['notes/lf.txt'], changes: [{ path: 'notes/lf.txt', kind: 'modify' }] });
+    // baseline LF; the owner resaved canonical as CRLF (a real edit) after run start.
+    const staged = await stage([{ path: 'notes/lf.txt', baseline: 'owner\n', candidate: 'owner\nprovider\n', canonical: 'owner\r\n' }]);
+    const recorded = await apply(store, staged);
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.conflict);
+    assert.equal(recorded.failed?.result?.phase, 'Conflict detected');
+    assert.deepEqual(recorded.failed?.result?.conflictPaths, ['notes/lf.txt']);
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/lf.txt'), 'utf8'), 'owner\r\n', 'nothing written');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});
+
+test('apply verify compares against the line-ending-converted intended bytes, not the raw candidate (CT-GATE-FIX-1 goal 2)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, { paths: ['notes/lf.txt'], changes: [{ path: 'notes/lf.txt', kind: 'modify' }] });
+    const staged = await stage([{ path: 'notes/lf.txt', baseline: 'owner\n', candidate: 'owner\r\nprovider\r\n' }]);
+    // canonical LF -> intended = 'owner\nprovider\n'. Tamper to the raw CRLF candidate
+    // (exactly what would have been written without goal 2); verify must reject it.
+    const recorded = await apply(store, staged, {
+      afterWrite: async () => {
+        await writeFile(path.join(staged.canonical, 'notes/lf.txt'), 'owner\r\nprovider\r\n');
+      },
+    });
+    assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.verify);
+    assert.equal(recorded.failed?.result?.rollback, 'PASS');
+    assert.equal(await readFile(path.join(staged.canonical, 'notes/lf.txt'), 'utf8'), 'owner\n', 'rolled back to the original canonical bytes');
+    await rm(staged.root, { recursive: true, force: true });
+  });
+});

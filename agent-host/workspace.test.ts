@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -19,6 +20,19 @@ import {
 import type { OrchestrationEventRecord, TaskRecord } from './lib/orchestrationTypes.ts';
 
 const execFileAsync = promisify(execFile);
+
+function sha256(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+/** Extract `git archive <treeish>` into destDir so a test can inspect the smudged bytes. */
+async function extractArchive(repoPath: string, treeish: string, destDir: string): Promise<void> {
+  const archive = await execFileAsync('git', ['archive', '--format=tar', treeish], { cwd: repoPath, windowsHide: true, encoding: 'buffer' });
+  const tarPath = path.join(destDir, 'archive.tar');
+  await writeFile(tarPath, archive.stdout);
+  await execFileAsync(resolveWorkspaceTarExecutable(), ['-xf', tarPath, '-C', destDir], { windowsHide: true });
+  await rm(tarPath, { force: true });
+}
 
 async function git(cwd: string, args: string[]): Promise<string> {
   return (await execFileAsync('git', args, { cwd, windowsHide: true })).stdout;
@@ -344,4 +358,132 @@ test('workspace: tracked env template baseline materializes without weakening se
     (await readFile(path.join(workspace.workspacePath, '.env.local.example'), 'utf8')).replaceAll('\r\n', '\n'),
     'PLACEHOLDER=value\n',
   );
+});
+
+test('workspace: baseline matches canonical on-disk bytes under core.autocrlf=true (CT-GATE-FIX-1 goal 1)', async () => {
+  const fixture = await createRepo();
+  await git(fixture.repoPath, ['config', 'core.autocrlf', 'true']);
+  await writeFile(path.join(fixture.repoPath, 'src', 'lf.txt'), 'line one\nline two\n');
+  await git(fixture.repoPath, ['add', '.']);
+  await git(fixture.repoPath, ['commit', '-m', 'lf file']);
+  const onDisk = await readFile(path.join(fixture.repoPath, 'src', 'lf.txt'));
+  assert.equal(onDisk.indexOf(0x0d), -1, 'fixture on-disk file is LF');
+
+  // Prove the root cause: `git archive` smudges LF blobs to CRLF under autocrlf=true,
+  // so an unmodified extraction would capture the wrong bytes as the baseline.
+  const archiveDir = await mkdtemp(path.join(os.tmpdir(), 'workspace-archive-'));
+  try {
+    await extractArchive(fixture.repoPath, 'HEAD', archiveDir);
+    const archived = await readFile(path.join(archiveDir, 'src', 'lf.txt'));
+    assert.notEqual(archived.indexOf(0x0d), -1, 'git archive smudged LF to CRLF (the root cause being fixed)');
+  } finally {
+    await rm(archiveDir, { recursive: true, force: true });
+  }
+
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+  });
+  const baseline = workspace.baselineTree.files.get('src/lf.txt');
+  assert.equal(baseline?.sha256, sha256(onDisk), 'baseline equals canonical on-disk bytes, not the smudged archive');
+  assert.equal(baseline?.lineEnding, 'lf');
+  assert.equal((await readFile(path.join(workspace.workspacePath, 'src', 'lf.txt'))).equals(onDisk), true);
+});
+
+test('workspace: baseline matches on-disk bytes for CRLF and mixed-ending tracked files (CT-GATE-FIX-1 goal 1)', async () => {
+  const fixture = await createRepo();
+  await git(fixture.repoPath, ['config', 'core.autocrlf', 'true']);
+  await writeFile(path.join(fixture.repoPath, 'src', 'crlf.txt'), 'owner\r\nsecond\r\n');
+  await writeFile(path.join(fixture.repoPath, 'src', 'mixed.txt'), 'a\r\nb\rc\n');
+  await git(fixture.repoPath, ['add', '.']);
+  await git(fixture.repoPath, ['commit', '-m', 'crlf and mixed']);
+  const onDiskCrlf = await readFile(path.join(fixture.repoPath, 'src', 'crlf.txt'));
+  const onDiskMixed = await readFile(path.join(fixture.repoPath, 'src', 'mixed.txt'));
+
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+  });
+  const crlfBase = workspace.baselineTree.files.get('src/crlf.txt');
+  const mixedBase = workspace.baselineTree.files.get('src/mixed.txt');
+  assert.equal(crlfBase?.sha256, sha256(onDiskCrlf), 'CRLF baseline equals canonical on-disk bytes');
+  assert.equal(crlfBase?.lineEnding, 'crlf');
+  assert.equal(mixedBase?.sha256, sha256(onDiskMixed), 'mixed-ending baseline equals canonical on-disk bytes');
+  assert.equal(mixedBase?.lineEnding, 'mixed');
+});
+
+test('workspace: a working-tree deletion of a tracked file stays a deletion in the baseline (CT-GATE-FIX-1 goal 1)', async () => {
+  const fixture = await createRepo();
+  await rm(path.join(fixture.repoPath, 'src', 'store.ts'));
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: fixture.baselineHeadSha,
+  });
+  assert.equal(workspace.baselineTree.files.has('src/store.ts'), false);
+  await assert.rejects(readFile(path.join(workspace.workspacePath, 'src', 'store.ts')), /ENOENT/u);
+});
+
+test('workspace: a line-ending-only re-save is not a change, but a content+line-ending change is (CT-GATE-FIX-1 goal 3)', async () => {
+  const fixture = await createRepo();
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: fixture.baselineHeadSha,
+  });
+  // Provider re-saves README.md changing ONLY line endings (LF -> CRLF, identical content).
+  await writeFile(path.join(workspace.workspacePath, 'README.md'), 'COMMITTED\r\n');
+  const leOnly = await adjudicateAttemptWorkspace({
+    workspace, runId: 'run-1', task: task([]), attemptId: 'attempt-1', permissionProfile: 'task-implementer',
+  });
+  assert.equal(leOnly.changedFileCount, 0);
+  assert.equal(leOnly.policy.accepted, true);
+  assert.deepEqual(leOnly.changeSet?.changes, []);
+
+  // Provider changes content AND line endings.
+  await writeFile(path.join(workspace.workspacePath, 'README.md'), 'COMMITTED\r\nEDITED\r\n');
+  const contentAndLe = await adjudicateAttemptWorkspace({
+    workspace, runId: 'run-1', task: task(['README.md']), attemptId: 'attempt-1', permissionProfile: 'task-implementer',
+  });
+  assert.equal(contentAndLe.changedFileCount, 1);
+  assert.deepEqual(contentAndLe.changeSet?.changes.map((change) => ({ kind: change.kind, path: change.path })), [
+    { kind: 'modify', path: 'README.md' },
+  ]);
+});
+
+test('workspace: Guard does not see a line-ending-only change on an unauthorized path (CT-GATE-FIX-1 goal 3)', async () => {
+  const fixture = await createRepo();
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: fixture.baselineHeadSha,
+  });
+  // src/store.ts is NOT in the authorized paths. Re-save it changing ONLY line endings.
+  await writeFile(path.join(workspace.workspacePath, 'src', 'store.ts'), 'export const baseline = true;\r\n');
+  const result = await adjudicateAttemptWorkspace({
+    workspace, runId: 'run-1', task: task(['README.md']), attemptId: 'attempt-1', permissionProfile: 'task-implementer',
+  });
+  assert.equal(result.changedFileCount, 0, 'a line-ending-only re-save is not a change at all');
+  assert.equal(result.policy.accepted, true, 'Guard never sees the line-ending-only file');
+  assert.equal(result.policy.reasonCodes.includes('out-of-scope-write'), false);
+});
+
+test('workspace: a tracked file inside node_modules stays excluded from the baseline (CT-GATE-FIX-1 goal 1 exclusions)', async () => {
+  const fixture = await createRepo();
+  await mkdir(path.join(fixture.repoPath, 'node_modules'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'node_modules', 'tracked.js'), 'module.exports = 1;\n');
+  await git(fixture.repoPath, ['add', '.']);
+  await git(fixture.repoPath, ['commit', '-m', 'tracked inside node_modules']);
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+  });
+  assert.equal(workspace.baselineTree.files.has('node_modules/tracked.js'), false, 'node_modules stays excluded from the baseline fingerprint even when tracked');
+  assert.equal([...workspace.baselineTree.files.keys()].some((key) => key.startsWith('node_modules/')), false, 'no node_modules path leaks into the baseline');
 });

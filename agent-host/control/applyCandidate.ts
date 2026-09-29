@@ -18,13 +18,17 @@ import type { PermissionProfile } from '../providers/types.ts';
 import {
   adjudicateAttemptWorkspace,
   captureWorkspaceTree,
+  classifyLineEndings,
   describeWorkspaceDelta,
   isExcludedWorkspacePath,
+  lfToCRLF,
   readCandidateChangeIndex,
   readCapturedBaseline,
   resolveAttemptWorkspacePath,
+  stripCRLF,
   type AttemptWorkspace,
   type CandidateChangeIndexEntry,
+  type FileLineEnding,
 } from '../workspace.ts';
 import { VERIFIER_VERDICT_EVENT } from './supervisorPort.ts';
 import type { SnapshotCandidateApply, SnapshotCandidateChange } from './types.ts';
@@ -418,6 +422,15 @@ interface PlannedWrite {
   relative: string;
   absolute: string;
   candidateBytes: Buffer | null;
+  /**
+   * CT-GATE-FIX-1 goal 2: the exact bytes to write and later verify against. For a
+   * modify this is the candidate converted to the canonical file's line-ending style
+   * (uniform LF → CRLF folded to LF; uniform CRLF → LF expanded to CRLF; mixed or
+   * binary → candidate bytes unchanged). For an add it is the candidate bytes
+   * verbatim. For a delete it is null. `candidateBytes` is preserved unmodified for
+   * the applied fingerprint and rollback semantics.
+   */
+  intendedBytes: Buffer | null;
   canonicalExisted: boolean;
   canonicalBytes: Buffer | null;
 }
@@ -471,11 +484,22 @@ export async function prepareCandidateWrites(options: {
     } else if (!baselineFile || !canonical.existed || sha256(canonical.bytes ?? Buffer.alloc(0)) !== baselineFile.sha256 || (canonical.bytes?.byteLength ?? -1) !== baselineFile.sizeBytes) {
       conflicts.push(relative);
     }
+    // CT-GATE-FIX-1 goal 2: preserve the canonical file's line-ending style on
+    // write-back. A modify's candidate bytes (the provider may have written CRLF)
+    // are converted to the canonical file's style; mixed/binary canonical files and
+    // all adds are written exactly as the candidate. The conflict check above stays
+    // a raw byte compare (goal 1 makes the baseline == canonical on-disk bytes, so
+    // a real owner edit still conflicts and applies nothing).
+    let intendedBytes = candidateBytes;
+    if (change.kind === 'modify' && candidateBytes && canonical.bytes) {
+      intendedBytes = convertLineEndings(candidateBytes, classifyLineEndings(canonical.bytes));
+    }
     planned.push({
       kind: change.kind,
       relative,
       absolute,
       candidateBytes,
+      intendedBytes,
       canonicalExisted: canonical.existed,
       canonicalBytes: canonical.bytes,
     });
@@ -499,7 +523,7 @@ async function commitPreparedWrites(options: {
         await options.io.rm(entry.absolute, { force: false });
       } else {
         await options.io.mkdir(path.dirname(entry.absolute), { recursive: true });
-        await options.io.writeFile(entry.absolute, entry.candidateBytes ?? Buffer.alloc(0));
+        await options.io.writeFile(entry.absolute, entry.intendedBytes ?? Buffer.alloc(0));
       }
       touched.push(entry);
     }
@@ -512,7 +536,7 @@ async function commitPreparedWrites(options: {
         }
       } else {
         const current = await options.io.readFile(entry.absolute);
-        const expected = entry.candidateBytes ?? Buffer.alloc(0);
+        const expected = entry.intendedBytes ?? Buffer.alloc(0);
         if (!current.equals(expected)) throw new Error('verify');
       }
     }
@@ -640,6 +664,19 @@ function failureResult(ids: { runId: string; attemptId: string }, phase: ApplyPh
 
 function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+/**
+ * CT-GATE-FIX-1 goal 2: convert candidate bytes to the canonical file's
+ * line-ending style. Uniform LF → fold CRLF to LF; uniform CRLF → expand LF to
+ * CRLF. Mixed-ending and binary canonical files keep the candidate bytes exactly
+ * (a NUL in the first 8 KiB is treated as binary, matching classifyLineEndings).
+ */
+function convertLineEndings(candidate: Buffer, target: FileLineEnding): Buffer {
+  if (target === 'mixed' || target === 'binary') return candidate;
+  const stripped = stripCRLF(candidate);
+  if (target === 'lf') return stripped;
+  return lfToCRLF(stripped);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
