@@ -41,10 +41,23 @@ async function git(cwd: string, args: string[]): Promise<string> {
 async function createRepo(): Promise<{ repoPath: string; runtimePath: string; baselineHeadSha: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'orch4c3-'));
   const repoPath = path.join(root, 'repo');
+  // Dedicated empty hooks dir so any inherited/global hooks never run in the fixture.
+  const emptyHooks = path.join(root, 'empty-hooks');
   await mkdir(repoPath);
+  await mkdir(emptyHooks);
   await git(repoPath, ['init']);
+  // Pin config per-repo so the fixture is deterministic regardless of inherited
+  // system/global settings. The host has system core.autocrlf=true; under autocrlf,
+  // `git add`/`git commit` of the LF-terminated fixture files emit CRLF-conversion
+  // warnings and, on some git-for-Windows runs, return a non-zero exit despite the
+  // commit object being created — which promisified execFile rejects on. Setting
+  // core.autocrlf=false locally removes the normalization (and the warnings) at the
+  // source. user.name/user.email/core.hooksPath are pinned locally too, so the temp
+  // repo never depends on the host's global identity or hooks.
   await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
   await git(repoPath, ['config', 'user.name', 'Fixture']);
+  await git(repoPath, ['config', 'core.autocrlf', 'false']);
+  await git(repoPath, ['config', 'core.hooksPath', emptyHooks]);
   await mkdir(path.join(repoPath, 'src'), { recursive: true });
   await writeFile(path.join(repoPath, 'README.md'), 'COMMITTED\n');
   await writeFile(path.join(repoPath, 'src', 'store.ts'), 'export const baseline = true;\n');

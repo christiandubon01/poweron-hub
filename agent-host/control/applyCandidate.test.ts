@@ -17,8 +17,10 @@ import { VERIFIER_VERDICT_EVENT } from './supervisorPort.ts';
 import {
   captureWorkspaceTree,
   capturedBaselineSidecarPath,
+  classifyLineEndings,
   describeWorkspaceDelta,
   readCapturedBaseline,
+  stripCRLF,
   writeCandidateChangeIndex,
   writeCapturedBaseline,
 } from '../workspace.ts';
@@ -940,6 +942,62 @@ test('rollback does not write or delete through a parent junction swapped after 
   });
 });
 
+test('rollback does not recreate a deleted file through a parent junction swapped after the delete (CT-GATE-FIX-5 goal 2)', async () => {
+  await withStore(async (store) => {
+    // nested/first.txt is DELETED first (alphabetical), then top.txt is modified. The
+    // seam: when the delete's rm fires, the owner replaces nested/ with a junction to
+    // an outside dir AND drifts top.txt so the next per-write re-check conflicts. The
+    // conflict triggers rollback of the delete, which would restore first.txt by
+    // writing it back under nested/. The per-rollback resolveSafePath re-check must
+    // fail closed on the junction → PARTIAL with that path, and rollback must NOT
+    // recreate first.txt through the junction into the outside dir.
+    const files = [
+      { path: 'nested/first.txt', baseline: 'one\n', candidate: null },
+      { path: 'top.txt', baseline: 'base\n', candidate: 'NEXT\n' },
+    ];
+    seedRun(store, {
+      paths: files.map((file) => file.path),
+      changes: [{ path: 'nested/first.txt', kind: 'delete' }, { path: 'top.txt', kind: 'modify' }],
+    });
+    const staged = await stage(files);
+    const firstCanonical = path.join(staged.canonical, 'nested', 'first.txt');
+    const nestedCanonical = path.join(staged.canonical, 'nested');
+    const topCanonical = path.join(staged.canonical, 'top.txt');
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'apply-rollback-delete-junction-'));
+    try {
+      const io: CandidateApplyIo = {
+        readFile: (filePath) => readFile(filePath),
+        mkdir: (filePath, options) => mkdir(filePath, options),
+        rm: async (filePath, options) => {
+          await rm(filePath, options);
+          if (filePath === firstCanonical) {
+            // Owner swaps nested/ for a junction to the outside dir, and drifts top.txt
+            // so the next per-write re-check conflicts and forces rollback of the delete.
+            await rm(nestedCanonical, { recursive: true, force: true });
+            await symlink(outside, nestedCanonical, 'junction');
+            await writeFile(topCanonical, 'OWNER_TOP\n');
+          }
+        },
+        lstat: (filePath) => lstat(filePath),
+        writeFile: (filePath, data) => writeFile(filePath, data),
+      };
+      const recorded = await apply(store, staged, { io });
+      assert.equal(recorded.failed?.error, APPLY_OWNER_REASONS.partial, 'partial takes priority over the conflict');
+      assert.equal(recorded.failed?.result?.rollback, 'PARTIAL');
+      assert.deepEqual(recorded.failed?.result?.partialPaths, ['nested/first.txt']);
+      assert.deepEqual(recorded.failed?.result?.conflictPaths, ['top.txt']);
+      // Nothing was recreated through the junction: the outside dir has no first.txt.
+      await assert.rejects(readFile(path.join(outside, 'first.txt')), /ENOENT/u, 'rollback did not restore the deleted file through the junction into the outside dir');
+      // top.txt was never written by Host — the owner's drift is all that is there.
+      assert.equal(await readFile(topCanonical, 'utf8'), 'OWNER_TOP\n');
+    } finally {
+      await rm(nestedCanonical, { force: true }).catch(() => undefined);
+      await rm(staged.root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
 test('a schema-1 baseline without normalized fields falls back to a raw byte compare in the delta (CT-GATE-FIX-2)', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'apply-schema1-'));
   const baselineDir = path.join(root, 'baseline');
@@ -995,19 +1053,31 @@ test('delta: a late-NUL binary file (NUL past 8 KiB) changed only in line ending
   const candidateDir = path.join(root, 'candidate');
   await mkdir(baselineDir, { recursive: true });
   await mkdir(candidateDir, { recursive: true });
-  // Build content well past 8 KiB whose ONLY difference is line endings (CRLF vs LF).
-  // The single NUL byte sits at offset 9000 — past the old 8 KiB scan window — so the
-  // file is binary under the full-buffer classifier (CT-GATE-FIX-3 goal 2). Binary
-  // compares raw bytes, so the LE-only difference IS a change (not normalized away).
+  // Build ONE logical content with a single NUL at a logical offset past 8 KiB, then
+  // derive the LF and CRLF forms from that SAME content. This proves the only
+  // difference is line endings: stripCRLF(crlf) is byte-identical to lf, and the NUL
+  // sits at the same logical position in both. Under the old 8 KiB classifier both
+  // forms would have been 'text' (NUL past the window) and the CRLF→LF fold would
+  // have made the delta EMPTY; under the full-buffer classifier (CT-GATE-FIX-3 goal 2)
+  // both are 'binary' and compare raw bytes → the LE-only difference IS a change.
   const lines: string[] = [];
   for (let i = 0; i < 120; i += 1) lines.push('x'.repeat(80));
-  const crlf = lines.join('\r\n') + '\r\n'; // 9840 bytes
-  const lf = lines.join('\n') + '\n'; // 9722 bytes
-  const nulPos = 9000; // > 8192 in both strings
-  const crlfBin = crlf.slice(0, nulPos) + '\x00' + crlf.slice(nulPos);
-  const lfBin = lf.slice(0, nulPos) + '\x00' + lf.slice(nulPos);
-  await writeRel(baselineDir, 'latebin.dat', crlfBin);
-  await writeRel(candidateDir, 'latebin.dat', lfBin);
+  // Plant a single NUL inside line 109. In LF that is byte 109*81 + 40 = 8869; in
+  // CRLF it is 109*82 + 40 = 8978. Both are past 8192.
+  lines[109] = `${'x'.repeat(40)}\x00${'x'.repeat(40)}`;
+  const lf = lines.join('\n') + '\n';           // logical content, LF endings
+  const crlf = lines.join('\r\n') + '\r\n';     // same logical content, CRLF endings
+  const lfBuf = Buffer.from(lf, 'utf8');
+  const crlfBuf = Buffer.from(crlf, 'utf8');
+  assert.equal(classifyLineEndings(lfBuf), 'binary', 'lf form is binary (NUL anywhere in buffer)');
+  assert.equal(classifyLineEndings(crlfBuf), 'binary', 'crlf form is binary (NUL anywhere in buffer)');
+  assert.equal(
+    stripCRLF(crlfBuf).equals(lfBuf),
+    true,
+    'CRLF folded to LF is byte-identical to the LF form — the only difference is line endings',
+  );
+  await writeRel(baselineDir, 'latebin.dat', crlf);
+  await writeRel(candidateDir, 'latebin.dat', lf);
   const baseline = await captureWorkspaceTree(baselineDir);
   const candidate = await captureWorkspaceTree(candidateDir);
   const delta = describeWorkspaceDelta(HEAD, baseline, candidate);
