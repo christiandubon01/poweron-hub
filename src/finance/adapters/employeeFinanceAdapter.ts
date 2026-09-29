@@ -1,5 +1,6 @@
 import { financialReconciliationKey, usd, type FinanceAdapterScope, type FinancialAttribution, type FinancialProvenance } from '../domain'
 import type { FinancialLiabilityInput } from '../allocationTypes'
+import { parseCalendarDate } from '../recurrence'
 
 // ── Existing CASH-4A adapter types (unchanged) ────────────────────────────────
 
@@ -174,6 +175,7 @@ export type PayrollExposureDiagnosticKind =
   | 'missing_cash_wage'
   | 'incomplete_time_entry'
   | 'invalid_time_quantity'
+  | 'invalid_work_date'
   | 'invalid_open_session_time'
   | 'potential_manual_payroll_overlap'
 
@@ -190,10 +192,6 @@ export interface PayrollExposureResult {
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
-
-function isValidDate(s: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(`${s}T00:00:00Z`).getTime())
-}
 
 function parseMs(ts: string): number | null {
   const ms = new Date(ts).getTime()
@@ -222,7 +220,7 @@ function resolveCashWageMinor(emp: EmployeeRateInput, payrollMultiplier?: number
   if (cr > 0) {
     const isW2 = !emp.isOwner && emp.classification !== '1099' && emp.employee_type !== 'per_project'
     if (isW2) {
-      if (payrollMultiplier != null && Number.isFinite(payrollMultiplier) && payrollMultiplier > 0) {
+      if (payrollMultiplier != null && Number.isFinite(payrollMultiplier) && payrollMultiplier >= 1) {
         const base = cr / payrollMultiplier
         const cents = Math.round(base * 100)
         return Number.isSafeInteger(cents) && cents >= 0 ? cents : null
@@ -283,9 +281,9 @@ function estimateOpenSessionMinutes(
  * Build canonical payroll exposure liabilities for CASH-4 ingestion.
  *
  * Rules:
- * - Closed daily time_entries (status complete/corrected/auto_closed/incomplete with
- *   non-null paid_minutes) are confirmed or expected exposure.
- * - Open entries (paid_minutes null) use employee_work_sessions as provisional
+ * - Finalized daily time_entries own quantity even when invalid; valid quantities
+ *   produce confirmed or expected exposure.
+ * - Open entries use employee_work_sessions as provisional
  *   estimates when policy.includeOpenShiftEstimates is true.
  * - Sessions are NEVER added on top of a closed time_entry for the same employee+date.
  * - approval_status='rejected' entries and their sessions are excluded.
@@ -313,12 +311,8 @@ export function buildPayrollExposure(
   payrollMultiplier?: number,
 ): PayrollExposureResult {
   // ── Validate policy dates ──────────────────────────────────────────────────
-  if (!isValidDate(policy.asOfDate)) {
-    throw new Error(`PayrollExposurePolicy.asOfDate is not a valid YYYY-MM-DD date: ${policy.asOfDate}`)
-  }
-  if (!isValidDate(policy.paidThroughDate)) {
-    throw new Error(`PayrollExposurePolicy.paidThroughDate is not a valid YYYY-MM-DD date: ${policy.paidThroughDate}`)
-  }
+  parseCalendarDate(policy.asOfDate)
+  parseCalendarDate(policy.paidThroughDate)
   const asOfMs = parseMs(policy.asOfTimestamp)
   if (asOfMs === null) {
     throw new Error(`PayrollExposurePolicy.asOfTimestamp is not a valid ISO timestamp: ${policy.asOfTimestamp}`)
@@ -349,6 +343,17 @@ export function buildPayrollExposure(
   // ── Step 1: Closed time entries ────────────────────────────────────────────
   for (const entry of timeEntries) {
     if (entry.organizationId !== orgId) continue
+    try {
+      parseCalendarDate(entry.workDate)
+    } catch {
+      diagnostics.push({
+        kind: 'invalid_work_date',
+        employeeProfileId: entry.employeeProfileId,
+        sourceId: entry.id,
+        note: `time_entries.work_date is not a valid calendar date: ${entry.workDate}`,
+      })
+      continue
+    }
     if (entry.workDate <= policy.paidThroughDate) continue
     if (entry.workDate > policy.asOfDate) continue
 
@@ -357,9 +362,12 @@ export function buildPayrollExposure(
       continue
     }
 
-    if (entry.paidMinutes === null || entry.status === 'open') continue
+    if (entry.status === 'open') continue
 
-    if (!Number.isInteger(entry.paidMinutes) || entry.paidMinutes < 0) {
+    // A finalized daily entry owns the quantity even if its own data cannot be priced.
+    closedHandled.add(closedHandledKey(entry.employeeProfileId, entry.workDate))
+
+    if (entry.paidMinutes === null || !Number.isInteger(entry.paidMinutes) || entry.paidMinutes < 0) {
       diagnostics.push({
         kind: 'invalid_time_quantity',
         employeeProfileId: entry.employeeProfileId,
@@ -407,7 +415,7 @@ export function buildPayrollExposure(
         kind: 'missing_cash_wage',
         employeeProfileId: entry.employeeProfileId,
         sourceId: entry.id,
-        note: `Cannot resolve base cash wage for backupEmployeeId ${backupEmployeeId}. hourly_rate and costRate are both absent or zero. billRate and opCost are never used as substitutes.`,
+        note: `Cannot resolve base cash wage for backupEmployeeId ${backupEmployeeId}. A W-2 costRate requires a valid payrollMultiplier >= 1. billRate and opCost are never used as substitutes.`,
       })
       continue
     }
@@ -456,14 +464,23 @@ export function buildPayrollExposure(
       attribution: { employeeId: backupEmployeeId, projectId: null },
       label: `Payroll: ${backupEmployeeId} (${entry.workDate})`,
     })
-
-    closedHandled.add(closedHandledKey(entry.employeeProfileId, entry.workDate))
   }
 
   // ── Step 2: Open session estimates ────────────────────────────────────────
   if (policy.includeOpenShiftEstimates) {
     for (const session of sessions) {
       if (session.organizationId !== orgId) continue
+      try {
+        parseCalendarDate(session.workDate)
+      } catch {
+        diagnostics.push({
+          kind: 'invalid_work_date',
+          employeeProfileId: session.employeeProfileId,
+          sourceId: session.id,
+          note: `employee_work_sessions.work_date is not a valid calendar date: ${session.workDate}`,
+        })
+        continue
+      }
       if (session.workDate <= policy.paidThroughDate) continue
       if (session.workDate > policy.asOfDate) continue
 

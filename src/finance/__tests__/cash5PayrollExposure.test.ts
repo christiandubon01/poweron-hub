@@ -218,6 +218,73 @@ describe('CASH-5B payroll exposure', () => {
     expect(result.liabilities[0].provenance.source.kind).toBe('employee_time_entry')
   })
 
+  it('finalized entry with invalid paidMinutes suppresses a valid same-day session', () => {
+    const result = buildPayrollExposure(
+      makePolicy({ includeOpenShiftEstimates: true }),
+      [makeEntry({ workDate: '2026-09-29', paidMinutes: -1 })],
+      [makeSession()], defaultBridges, defaultEmployees, [], [],
+    )
+    expect(result.liabilities).toHaveLength(0)
+    expect(result.diagnostics.map(d => d.kind)).toEqual(['invalid_time_quantity'])
+    expect(result.diagnostics[0].sourceId).toBe('te-1')
+  })
+
+  it('finalized entry with null paidMinutes still owns the day', () => {
+    const result = buildPayrollExposure(
+      makePolicy({ includeOpenShiftEstimates: true }),
+      [makeEntry({ workDate: '2026-09-29', paidMinutes: null, status: 'incomplete' })],
+      [makeSession()], defaultBridges, defaultEmployees, [], [],
+    )
+    expect(result.liabilities).toHaveLength(0)
+    expect(result.diagnostics.map(d => d.kind)).toEqual(['invalid_time_quantity'])
+  })
+
+  it('an open entry still allows a provisional same-day session', () => {
+    const result = buildPayrollExposure(
+      makePolicy({ includeOpenShiftEstimates: true }),
+      [makeEntry({ workDate: '2026-09-29', paidMinutes: null, status: 'open' })],
+      [makeSession()], defaultBridges, defaultEmployees, [], [],
+    )
+    expect(result.liabilities).toHaveLength(1)
+    expect(result.liabilities[0].provenance.source.kind).toBe('employee_work_session')
+  })
+
+  it('a rejected daily entry suppresses its same-day session', () => {
+    const result = buildPayrollExposure(
+      makePolicy({ includeOpenShiftEstimates: true }),
+      [makeEntry({ workDate: '2026-09-29', approvalStatus: 'rejected' })],
+      [makeSession()], defaultBridges, defaultEmployees, [], [],
+    )
+    expect(result.liabilities).toHaveLength(0)
+  })
+
+  it('finalized entry with missing cash wage suppresses a valid same-day session', () => {
+    const result = buildPayrollExposure(
+      makePolicy({ includeOpenShiftEstimates: true }),
+      [makeEntry({ workDate: '2026-09-29' })],
+      [makeSession()], defaultBridges,
+      [makeEmployee(EMP_1, { hourly_rate: null, costRate: null })], [], [],
+    )
+    expect(result.liabilities).toHaveLength(0)
+    expect(result.diagnostics.map(d => d.kind)).toEqual(['missing_cash_wage'])
+    expect(result.diagnostics[0].sourceId).toBe('te-1')
+  })
+
+  it('finalized entry with a missing bridge or employee suppresses same-day sessions', () => {
+    for (const [bridges, employees, kind] of [
+      [[], defaultEmployees, 'missing_employee_bridge'],
+      [defaultBridges, [], 'missing_employee_record'],
+    ] as const) {
+      const result = buildPayrollExposure(
+        makePolicy({ includeOpenShiftEstimates: true }),
+        [makeEntry({ workDate: '2026-09-29' })],
+        [makeSession()], bridges, employees, [], [],
+      )
+      expect(result.liabilities).toHaveLength(0)
+      expect(result.diagnostics.map(d => d.kind)).toEqual([kind])
+    }
+  })
+
   // ── Date boundary filtering ────────────────────────────────────────────────
 
   it('11: workDate <= paidThroughDate is excluded (paidThroughDate is inclusive)', () => {
@@ -239,6 +306,32 @@ describe('CASH-5B payroll exposure', () => {
     expect(result.liabilities).toHaveLength(0)
   })
 
+  it('rejects impossible policy calendar dates', () => {
+    expect(() => buildPayrollExposure(makePolicy({ asOfDate: '2026-02-31' }), [], [], [], [], [], []))
+      .toThrow(/Invalid calendar date: 2026-02-31/)
+    expect(() => buildPayrollExposure(makePolicy({ paidThroughDate: '2026-02-31' }), [], [], [], [], [], []))
+      .toThrow(/Invalid calendar date: 2026-02-31/)
+  })
+
+  it('invalid time-entry workDate produces a diagnostic and no liability', () => {
+    const result = buildPayrollExposure(
+      makePolicy(), [makeEntry({ workDate: '2026-09-31' })], [], defaultBridges, defaultEmployees, [], [],
+    )
+    expect(result.liabilities).toHaveLength(0)
+    expect(result.diagnostics.map(d => d.kind)).toEqual(['invalid_work_date'])
+    expect(result.diagnostics[0].sourceId).toBe('te-1')
+  })
+
+  it('invalid session workDate produces a diagnostic and no liability', () => {
+    const result = buildPayrollExposure(
+      makePolicy({ includeOpenShiftEstimates: true }),
+      [], [makeSession({ workDate: '2026-09-31' })], defaultBridges, defaultEmployees, [], [],
+    )
+    expect(result.liabilities).toHaveLength(0)
+    expect(result.diagnostics.map(d => d.kind)).toEqual(['invalid_work_date'])
+    expect(result.diagnostics[0].sourceId).toBe('sess-1')
+  })
+
   // ── Wage resolution ────────────────────────────────────────────────────────
 
   it('14: hourly_rate is used as the base cash wage (not costRate or bill rate)', () => {
@@ -257,6 +350,30 @@ describe('CASH-5B payroll exposure', () => {
     const result = buildPayrollExposure(makePolicy(), [makeEntry()], [], defaultBridges, [emp], [], [], 1.25)
     expect(result.liabilities).toHaveLength(1)
     expect(result.liabilities[0].amountMinor).toBe(19_200)
+  })
+
+  it('W-2 stale costRate does not decode with a multiplier below one', () => {
+    const emp = makeEmployee(EMP_1, { hourly_rate: null, costRate: 30, classification: 'W-2' })
+    const result = buildPayrollExposure(makePolicy(), [makeEntry()], [], defaultBridges, [emp], [], [], 0.8)
+    expect(result.liabilities).toHaveLength(0)
+    expect(result.diagnostics.map(d => d.kind)).toEqual(['missing_cash_wage'])
+  })
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'W-2 stale costRate does not decode with invalid multiplier %s',
+    (multiplier) => {
+      const emp = makeEmployee(EMP_1, { hourly_rate: null, costRate: 30, classification: 'W-2' })
+      const result = buildPayrollExposure(makePolicy(), [makeEntry()], [], defaultBridges, [emp], [], [], multiplier)
+      expect(result.liabilities).toHaveLength(0)
+      expect(result.diagnostics.map(d => d.kind)).toEqual(['missing_cash_wage'])
+    },
+  )
+
+  it('W-2 stale costRate decodes with a multiplier of one', () => {
+    const emp = makeEmployee(EMP_1, { hourly_rate: null, costRate: 30, classification: 'W-2' })
+    const result = buildPayrollExposure(makePolicy(), [makeEntry()], [], defaultBridges, [emp], [], [], 1.0)
+    expect(result.liabilities).toHaveLength(1)
+    expect(result.liabilities[0].amountMinor).toBe(24_000)
   })
 
   it('16: W-2 stale costRate without payrollMultiplier produces missing_cash_wage (no billRate fallback)', () => {
@@ -375,6 +492,26 @@ describe('CASH-5B payroll exposure', () => {
     const { liabilities } = buildPayrollExposure(makePolicy(), [makeEntry()], [], defaultBridges, defaultEmployees, [], [])
     const bad: FinancialLiabilityInput = { ...liabilities[0], amountMinor: -100 }
     expect(() => computeCashAllocation([], [], [], [], [], baseCash4Policy, [bad])).toThrow(/invalid amountMinor/)
+  })
+
+  it('rejects derived liability with cross-org canonical provenance', () => {
+    const { liabilities } = buildPayrollExposure(makePolicy(), [makeEntry()], [], defaultBridges, defaultEmployees, [], [])
+    const bad: FinancialLiabilityInput = {
+      ...liabilities[0],
+      provenance: {
+        ...liabilities[0].provenance,
+        source: { ...liabilities[0].provenance.source, organizationId: OTHER_ORG },
+      },
+    }
+    expect(() => computeCashAllocation([], [], [], [], [], baseCash4Policy, [bad]))
+      .toThrow(/provenance organizationId/)
+  })
+
+  it('rejects derived liability with an impossible dueDate', () => {
+    const { liabilities } = buildPayrollExposure(makePolicy(), [makeEntry()], [], defaultBridges, defaultEmployees, [], [])
+    const bad: FinancialLiabilityInput = { ...liabilities[0], dueDate: '2026-02-31' }
+    expect(() => computeCashAllocation([], [], [], [], [], baseCash4Policy, [bad]))
+      .toThrow(/Invalid calendar date: 2026-02-31/)
   })
 
   it('28: no source is counted once as time_entry and again as session for the same finalized day', () => {

@@ -198,6 +198,12 @@ export function computeCashAllocation(
   // as a commitment or obligation occurrence.
   const orgLiabilities = derivedLiabilities.filter((l) => l.organizationId === orgId)
   for (const liability of orgLiabilities) {
+    if (liability.provenance.source.organizationId !== liability.organizationId) {
+      throw new Error(
+        `FinancialLiabilityInput ${liability.provenance.source.recordId} has provenance organizationId that does not match liability organizationId`,
+      )
+    }
+    parseCalendarDate(liability.dueDate)
     if (liability.provenance.reconciliationState === 'reconciled') continue
     if (liability.requirement !== 'required' && !policy.includeOptionalObligations) continue
     if (liability.dueDate > horizonEnd) continue
