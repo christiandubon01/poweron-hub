@@ -99,6 +99,23 @@ describe('provider execution reliability view', () => {
     expect(view?.tasks[0].attempt.includes('%')).toBe(false)
   })
 
+  it('uses singular "file" when exactly 1 file changed, plural otherwise', () => {
+    const singular = mapRunSnapshotRow(row('failed', {
+      terminalErrorCode: 'PROVIDER_ERROR',
+      elapsedMs: 1_000,
+      changedFileCount: 1,
+    }), Date.parse(STARTED) + TWELVE_MINUTES)
+    expect(singular?.tasks[0].detail).toContain('1 file changed in isolated workspace — not verified, not applied')
+    expect(singular?.tasks[0].detail).not.toContain('1 files changed')
+
+    const plural = mapRunSnapshotRow(row('failed', {
+      terminalErrorCode: 'PROVIDER_ERROR',
+      elapsedMs: 1_000,
+      changedFileCount: 2,
+    }), Date.parse(STARTED) + TWELVE_MINUTES)
+    expect(plural?.tasks[0].detail).toContain('2 files changed in isolated workspace — not verified, not applied')
+  })
+
   it('never renders stored provider text for an unknown failure code', () => {
     const view = mapRunSnapshotRow(row('failed', {
       terminalErrorCode: 'NEW_PROVIDER_CODE',

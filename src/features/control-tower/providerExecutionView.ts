@@ -49,7 +49,7 @@ export function ownerTerminalReason(errorCode: string | null | undefined, _store
   const details: string[] = [reason]
   if (typeof evidence.elapsedMs === 'number' && Number.isFinite(evidence.elapsedMs) && evidence.elapsedMs >= 0) details.push(`Elapsed: ${formatOwnerDuration(evidence.elapsedMs)}`)
   if (typeof evidence.lastActivityAt === 'string' && Number.isFinite(Date.parse(evidence.lastActivityAt))) details.push(`Last activity: ${evidence.lastActivityAt}`)
-  if (typeof evidence.changedFileCount === 'number' && Number.isSafeInteger(evidence.changedFileCount) && evidence.changedFileCount >= 0) details.push(`${evidence.changedFileCount} files changed in isolated workspace — not verified, not applied`)
+  if (typeof evidence.changedFileCount === 'number' && Number.isSafeInteger(evidence.changedFileCount) && evidence.changedFileCount >= 0) details.push(`${evidence.changedFileCount} ${evidence.changedFileCount === 1 ? 'file' : 'files'} changed in isolated workspace — not verified, not applied`)
   return details.join(' · ')
 }
 
