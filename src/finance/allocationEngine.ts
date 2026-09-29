@@ -120,6 +120,10 @@ export function computeCashAllocation(
   const labeledEvents: LabeledEvent[] = []
 
   for (const obligation of orgObligations) {
+    // Skip obligations that haven't started yet relative to the horizon window.
+    // generateRecurrenceDates throws when rangeStart > rangeEnd, so guard here.
+    if (obligation.recurrence.startDate > horizonEnd) continue
+
     // Generate from the obligation's own startDate through the horizon end.
     // No arbitrary historical cutoff: an old overdue obligation whose occurrences
     // remain scheduled/unreconciled must still appear as protected.
@@ -167,6 +171,11 @@ export function computeCashAllocation(
     if (seen.has(key)) {
       suppressedDuplicateSourceKeys.push(key)
       continue
+    }
+    if (!Number.isSafeInteger(event.amount.minor) || event.amount.minor < 0) {
+      throw new Error(
+        `PlannedCashOutflowEvent ${event.sourceRecordId} has invalid amount ${event.amount.minor}; must be a non-negative safe integer`,
+      )
     }
     seen.add(key)
     requirements.push({

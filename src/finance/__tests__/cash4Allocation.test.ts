@@ -508,6 +508,56 @@ describe('CASH-4 Protected Cash / Truly Free Cash allocation engine', () => {
     })
   })
 
+  // ── Issue 1 regression ───────────────────────────────────────────────────────
+  it('recurring obligation whose startDate is beyond the horizon does not crash', () => {
+    // startDate '2026-12-01' > horizonEnd '2026-10-13' (asOfDate + 14 days)
+    const futureOb = obligation({
+      id: 'ob-future',
+      amount: usd(20_000),
+      recurrence: {
+        kind: 'monthly',
+        interval: 1,
+        anchorDate: '2026-12-01',
+        startDate: '2026-12-01',
+        endDate: null,
+      },
+    })
+    let snap: ReturnType<typeof computeCashAllocation> | undefined
+    expect(() => {
+      snap = computeCashAllocation(
+        BASE_ACCOUNTS, BASE_TRANSACTIONS, [futureOb], [], [],
+        policy({ protectionHorizonDays: 14 }),
+      )
+    }).not.toThrow()
+    expect(snap!.allocationResult.requirements).toHaveLength(0)
+    expect(snap!.trulyFreeCashMinor).toBe(1_000_000)
+  })
+
+  // ── Issue 2 regression ───────────────────────────────────────────────────────
+  it('commitment with negative amount rejects', () => {
+    const bad = commitment({ id: 'c-neg', amount: { currency: 'USD', minor: -5_000 } })
+    expect(() =>
+      computeCashAllocation(BASE_ACCOUNTS, BASE_TRANSACTIONS, [], [], [bad], policy()),
+    ).toThrow(/invalid amount/)
+  })
+
+  it('recurring obligation with negative amount rejects', () => {
+    const badOb = obligation({
+      id: 'ob-neg',
+      amount: { currency: 'USD', minor: -10_000 },
+      recurrence: {
+        kind: 'monthly',
+        interval: 1,
+        anchorDate: '2026-09-29',
+        startDate: '2026-09-29',
+        endDate: null,
+      },
+    })
+    expect(() =>
+      computeCashAllocation(BASE_ACCOUNTS, BASE_TRANSACTIONS, [badOb], [], [], policy()),
+    ).toThrow(/invalid amount/)
+  })
+
   // ── Test 20 ─────────────────────────────────────────────────────────────────
   it('all returned money values are integer cents', () => {
     const snap = computeCashAllocation(
