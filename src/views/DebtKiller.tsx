@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useDemoMode } from '@/store/demoStore'
 import { useCashOsSnapshot } from '@/hooks/useCashOsSnapshot'
+import type { CashOsSourceBundle } from '@/services/cashOsReadService'
 import CashOsOutlook from '@/components/v15r/cash-os/CashOsOutlook'
 import CashOsSetupPanel from '@/components/v15r/cash-os/CashOsSetupPanel'
 import {
@@ -10,22 +11,219 @@ import {
   CashTransactionsView,
   CashObligationsView,
 } from '@/components/v15r/cash-os/CashOsViews'
-import { CashCard, cashDate } from '@/components/v15r/cash-os/cashOsUi'
+import { CashCard, CashEmpty, cashDate, money } from '@/components/v15r/cash-os/cashOsUi'
 import DebtKillerLegacy from './DebtKillerLegacy'
 
 const tabs = ['Outlook', 'Calendar', 'Projects', 'Payroll', 'Transactions', 'Obligations', 'Debt Plan'] as const
 type DebtKillerTab = typeof tabs[number]
 
+/** Sum of posted cash account balances from raw sources — no allocation engine. */
+function rawTotalCash(sources: CashOsSourceBundle | null): number | null {
+  if (!sources) return null
+  const included = new Set(
+    sources.accounts
+      .filter(a => a.status === 'active' && a.account_class === 'asset' && a.include_in_cash)
+      .map(a => a.id),
+  )
+  if (included.size === 0) return null
+  const posted = sources.transactions.filter(tx => tx.status === 'posted' && included.has(tx.account_id))
+  if (posted.length === 0) return null
+  return posted.reduce((sum, tx) => sum + tx.amount_minor, 0)
+}
+
+function NeedsAssumptions({ label }: { label: string }) {
+  return (
+    <div>
+      <span className="block text-[10px] font-bold tracking-[0.16em] text-[var(--text-secondary)]">{label}</span>
+      <span className="mt-2 block text-sm text-[var(--text-muted)]">Needs assumptions</span>
+    </div>
+  )
+}
+
+function PreSetupOutlook({ sources }: { sources: CashOsSourceBundle | null }) {
+  const total = rawTotalCash(sources)
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <div className="min-w-0 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4">
+          <span className="block text-[10px] font-bold tracking-[0.16em] text-[var(--text-secondary)]">TOTAL CASH</span>
+          <strong className="mt-2 block break-words font-mono text-xl sm:text-2xl">
+            {total !== null ? money(total) : 'Unknown'}
+          </strong>
+          {total === null && (
+            <span className="mt-1 block text-[10px] text-[var(--text-muted)]">No included cash accounts found</span>
+          )}
+        </div>
+        <NeedsAssumptions label="PROTECTED" />
+        <NeedsAssumptions label="TRULY FREE" />
+        <NeedsAssumptions label="14-DAY LOW" />
+        <NeedsAssumptions label="DAYS COVERED" />
+      </div>
+      <CashCard>
+        <p className="text-sm text-[var(--text-secondary)]">
+          Cash trajectory and Truly Free cash require session assumptions to calculate safely.
+        </p>
+      </CashCard>
+    </div>
+  )
+}
+
+function PreSetupTransactions({ sources }: { sources: CashOsSourceBundle | null }) {
+  if (!sources) {
+    return <CashCard><p className="text-sm text-[var(--text-secondary)]">Transactions loading…</p></CashCard>
+  }
+  const accounts = sources.accounts.filter(a => a.status === 'active')
+  const transactions = [...sources.transactions]
+    .sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id))
+    .slice(0, 40)
+  return (
+    <div className="space-y-5">
+      <CashCard title="Financial accounts">
+        {accounts.length ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {accounts.map(account => (
+              <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
+                <strong>{account.display_name}</strong>
+                <span className="block text-xs text-[var(--text-muted)]">
+                  {account.account_type} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
+                </span>
+                <span className="mt-2 block text-xs text-[var(--text-muted)]">Balance — Needs assumptions</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <CashEmpty>Account setup required.</CashEmpty>
+        )}
+      </CashCard>
+      <CashCard title="Recent ledger transactions">
+        {transactions.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[550px] text-left text-sm">
+              <thead className="text-xs uppercase text-[var(--text-muted)]">
+                <tr><th className="py-2">Date</th><th>Description</th><th>Category / project</th><th className="text-right">Amount</th></tr>
+              </thead>
+              <tbody>
+                {transactions.map(tx => (
+                  <tr key={tx.id} className="border-t border-[var(--border-primary)]">
+                    <td className="py-2">{cashDate(tx.transaction_date)}</td>
+                    <td>{tx.description || tx.transaction_kind}<span className="block text-xs text-[var(--text-muted)]">{tx.status}</span></td>
+                    <td>{tx.category ?? '—'}{tx.project_id ? ` · ${tx.project_id}` : ''}</td>
+                    <td className="text-right font-mono">{money(tx.amount_minor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <CashEmpty>No ledger transactions were loaded.</CashEmpty>
+        )}
+      </CashCard>
+    </div>
+  )
+}
+
+function PreSetupObligations({ sources }: { sources: CashOsSourceBundle | null }) {
+  if (!sources) {
+    return <CashCard><p className="text-sm text-[var(--text-secondary)]">Obligations loading…</p></CashCard>
+  }
+  return (
+    <div className="grid gap-5 xl:grid-cols-2">
+      <CashCard title="Recurring obligations">
+        {sources.obligations.length ? (
+          <div className="space-y-3">
+            {sources.obligations.map(row => (
+              <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
+                <div className="flex justify-between gap-3">
+                  <strong>{row.name}</strong><span className="font-mono">{money(row.amount.minor)}</span>
+                </div>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                  {row.recurrence.kind.replace(/_/g, ' ')} from {cashDate(row.recurrence.startDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : <CashEmpty>No recurring obligations were loaded.</CashEmpty>}
+      </CashCard>
+      <CashCard title="Cash commitments">
+        {sources.commitments.length ? (
+          <div className="space-y-3">
+            {sources.commitments.map(row => (
+              <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
+                <div className="flex justify-between gap-3">
+                  <strong>{row.title}</strong><span className="font-mono">{money(row.amount.minor)}</span>
+                </div>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                  {cashDate(row.expectedDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : <CashEmpty>No cash commitments were loaded.</CashEmpty>}
+      </CashCard>
+    </div>
+  )
+}
+
 export default function DebtKiller() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [tab, setTab] = useState<DebtKillerTab>('Outlook')
+  const [sheetOpen, setSheetOpen] = useState(false)
   const cash = useCashOsSnapshot(!hasHydrated || isDemoMode)
   const scope = cash.scope
-  const showSetup = cash.editing || cash.status === 'setup_required'
   const authoritative = cash.status === 'ready' && !!cash.snapshot && !cash.editing
+
+  function openSheet() {
+    cash.setEditing(true)
+    setSheetOpen(true)
+  }
+
+  function closeSheet() {
+    cash.setEditing(false)
+    setSheetOpen(false)
+  }
+
+  function handleConfirmSetup(setup: Parameters<typeof cash.confirmSetup>[0]) {
+    cash.confirmSetup(setup)
+    setSheetOpen(false)
+  }
+
+  const preSetup = cash.status === 'setup_required' && cash.sources !== null
 
   return (
     <div className="min-h-screen space-y-5 bg-[var(--bg-secondary)] p-3 text-[var(--text-primary)] sm:p-6">
+
+      {/* Assumptions sheet modal */}
+      {sheetOpen && scope && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Session assumptions"
+          className="fixed inset-0 z-50 flex items-start justify-end bg-black/60 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) closeSheet() }}
+        >
+          <div className="relative flex h-full w-full max-w-2xl flex-col overflow-y-auto bg-[var(--bg-secondary)] p-4 sm:p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="font-bold text-[var(--text-primary)]">Session Assumptions</h2>
+              <button
+                aria-label="Close assumptions"
+                onClick={closeSheet}
+                className="rounded-lg border border-[var(--border-primary)] px-3 py-2 text-sm hover:bg-white/5"
+              >
+                ✕ Close
+              </button>
+            </div>
+            <CashOsSetupPanel
+              key={`${scope.context.organizationId}:${cash.editing}`}
+              organizationId={scope.context.organizationId}
+              storedTimezone={scope.storedTimezone}
+              existing={cash.setup}
+              reason={cash.reason}
+              onConfirm={handleConfirmSetup}
+            />
+          </div>
+        </div>
+      )}
+
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-orange-400">Power On Hub / Debt Killer</p>
@@ -44,7 +242,7 @@ export default function DebtKiller() {
           )}
           {scope && !isDemoMode && (
             <button
-              onClick={setEditingAndOutlook}
+              onClick={openSheet}
               className="rounded-lg border border-[var(--border-primary)] px-3 py-2 hover:bg-white/5"
             >
               {cash.setup ? 'Edit assumptions' : 'Session assumptions'}
@@ -94,6 +292,21 @@ export default function DebtKiller() {
         ))}
       </nav>
 
+      {/* Non-blocking assumptions notice */}
+      {cash.status === 'setup_required' && !isDemoMode && tab !== 'Debt Plan' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
+          <span className="text-amber-200">Some calculations need Session Assumptions.</span>
+          {scope && (
+            <button
+              onClick={openSheet}
+              className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs text-amber-300 hover:bg-amber-500/10"
+            >
+              {cash.setup ? 'Edit assumptions' : 'Set up now'}
+            </button>
+          )}
+        </div>
+      )}
+
       {tab === 'Debt Plan' ? (
         <DebtKillerLegacy />
       ) : !hasHydrated ? (
@@ -104,15 +317,6 @@ export default function DebtKiller() {
             This demo has no isolated Cash OS ledger and payroll source bundle. Debt Plan remains available.
           </p>
         </CashCard>
-      ) : showSetup && scope ? (
-        <CashOsSetupPanel
-          key={`${scope.context.organizationId}:${cash.editing}`}
-          organizationId={scope.context.organizationId}
-          storedTimezone={scope.storedTimezone}
-          existing={cash.setup}
-          reason={cash.reason}
-          onConfirm={cash.confirmSetup}
-        />
       ) : cash.status === 'loading' ? (
         <CashCard>
           <div className="animate-pulse space-y-3">
@@ -137,6 +341,35 @@ export default function DebtKiller() {
             No posted transactions were loaded for an included cash account. Record or verify an opening balance before Outlook publishes cash totals.
           </p>
         </CashCard>
+      ) : preSetup ? (
+        /* Pre-setup: sources are available; render what we can without calculations */
+        <>
+          {tab === 'Outlook' && <PreSetupOutlook sources={cash.sources} />}
+          {tab === 'Calendar' && (
+            <CashCard title="Cash Calendar">
+              <p className="text-sm text-[var(--text-secondary)]">
+                Projected events and unresolved payment markers need session assumptions to calculate safely.
+              </p>
+            </CashCard>
+          )}
+          {tab === 'Projects' && (
+            <CashCard title="Collection Clock">
+              <p className="text-sm text-[var(--text-secondary)]">
+                Collection timing and project funding coverage need session assumptions.
+              </p>
+            </CashCard>
+          )}
+          {tab === 'Payroll' && (
+            <CashCard title="Payroll exposure">
+              <p className="text-sm text-amber-200">Payroll exposure needs session assumptions.</p>
+              <p className="mt-3 text-xs text-[var(--text-secondary)]">
+                Set your wages paid-through date in Session Assumptions to calculate open payroll liabilities.
+              </p>
+            </CashCard>
+          )}
+          {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} />}
+          {tab === 'Obligations' && <PreSetupObligations sources={cash.sources} />}
+        </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
         <CashCard title="Partial / Needs attention">
           <p className="text-sm text-amber-300">
@@ -201,9 +434,4 @@ export default function DebtKiller() {
       )}
     </div>
   )
-
-  function setEditingAndOutlook() {
-    setTab('Outlook')
-    cash.setEditing(true)
-  }
 }
