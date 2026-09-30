@@ -51,7 +51,8 @@ export interface ProjectionProtectedClaim {
 
 export type ProjectionMarkerReason =
   | 'unknown_amount' | 'unknown_date' | 'unknown_payment_date'
-  | 'overdue_unsettled' | 'confidence_excluded' | 'source_overlap'
+  | 'overdue_unsettled' | 'collection_linkage_unknown'
+  | 'confidence_excluded' | 'source_overlap'
 
 export interface ProjectionMarker {
   sourceKey: string

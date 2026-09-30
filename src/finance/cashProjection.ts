@@ -283,9 +283,10 @@ export function computeCashProjection(input: CashProjectionInput): CashProjectio
       const common = { sourceKey: key, organizationId: org, date: signal.expectedDate,
         amountMinor: signal.amountMinor, label: `${project.projectName}: ${signal.phase ?? 'Collection'}`,
         category: 'project_collection', attribution: { projectId: project.projectId, category: 'project_collection' } }
-      if (signal.amountMinor === null) markers.push({ ...common, reason: 'unknown_amount' })
+      if (signal.expectedDate !== null && signal.expectedDate <= policy.asOfDate)
+        markers.push({ ...common, reason: signal.amountMinor === null ? 'collection_linkage_unknown' : 'overdue_unsettled' })
+      else if (signal.amountMinor === null) markers.push({ ...common, reason: 'unknown_amount' })
       else if (signal.expectedDate === null) markers.push({ ...common, reason: 'unknown_date' })
-      else if (signal.expectedDate <= policy.asOfDate) markers.push({ ...common, reason: 'overdue_unsettled' })
       else if (!signal.confidence || !admitsInflow(policy.confidenceMode, signal.confidence)) {
         markers.push({ ...common, reason: 'confidence_excluded' })
       } else if (signal.expectedDate <= internalEnd) {
