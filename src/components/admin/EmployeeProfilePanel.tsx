@@ -257,7 +257,7 @@ function PortalModal({
 
         <div className="space-y-3">
           <Row label="Email" value={member.email || '—'} />
-          <Row label="Portal Role" value={member.portalRole || '—'} />
+          <Row label="Portal Role" value={formatPortalRole(member.portalRole, member.hasPortal)} />
           {member.employeeRole && (
             <Row label="Trade Role" value={TRADE_ROLE_LABELS[member.employeeRole] || member.employeeRole} />
           )}
@@ -308,6 +308,10 @@ function Row({ label, value, dim }: { label: string; value: string; dim?: boolea
       </span>
     </div>
   )
+}
+
+export function formatPortalRole(portalRole: string | null, hasPortal: boolean): string {
+  return portalRole || (hasPortal ? 'Employee' : '—')
 }
 
 function formatEmploymentType(type: string | null): string {
@@ -848,7 +852,7 @@ export default function EmployeeProfilePanel({
           </div>
           <div className="space-y-2.5">
             <Row label="Email" value={member.email || '—'} />
-            <Row label="Portal Role" value={member.portalRole || '—'} />
+            <Row label="Portal Role" value={formatPortalRole(member.portalRole, member.hasPortal)} />
             {member.employeeRole && (
               <Row label="Trade Role" value={TRADE_ROLE_LABELS[member.employeeRole] || member.employeeRole} />
             )}
