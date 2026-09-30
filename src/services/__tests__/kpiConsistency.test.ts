@@ -584,7 +584,7 @@ describe('FORENSIC-KPI-2A historical project cash is lifecycle-independent', () 
 
   it('keeps the Money Cash Received pill on the canonical collected authority', () => {
     const moneySrc = readFileSync(
-      join(process.cwd(), 'src/components/v15r/V15rMoneyPerformancePanel.tsx'),
+      join(process.cwd(), 'src/components/v15r/V15rMoneyPanel.tsx'),
       'utf8',
     )
 
