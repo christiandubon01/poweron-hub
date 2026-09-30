@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CashOsSnapshot } from '@/finance/cashOsSnapshot'
 import type { CashProjectionConfidenceMode, CashProjectionHorizon, DailyCashProjection } from '@/finance/cashProjectionTypes'
 import type { CollectionClockEntry } from '@/finance/projectCollectionClockTypes'
-import type { CashOsBucket, CashOsEnvelope, CashOsEnvelopeBalance } from '@/finance/cashOsAllocationTypes'
-import { listCashOsBuckets, listCashOsEnvelopes, readEnvelopeBalances } from '@/services/cashOsAllocationService'
+import CashMoneyPlan from './CashMoneyPlan'
 import CashTrajectoryChart from './CashTrajectoryChart'
 import { CashCard, CashEmpty, cashDate, money } from './cashOsUi'
 
@@ -66,60 +65,6 @@ export function CashUpcomingEvents({ snapshot }: { snapshot: CashOsSnapshot }) {
   </CashCard>
 }
 
-function CashMoneyPlan() {
-  const [buckets, setBuckets] = useState<CashOsBucket[]>([])
-  const [envelopes, setEnvelopes] = useState<CashOsEnvelope[]>([])
-  const [balances, setBalances] = useState<CashOsEnvelopeBalance[]>([])
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    Promise.all([listCashOsBuckets(), listCashOsEnvelopes(), readEnvelopeBalances()])
-      .then(([b, e, bal]) => { setBuckets(b); setEnvelopes(e); setBalances(bal) })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
-  if (loading) return null
-  const balanceMap = new Map(balances.map(b => [b.envelopeId, b]))
-  const unallocatedTotal = balances.reduce((sum, b) => sum + b.balanceMinor, 0)
-  return <CashCard title="Money Plan">
-    <div className="grid gap-5 sm:grid-cols-2">
-      <div>
-        <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-secondary)]">Buckets</h4>
-        {buckets.length ? <div className="space-y-2">{buckets.map(bucket => {
-          const bucketEnvelopes = envelopes.filter(e => e.bucketId === bucket.id)
-          const bucketTotal = bucketEnvelopes.reduce((sum, e) => sum + (balanceMap.get(e.id)?.balanceMinor ?? 0), 0)
-          return <div key={bucket.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-primary)] px-3 py-2 text-sm">
-            <div className="flex items-center gap-2 min-w-0">
-              {bucket.color && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: bucket.color }} />}
-              <span className="truncate font-medium">{bucket.name}</span>
-              <span className="shrink-0 text-xs text-[var(--text-muted)]">{bucketEnvelopes.length} envelope{bucketEnvelopes.length !== 1 ? 's' : ''}</span>
-            </div>
-            <span className="shrink-0 font-mono text-xs">{money(bucketTotal)}</span>
-          </div>
-        })}</div> : <CashEmpty>No buckets yet.</CashEmpty>}
-      </div>
-      <div>
-        <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-secondary)]">Envelopes</h4>
-        {envelopes.length ? <div className="space-y-2">{envelopes.map(env => {
-          const bal = balanceMap.get(env.id)
-          const balance = bal?.balanceMinor ?? 0
-          const hasTarget = env.targetAmountMinor != null
-          const pct = hasTarget && env.targetAmountMinor! > 0 ? Math.min(100, Math.round((balance / env.targetAmountMinor!) * 100)) : null
-          return <div key={env.id} className="rounded-lg border border-[var(--border-primary)] px-3 py-2 text-sm">
-            <div className="flex justify-between gap-2">
-              <span className="truncate font-medium">{env.name}</span>
-              <span className="shrink-0 font-mono text-xs">{money(balance)}{hasTarget ? ` / ${money(env.targetAmountMinor)}` : ''}</span>
-            </div>
-            {pct !== null && <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-[var(--border-primary)]">
-              <div className="h-full rounded-full bg-emerald-400" style={{ width: `${pct}%` }} />
-            </div>}
-          </div>
-        })}</div> : <CashEmpty>No envelopes yet.</CashEmpty>}
-        {envelopes.length > 0 && <p className="mt-3 text-xs text-[var(--text-muted)]">Total allocated: {money(unallocatedTotal)}</p>}
-      </div>
-    </div>
-  </CashCard>
-}
-
 export default function CashOsOutlook({ snapshot, horizonDays, confidenceMode, onHorizon, onConfidence }: {
   snapshot: CashOsSnapshot
   horizonDays: CashProjectionHorizon
@@ -150,7 +95,7 @@ export default function CashOsOutlook({ snapshot, horizonDays, confidenceMode, o
     </div>)}</div>
     <CashTrajectoryChart projection={projection} horizonDays={horizonDays} confidenceMode={confidenceMode}
       onHorizon={onHorizon} onConfidence={onConfidence} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
-    <CashMoneyPlan />
+    <CashMoneyPlan totalCashMinor={projection.anchor.closingCashMinor} />
     <div className="grid gap-5 xl:grid-cols-2"><CashCollectionClock snapshot={snapshot} /><CashUpcomingEvents snapshot={snapshot} /></div>
     <CashDayDetail day={day} />
   </div>
