@@ -72,6 +72,53 @@ export function buildRecurringObligationEvents(
   })
 }
 
+/**
+ * Expand CASH-3 recurrence as usual, then include materialized occurrences whose
+ * scheduled date falls outside that expansion but whose override moves them into
+ * the effective window. `effectiveWindowStart=null` includes overdue overrides.
+ */
+export function buildRecurringObligationEventsIncludingOverrides(
+  obligation: RecurringObligation,
+  occurrences: readonly ObligationOccurrence[],
+  rangeStart: string,
+  rangeEnd: string,
+  effectiveWindowStart: string | null = null,
+): PlannedCashOutflowEvent[] {
+  parseCalendarDate(rangeStart)
+  parseCalendarDate(rangeEnd)
+  if (effectiveWindowStart !== null) parseCalendarDate(effectiveWindowStart)
+  if (obligation.status !== 'active') return []
+  const own = occurrences.filter(row =>
+    row.organizationId === obligation.organizationId && row.obligationId === obligation.id)
+  const events = rangeStart <= rangeEnd
+    ? buildRecurringObligationEvents(obligation, own, rangeStart, rangeEnd) : []
+  const seen = new Set(events.map(event => event.sourceRecordId))
+  for (const occurrence of own) {
+    if (!occurrence.overrideDate) continue
+    parseCalendarDate(occurrence.scheduledDate)
+    parseCalendarDate(occurrence.overrideDate)
+    if (occurrence.overrideDate > rangeEnd
+      || (effectiveWindowStart !== null && occurrence.overrideDate < effectiveWindowStart)
+      || (occurrence.scheduledDate >= rangeStart && occurrence.scheduledDate <= rangeEnd)
+      || seen.has(occurrence.id)) continue
+    // The existing recurrence builder is the authority for whether the
+    // materialized scheduled date is a real occurrence of this rule.
+    const exact = buildRecurringObligationEvents(
+      obligation, [occurrence], occurrence.scheduledDate, occurrence.scheduledDate)
+    if (exact.length !== 1 || exact[0].sourceRecordId !== occurrence.id) continue
+    events.push(exact[0])
+    seen.add(occurrence.id)
+  }
+  events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1
+    : a.sourceRecordId < b.sourceRecordId ? -1 : a.sourceRecordId > b.sourceRecordId ? 1 : 0)
+  const returned = new Set<string>()
+  return events.filter(event => {
+    if (returned.has(event.sourceRecordId)) return false
+    returned.add(event.sourceRecordId)
+    return true
+  })
+}
+
 export function buildCommitmentEvent(commitment: CashCommitment): PlannedCashOutflowEvent {
   return {
     id: commitment.id,
