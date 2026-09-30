@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import type { ProviderId, PermissionProfile } from '../providers/types.ts';
 import type { EffortLevel } from '../providers/effort.ts';
+import { parseValidationCommand } from '../policy/commandPolicy.ts';
 
 /* -------------------------------------------------------------------------- */
 /* Plan roles / task kinds                                                     */
@@ -54,6 +55,8 @@ export interface PlanTask {
   plannedAreas: string[];
   /** What the Verifier must check for implementer tasks; the check list for verifier tasks. */
   validationRequirements: string[];
+  /** Optional Host-run validation commands for Verifier tasks. */
+  verificationCommands?: string[];
   provider: ProviderId;
   /** null = no preference — provider default. Never copied into reportedModel. */
   requestedModel: string | null;
@@ -92,6 +95,8 @@ export const PLAN_FIELD_LIMITS = {
   maxTasks: 24,
   maxConstraints: 16,
   maxValidationRequirements: 16,
+  maxVerificationCommands: 8,
+  verificationCommandMaxChars: 240,
   maxAuthorizedWritePaths: 64,
   maxPlannedAreas: 16,
   maxDependencies: 16,
@@ -133,6 +138,7 @@ export type PlanValidationCode =
   | 'PLANNED_AREA_TOO_MANY'
   | 'PLANNED_AREA_INVALID'
   | 'VALIDATION_REQUIREMENTS_INVALID'
+  | 'VERIFICATION_COMMAND_INVALID'
   | 'PROVIDER_UNKNOWN'
   | 'REQUESTED_MODEL_INVALID'
   | 'IMPLEMENTER_MISSING'
@@ -256,6 +262,19 @@ export interface SnapshotAttempt {
   limitFired: 'startup' | 'inactivity' | 'ceiling' | 'none';
   limitMs: number | null;
   changedFileCount: number | null;
+  hostChecks?: SnapshotHostCheck[];
+  canonicalModified?: boolean;
+  hostCheckUnavailableReason?: string | null;
+}
+
+export interface SnapshotHostCheck {
+  command: string;
+  baselineExitCode: number | null;
+  candidateExitCode: number | null;
+  baselineTimedOut: boolean;
+  candidateTimedOut: boolean;
+  newFailureCount: number | null;
+  boundedOutput: string | null;
 }
 
 export interface SnapshotTask {
@@ -592,6 +611,8 @@ function validationFieldForCode(code: PlanValidationCode): string {
   switch (code) {
     case 'VALIDATION_REQUIREMENTS_INVALID':
       return 'validationRequirements';
+    case 'VERIFICATION_COMMAND_INVALID':
+      return 'verificationCommands';
     case 'OBJECTIVE_MISSING':
     case 'OBJECTIVE_TOO_LONG':
       return 'objective';
@@ -843,6 +864,17 @@ export function validatePlan(input: unknown, options: { executionIntent?: PhaseE
       }
     }
 
+    let verificationCommands: string[] | undefined;
+    if (rawTask.verificationCommands !== undefined) {
+      const parsed = readStringArray(rawTask.verificationCommands, PLAN_FIELD_LIMITS.maxVerificationCommands, PLAN_FIELD_LIMITS.verificationCommandMaxChars);
+      if (role !== 'verifier' || !parsed || parsed.some((command) => !parseValidationCommand(command))) {
+        errors.push('VERIFICATION_COMMAND_INVALID');
+        if (issues.length < 8) issues.push({ code: 'VERIFICATION_COMMAND_INVALID', taskIndex, taskKey: clientTaskKey, field: `tasks[${taskIndex}].verificationCommands`, receivedShape: describeJsonShape(rawTask.verificationCommands) });
+      } else {
+        verificationCommands = parsed;
+      }
+    }
+
     const providerRaw = readString(rawTask.provider);
     if (!providerRaw || !(PLAN_PROVIDER_IDS as readonly string[]).includes(providerRaw)) {
       errors.push('PROVIDER_UNKNOWN');
@@ -876,6 +908,7 @@ export function validatePlan(input: unknown, options: { executionIntent?: PhaseE
       authorizedWritePaths,
       plannedAreas,
       validationRequirements,
+      ...(verificationCommands ? { verificationCommands } : {}),
       provider: providerRaw as ProviderId,
       requestedModel,
     });

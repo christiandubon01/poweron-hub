@@ -138,6 +138,24 @@ export function buildRunSnapshot(options: {
         limitFired: terminal.limitFired,
         limitMs: terminal.limitMs,
         changedFileCount: terminal.changedFileCount,
+        hostChecks: events.filter((event) => event.attemptId === attempt.attemptId && event.type === 'verification.host_check.completed').slice(0, 8).map((event) => {
+          const payload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
+          return {
+            command: typeof payload.command === 'string' ? payload.command.slice(0, 240) : 'unknown validation command',
+            baselineExitCode: typeof payload.baselineExitCode === 'number' ? payload.baselineExitCode : null,
+            candidateExitCode: typeof payload.candidateExitCode === 'number' ? payload.candidateExitCode : null,
+            baselineTimedOut: payload.baselineTimedOut === true,
+            candidateTimedOut: payload.candidateTimedOut === true,
+            newFailureCount: typeof payload.newFailureCount === 'number' ? payload.newFailureCount : null,
+            boundedOutput: null,
+          };
+        }),
+        canonicalModified: events.some((event) => event.attemptId === attempt.attemptId && event.type === 'verification.host_check.canonical_modified'),
+        hostCheckUnavailableReason: (() => {
+          const event = events.findLast((entry) => entry.attemptId === attempt.attemptId && entry.type === 'verification.host_check.unavailable');
+          const payload = event?.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : null;
+          return typeof payload?.reason === 'string' ? payload.reason.slice(0, 240) : null;
+        })(),
       });
     }
   }

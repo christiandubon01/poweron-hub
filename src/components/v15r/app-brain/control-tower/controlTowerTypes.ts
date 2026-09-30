@@ -35,6 +35,9 @@ export interface PreviewTask {
   failureReason?: string | null
   /** execution.started timestamp used for the live working clock. */
   executionStartedAt?: string | null
+  canonicalModified?: boolean
+  hostCheckUnavailableReason?: string | null
+  hostChecks?: Array<{ command: string; baselineExitCode: number | null; candidateExitCode: number | null; baselineTimedOut: boolean; candidateTimedOut: boolean; newFailureCount: number | null; boundedOutput: string | null }>
 }
 export interface AttentionEntry {
   id: string

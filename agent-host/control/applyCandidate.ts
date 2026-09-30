@@ -37,6 +37,8 @@ export const CANDIDATE_APPLIED_EVENT = 'control.candidate.applied';
 
 export const APPLY_OWNER_REASONS = {
   verifier: 'Verifier did not pass',
+  canonicalModified: 'Your project was modified while checks were running — review before continuing.',
+  integrityUnavailable: 'The Host could not verify project integrity during checks — review before continuing.',
   guard: 'Guard blocked candidate',
   missing: 'Candidate workspace unavailable',
   mismatch: 'Candidate does not match the verified attempt',
@@ -196,6 +198,12 @@ export function projectCandidateApply(options: {
   if (record.applied) {
     return { ...base, eligible: false, reason: APPLY_OWNER_REASONS.already };
   }
+  if (options.events.some((event) => event.type === 'verification.host_check.canonical_modified')) {
+    return { ...base, eligible: false, reason: APPLY_OWNER_REASONS.canonicalModified };
+  }
+  if (options.events.some((event) => event.type === 'verification.host_check.integrity_unavailable')) {
+    return { ...base, eligible: false, reason: APPLY_OWNER_REASONS.integrityUnavailable };
+  }
   if (options.runStatus !== 'completed') {
     return { ...base, eligible: false, reason: null };
   }
@@ -230,6 +238,8 @@ export function applyChangeIndexToSnapshot(
   if (
     snapshot.candidateApply.applied
     || snapshot.candidateApply.reason === APPLY_OWNER_REASONS.verifier
+    || snapshot.candidateApply.reason === APPLY_OWNER_REASONS.canonicalModified
+    || snapshot.candidateApply.reason === APPLY_OWNER_REASONS.integrityUnavailable
     || snapshot.candidateApply.reason === APPLY_OWNER_REASONS.guard
     || snapshot.candidateApply.reason === APPLY_OWNER_REASONS.already
     || snapshot.candidateApply.reason === APPLY_OWNER_REASONS.empty
@@ -293,6 +303,14 @@ export async function handleApplyCandidate(options: {
     const changeCount = typeof readyPayload?.changeCount === 'number' ? readyPayload.changeCount : 0;
     const policy = asRecord([...events].reverse().find((event) => event.type === 'policy.evaluated' && event.attemptId === parsed.attemptId)?.payload);
     const verdict = asRecord([...events].reverse().find((event) => event.type === VERIFIER_VERDICT_EVENT)?.payload)?.verdict;
+    if (events.some((event) => event.type === 'verification.host_check.canonical_modified')) {
+      await controlPlane.failRequest(request.id, APPLY_OWNER_REASONS.canonicalModified, failureResult(parsed, 'Checking candidate', APPLY_OWNER_REASONS.canonicalModified));
+      return;
+    }
+    if (events.some((event) => event.type === 'verification.host_check.integrity_unavailable')) {
+      await controlPlane.failRequest(request.id, APPLY_OWNER_REASONS.integrityUnavailable, failureResult(parsed, 'Checking candidate', APPLY_OWNER_REASONS.integrityUnavailable));
+      return;
+    }
     if (run.status !== 'completed' || verdict !== 'pass') {
       await controlPlane.failRequest(request.id, APPLY_OWNER_REASONS.verifier, failureResult(parsed, 'Checking candidate', APPLY_OWNER_REASONS.verifier));
       return;

@@ -20,7 +20,7 @@
  * this Node process and is never passed to provider child processes.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -91,7 +91,7 @@ import { applyChangeIndexToSnapshot, handleApplyCandidate } from './applyCandida
 import { preparePlanningDiscovery } from './planningDiscovery.ts';
 import { ProductionExecutionPort } from './supervisorPort.ts';
 import { buildRunSnapshot } from './snapshots.ts';
-import { readCandidateChangeIndex } from '../workspace.ts';
+import { readCandidateChangeIndex, resolveAttemptWorkspacePath } from '../workspace.ts';
 import { computePlanHash, type ControlPlan, type PlanRole, type TaskControlSpec } from './types.ts';
 import {
   applyReconciliation,
@@ -929,6 +929,7 @@ function planForPublish(plan: ControlPlan): unknown {
       authorizedWritePaths: task.authorizedWritePaths,
       plannedAreas: task.plannedAreas,
       validationRequirements: task.validationRequirements,
+      ...(task.verificationCommands ? { verificationCommands: task.verificationCommands } : {}),
       provider: task.provider,
       requestedModel: task.requestedModel,
     })),
@@ -1044,6 +1045,7 @@ export async function handleApprovePlan(options: {
         clientTaskKey: task.clientTaskKey,
         role: task.role,
         plannedAreas: task.plannedAreas,
+        ...(task.verificationCommands ? { verificationCommands: task.verificationCommands } : {}),
       },
       ...(plan.scopePack
         ? {
@@ -1599,6 +1601,23 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
         if (index) applyChangeIndexToSnapshot(snapshot, index);
       } catch {
         // A missing change index leaves the event-derived list. Apply fails closed later.
+      }
+    }
+    for (const attempt of snapshot.attempts) {
+      if (!attempt.hostChecks?.length) continue;
+      const events = store.listEvents().filter((event) => event.attemptId === attempt.attemptId && event.type === 'verification.host_check.completed').slice(0, 8);
+      for (const [index, check] of attempt.hostChecks.entries()) {
+        const event = events[index];
+        const payload = event?.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : null;
+        if (!payload || typeof payload.outputSha256 !== 'string' || typeof payload.outputSizeBytes !== 'number') continue;
+        try {
+          const attemptPath = resolveAttemptWorkspacePath({ workspaceRoot: path.join(statePaths.baseDir, 'workspaces'), identity: { repoKey: statePaths.repoKey, runId, attemptId: attempt.attemptId } });
+          const bytes = await readFile(`${attemptPath}.host-check-${index + 1}.txt`);
+          if (bytes.length > 40_000 || bytes.length !== payload.outputSizeBytes || createHash('sha256').update(bytes).digest('hex') !== payload.outputSha256) continue;
+          check.boundedOutput = bytes.toString('utf8');
+        } catch {
+          // Metadata stays visible when a sidecar is unavailable.
+        }
       }
     }
     await controlPlane.publishRunSnapshot({

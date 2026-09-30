@@ -14,6 +14,7 @@ import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.
 import { adjudicateAttemptWorkspace, captureWorkspaceTree, createWorkspacePolicyBaseline, describeWorkspaceDelta, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, writeCandidateChangeIndex, type AttemptWorkspace } from '../workspace.ts';
 import { buildVerifierHostEvidence, type BuildVerifierHostEvidenceOptions, type VerifierHostEvidence } from '../control/verifierEvidence.ts';
 import { buildVerifierHostEvidenceBlock, buildVerifierHostEvidenceUnavailableBlock } from '../control/planning.ts';
+import { buildVerifierHostCheckBlock, runVerifierHostChecks, type VerifierHostChecksResult } from '../control/verifierHostChecks.ts';
 import {
   absoluteTimeoutMessage,
   isProviderTimeoutErrorCode,
@@ -142,6 +143,7 @@ export interface AttemptExecutorDependencies {
    * the verifier launch.
    */
   verifierEvidenceBuilder?: ((options: BuildVerifierHostEvidenceOptions) => Promise<VerifierHostEvidence>) | undefined;
+  verifierHostChecksRunner?: typeof runVerifierHostChecks | undefined;
 }
 
 export interface AttemptExecutorShutdownResult {
@@ -162,6 +164,7 @@ export class AttemptExecutor {
   private readonly workspaceConfig: AttemptExecutorDependencies['workspaceConfig'];
   private readonly workspacePreparer: NonNullable<AttemptExecutorDependencies['workspacePreparer']>;
   private readonly verifierEvidenceBuilder: NonNullable<AttemptExecutorDependencies['verifierEvidenceBuilder']>;
+  private readonly verifierHostChecksRunner: typeof runVerifierHostChecks;
   private readonly activeExecutions = new Map<string, ActiveExecutionEntry>();
   private acceptingExecutions = true;
   private shutdownPromise: Promise<AttemptExecutorShutdownResult> | null = null;
@@ -179,6 +182,7 @@ export class AttemptExecutor {
     this.workspaceConfig = dependencies.workspaceConfig;
     this.workspacePreparer = dependencies.workspacePreparer ?? materializeAttemptWorkspace;
     this.verifierEvidenceBuilder = dependencies.verifierEvidenceBuilder ?? buildVerifierHostEvidence;
+    this.verifierHostChecksRunner = dependencies.verifierHostChecksRunner ?? runVerifierHostChecks;
   }
 
   execute(input: AttemptExecutionInput): Promise<AttemptExecutionOutcome> {
@@ -264,6 +268,7 @@ export class AttemptExecutor {
     let policyBaseline: PolicyBaselineCapture | undefined;
     let changedFileCount: number | null = null;
     let workspace: AttemptWorkspace | undefined;
+    let hostChecks: VerifierHostChecksResult | null = null;
 
     try {
       let executionInput = input;
@@ -359,12 +364,39 @@ export class AttemptExecutor {
               omittedFileCount: evidence.omittedPaths.length,
             });
             executionInput = { ...executionInput, prompt: `${executionInput.prompt}\n\n${buildVerifierHostEvidenceBlock(evidence)}` };
+            const spec = context.task.spec && typeof context.task.spec === 'object' && !Array.isArray(context.task.spec)
+              ? context.task.spec as Record<string, unknown> : null;
+            const plan = spec?.plan && typeof spec.plan === 'object' && !Array.isArray(spec.plan)
+              ? spec.plan as Record<string, unknown> : null;
+            const commands = Array.isArray(plan?.verificationCommands) && plan.verificationCommands.every((value) => typeof value === 'string')
+              ? plan.verificationCommands as string[] : undefined;
+            try {
+              hostChecks = await this.verifierHostChecksRunner({
+                canonicalRepoPath: this.workspaceConfig.canonicalRepoPath,
+                workspaceRoot: this.workspaceConfig.workspaceRoot,
+                repoKey: this.workspaceConfig.repoKey,
+                runId: input.runId,
+                attemptId: input.attemptId,
+                sourceAttemptId: candidate.sourceAttemptId,
+                candidateWorkspacePath: workspace.workspacePath,
+                changedFiles: evidence.changedFiles,
+                verificationCommands: commands,
+                onEvent: (type, payload) => this.persistWorkspaceEvent(input, type, payload),
+              });
+            } catch {
+              hostChecks = { status: 'unavailable', reason: 'the canonical project tripwire could not be completed', checks: [], canonicalChangedPaths: [], canonicalChangedPathCount: 0 };
+              try { this.persistWorkspaceEvent(input, 'verification.host_check.unavailable', { status: 'UNAVAILABLE', reason: hostChecks.reason }); } catch { /* fail-closed status remains */ }
+              try { this.persistWorkspaceEvent(input, 'verification.host_check.integrity_unavailable', { status: 'UNAVAILABLE', reason: hostChecks.reason }); } catch { /* fail-closed status remains */ }
+            }
+            executionInput = { ...executionInput, prompt: `${executionInput.prompt}\n\n${buildVerifierHostCheckBlock(hostChecks)}` };
           } catch {
             // A5: the builder itself threw. Append an explicit UNAVAILABLE block so
             // the Verifier never silently receives a prompt with no evidence (which
             // could be mistaken for "nothing changed"). Safe, content-free reason.
             const reason = 'the Agent Host could not build or persist evidence for this attempt';
             executionInput = { ...executionInput, prompt: `${executionInput.prompt}\n\n${buildVerifierHostEvidenceUnavailableBlock(reason)}` };
+            executionInput = { ...executionInput, prompt: `${executionInput.prompt}\n\nHOST CHECKS UNAVAILABLE: Host changed-file evidence could not be built. Do not treat missing results as a pass.` };
+            try { this.persistWorkspaceEvent(input, 'verification.host_check.unavailable', { status: 'UNAVAILABLE', reason: 'Host changed-file evidence could not be built' }); } catch { /* evidence remains unavailable in prompt */ }
             try {
               this.persistWorkspaceEvent(input, 'workspace.diff.ready', {
                 workspaceId: workspace.workspaceId,
@@ -405,7 +437,8 @@ export class AttemptExecutor {
       changedFileCount = workspaceAdjudication?.changedFileCount ?? 0;
       const policy = workspaceAdjudication?.policy ?? await this.adjudicatePolicy(input, policyBaseline);
       this.persistPolicyEvent(input, policy);
-      const terminalAttemptStatus = resolveEffectiveAttemptStatus(providerResult, policy);
+      const terminalAttemptStatus = hostChecks?.status === 'canonical-modified' || hostChecks?.reason?.includes('tripwire') || hostChecks?.reason?.includes('isolation') || hostChecks?.reason?.includes('TIMED_OUT_POSSIBLE_SURVIVORS')
+        ? 'failed' : resolveEffectiveAttemptStatus(providerResult, policy);
       if (terminalAttemptStatus === 'failed') {
         // The terminal event stays in its established order. This follow-up is
         // written only after the dead process's final workspace tree is read.

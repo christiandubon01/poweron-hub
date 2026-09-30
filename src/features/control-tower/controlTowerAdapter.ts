@@ -308,6 +308,9 @@ interface SnapshotAttemptWire {
   limitFired?: 'startup' | 'inactivity' | 'ceiling' | 'none'
   limitMs?: number | null
   changedFileCount?: number | null
+  canonicalModified?: boolean
+  hostCheckUnavailableReason?: string | null
+  hostChecks?: unknown
 }
 export interface SnapshotWire {
   schemaVersion: number
@@ -491,6 +494,17 @@ export function mapRunSnapshotRow(row: RunSnapshotRow, nowMs: number = Date.now(
       provider: optString(task.provider),
       effort: EFFORT_LEVELS.includes(task.reasoningEffort as EffortLevel) ? (task.reasoningEffort as EffortLevel) : null,
       plannedAreas,
+      canonicalModified: latest?.canonicalModified === true,
+      hostCheckUnavailableReason: typeof latest?.hostCheckUnavailableReason === 'string' ? latest.hostCheckUnavailableReason.slice(0, 240) : null,
+      hostChecks: Array.isArray(latest?.hostChecks) ? latest.hostChecks.filter(isRecord).slice(0, 8).map((raw) => ({
+        command: typeof raw.command === 'string' ? raw.command.slice(0, 240) : 'Unknown command',
+        baselineExitCode: typeof raw.baselineExitCode === 'number' ? raw.baselineExitCode : null,
+        candidateExitCode: typeof raw.candidateExitCode === 'number' ? raw.candidateExitCode : null,
+        baselineTimedOut: raw.baselineTimedOut === true,
+        candidateTimedOut: raw.candidateTimedOut === true,
+        newFailureCount: typeof raw.newFailureCount === 'number' ? raw.newFailureCount : null,
+        boundedOutput: typeof raw.boundedOutput === 'string' ? raw.boundedOutput.slice(0, 40_000) : null,
+      })) : [],
     }
   })
 

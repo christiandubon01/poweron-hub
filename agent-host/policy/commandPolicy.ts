@@ -181,6 +181,22 @@ export function classifyHostCommand(argv: readonly string[]): {
   };
 }
 
+/** Parse the Architect's bounded command string without invoking a shell. */
+export function parseValidationCommand(command: string): string[] | null {
+  if (typeof command !== 'string' || command.length === 0 || command.length > 240 || command.trim() !== command || /[\r\n"'\\%!?^&|<>`]/u.test(command)) return null;
+  const argv = command.split(' ');
+  if (argv.length < 3 || argv.some((token) => token.length === 0)) return null;
+  if (argv[0] !== 'npm.cmd' || argv[1] !== 'run' || !['test', 'typecheck', 'agent-host:test', 'agent-host:typecheck'].includes(argv[2])) return null;
+  if (argv.length > 3) {
+    if (argv[3] !== '--') return null;
+    for (const arg of argv.slice(4)) {
+      if (!/^(?:src|agent-host)\/[A-Za-z0-9._/-]+$/u.test(arg) || arg.includes('..') || arg.includes('//') || arg.endsWith('/')) return null;
+    }
+  }
+  const classified = classifyHostCommand(argv);
+  return classified.classification === 'VALIDATION' && classified.decision.decision === 'allow' ? argv : null;
+}
+
 function argvHasToken(argv: readonly string[], tokens: readonly string[]): boolean {
   const wanted = new Set(tokens.map((token) => token.toLowerCase()));
   return argv.some((entry) => wanted.has(entry.trim().toLowerCase()));
@@ -190,7 +206,7 @@ function isPackageManager(executable: string): boolean {
   return executable === 'npm' || executable === 'pnpm' || executable === 'yarn' || executable === 'bun';
 }
 
-const VALIDATION_SCRIPTS = new Set(['test', 'build', 'typecheck', 'lint']);
+const VALIDATION_SCRIPTS = new Set(['test', 'build', 'typecheck', 'lint', 'agent-host:test', 'agent-host:typecheck']);
 
 function isValidationScript(subcommand: string, argv: readonly string[]): boolean {
   if (VALIDATION_SCRIPTS.has(subcommand)) {

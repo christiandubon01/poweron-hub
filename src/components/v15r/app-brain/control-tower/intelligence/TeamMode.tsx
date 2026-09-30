@@ -12,6 +12,19 @@ const VERDICT_ACTION: Record<string, string> = {
   cancel: 'Cancel recommended', 'approve-gate': 'Owner approval required',
 }
 
+function HostChecksPanel({ task }: { task: PreviewTask | null | undefined }) {
+  if (!task || task.role !== 'Verifier') return null
+  return <section className="ct-intelligence-section" aria-label="Verifier Host checks"><h4>Host checks · Verifier attempt</h4>
+    <p>Checks run with your Windows account; the Host detects but cannot prevent writes to your project.</p>
+    {task.canonicalModified && <p role="alert">Your project was modified while checks were running — review before continuing.</p>}
+    {task.hostCheckUnavailableReason && <p role="status">Host checks UNAVAILABLE: {task.hostCheckUnavailableReason}</p>}
+    {!task.hostChecks?.length ? <p className="ct-muted">No Host check results reported.</p> : <ul>{task.hostChecks.map((check, index) => <li key={`${index}-${check.command}`}>
+      <strong>{check.command}</strong> · {check.baselineTimedOut ? 'timeout' : check.baselineExitCode ?? 'unavailable'} → {check.candidateTimedOut ? 'timeout' : check.candidateExitCode ?? 'unavailable'} · new failures: {check.newFailureCount === null ? 'UNKNOWN (baseline also fails)' : check.newFailureCount}
+      <details className="ct-disclosure"><summary>Bounded output</summary><pre>{check.boundedOutput ?? 'Output unavailable'}</pre></details>
+    </li>)}</ul>}
+  </section>
+}
+
 function TeamRoleDetail({ roleNode, team, run }: { roleNode: TeamRoleNode; team: AgentTeamTopology; run: TowerSession | null }) {
   const leadFailure = roleNode.role === 'verifier' && run?.verification === 'rejected'
   const node = roleNode
@@ -22,6 +35,7 @@ function TeamRoleDetail({ roleNode, team, run }: { roleNode: TeamRoleNode; team:
     .slice(0, 6)
   return <>
     {leadFailure && run && <VerifierFailureDetail run={run} />}
+    {node.role === 'verifier' && <HostChecksPanel task={run?.tasks.find((item) => item.role === 'Verifier')} />}
     <section className="ct-intelligence-section"><span className="ct-eyebrow">{node.deterministic ? 'Deterministic orchestration' : 'Model-backed role'}</span>
       <h3>{node.label} · {node.state.replace('_', ' ').toLowerCase()}</h3>
       <p>{node.deterministic
@@ -141,6 +155,7 @@ export default function TeamMode({ run, task, nodeId, team, selectedRoleId, onSe
   </>
   return <>
     {task && <section className="ct-intelligence-section"><h3>{task.title}</h3>{showExecutionSplit ? <div className="ct-verifier-task-truth"><p className="ct-verifier-execution">Execution attempt: Passed</p><p className="ct-verifier-verdict-fail">Verification verdict: FAIL</p>{onViewFailure && <button type="button" onClick={onViewFailure}>View failure evidence</button>}</div> : <><TaskStatus state={task.state} freshness={run?.provenance === 'Preview' ? 'Snapshot' : 'Last reported'} /><p>{task.attempt}</p></>}<p>{task.detail}</p><details className="ct-disclosure"><summary>Dependencies &amp; model evidence</summary><p>{task.dependencies}</p><ProviderModelBadge identity={task.requested} /><ProviderModelBadge identity={task.reported} /><p>Requested configuration is never reported as the model used.</p></details></section>}
+    <HostChecksPanel task={task} />
     <section className="ct-intelligence-section ct-ai-identity">
       <div className="ct-ai-symbol"><Cpu size={21} aria-hidden="true" /></div>
       <div>
