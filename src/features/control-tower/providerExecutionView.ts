@@ -9,6 +9,19 @@ export function formatOwnerDuration(ms: number): string {
   return `${minutes}m ${seconds}s`
 }
 
+/** Format an ISO timestamp in the viewer's local timezone for compact UI copy. */
+export function formatShortLocalDateTime(value: string): string | null {
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return null
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date(timestamp))
+}
+
 export function providerWorkingLabel(elapsedMs: number): string {
   return `Provider working · ${formatOwnerDuration(elapsedMs)}`
 }
@@ -31,6 +44,7 @@ const SAFE_FAILURE_COPY: Record<string, string> = {
   PROTOCOL_ERROR: 'Provider returned an invalid result.',
   PROVIDER_ERROR: 'Provider reported an error.',
   EXECUTION_CANCELLED: 'Provider attempt was cancelled.',
+  EXECUTION_CANCELLED_BY_OWNER: 'Provider attempt was cancelled by the owner.',
   OUTPUT_LIMIT_EXCEEDED: 'Provider output exceeded the safety limit.',
   WORKING_DIRECTORY_INVALID: 'Provider workspace is invalid.',
   POLICY_REJECTED: 'Provider changes did not pass workspace policy.',
@@ -48,7 +62,10 @@ export function ownerTerminalReason(errorCode: string | null | undefined, _store
   }
   const details: string[] = [reason]
   if (typeof evidence.elapsedMs === 'number' && Number.isFinite(evidence.elapsedMs) && evidence.elapsedMs >= 0) details.push(`Elapsed: ${formatOwnerDuration(evidence.elapsedMs)}`)
-  if (typeof evidence.lastActivityAt === 'string' && Number.isFinite(Date.parse(evidence.lastActivityAt))) details.push(`Last activity: ${evidence.lastActivityAt}`)
+  if (typeof evidence.lastActivityAt === 'string') {
+    const lastActivity = formatShortLocalDateTime(evidence.lastActivityAt)
+    if (lastActivity) details.push(`Last activity: ${lastActivity}`)
+  }
   if (typeof evidence.changedFileCount === 'number' && Number.isSafeInteger(evidence.changedFileCount) && evidence.changedFileCount >= 0) details.push(`${evidence.changedFileCount} ${evidence.changedFileCount === 1 ? 'file' : 'files'} changed in isolated workspace — not verified, not applied`)
   return details.join(' · ')
 }

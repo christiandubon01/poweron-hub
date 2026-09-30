@@ -5,6 +5,24 @@ import { conciseTime, executionRejectedByVerifier, isActiveSession, roleResult, 
 
 type Filter = 'active' | 'completed' | 'failed' | 'cancelled'
 const filterFor = (run?: TowerSession | null): Filter => run && !isActiveSession(run) ? run.runState as Filter : 'active'
+const STOPPED_IMPLEMENTER_REASONS = [
+  'Stopped — provider never started responding.',
+  'Stopped — no provider activity for ',
+  'Stopped — reached ',
+  'Provider attempt was cancelled by the owner.',
+] as const
+
+function candidateFilesValue(run: TowerSession): number | string {
+  if (run.candidateCount != null) return run.candidateCount
+  const stoppedImplementerWithChanges = run.tasks.some(task =>
+    task.role === 'Implementer'
+    && typeof task.failureReason === 'string'
+    && STOPPED_IMPLEMENTER_REASONS.some(reason => task.failureReason!.startsWith(reason))
+    && /\b[1-9]\d* files? changed in isolated workspace — not verified, not applied\b/.test(task.failureReason),
+  )
+  return stoppedImplementerWithChanges ? 'None — attempt stopped before verification' : 'Not reported'
+}
+
 export default function SessionHistory({ sessions, selected, onSelect, onTask }: {
   sessions: TowerSession[]; selected: TowerSession | null; onSelect: (id: string) => void; onTask: (runId: string, taskId: string) => void
 }) {
@@ -38,7 +56,7 @@ export default function SessionHistory({ sessions, selected, onSelect, onTask }:
         </button>
         <button className="ct-session-expand" type="button" aria-expanded={expanded === run.runId} aria-controls={`session-${run.runId}`} onClick={() => setExpanded(expanded === run.runId ? null : run.runId)}>Session details<ChevronDown size={14} aria-hidden="true" /></button>
         {expanded === run.runId && <div id={`session-${run.runId}`} className="ct-session-details">
-          <dl className="ct-facts"><div><dt>Created</dt><dd>{conciseTime(run.createdAt)}</dd></div><div><dt>Started</dt><dd>{conciseTime(run.startedAt)}</dd></div><div><dt>Completed</dt><dd>{conciseTime(run.completedAt)}</dd></div><div><dt>Attempts</dt><dd>{run.attemptCount ?? 'Not reported'}</dd></div><div><dt>Candidate files</dt><dd>{run.candidateCount ?? 'Not reported'}</dd></div></dl>
+          <dl className="ct-facts"><div><dt>Created</dt><dd>{conciseTime(run.createdAt)}</dd></div><div><dt>Started</dt><dd>{conciseTime(run.startedAt)}</dd></div><div><dt>Completed</dt><dd>{conciseTime(run.completedAt)}</dd></div><div><dt>Attempts</dt><dd>{run.attemptCount ?? 'Not reported'}</dd></div><div><dt>Candidate files</dt><dd>{candidateFilesValue(run)}</dd></div></dl>
           <p className="ct-muted">{run.changeset === 'applied' || run.candidateApplied ? 'Candidate applied · not committed' : run.verification === 'rejected' ? 'Candidate rejected · changes not applied' : run.changeset === 'not-applied' ? 'Changes not applied · isolated candidate' : 'No candidate changes reported'}</p>
           <div className="ct-session-task-list">{run.tasks.map(task => <button key={task.id} type="button" onClick={() => onTask(run.runId, task.id)}><span>{task.title}</span><span className={`ct-state-${task.state}`}>{task.state.replace('pending-', '')}</span></button>)}</div>
           {run.attention.map(item => <p key={item.id} className="ct-muted">{item.consequence}</p>)}

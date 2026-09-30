@@ -6,7 +6,7 @@ import { TaskRow } from '@/components/v15r/app-brain/control-tower/ControlTowerP
 import type { PreviewTask } from '@/components/v15r/app-brain/control-tower/controlTowerTypes'
 import { computeHostPresence, mapRunSnapshotRow, readHostStatusMarker } from './controlTowerAdapter'
 import HostRestartNotice, { HOST_RESTART_REQUIRED_MESSAGE } from './HostRestartNotice'
-import { formatOwnerDuration, providerWorkingLabel } from './providerExecutionView'
+import { formatOwnerDuration, formatShortLocalDateTime, providerWorkingLabel } from './providerExecutionView'
 import type { RunSnapshotRow } from './controlTowerService'
 
 const STARTED = '2026-09-25T21:58:56.000Z'
@@ -93,7 +93,8 @@ describe('provider execution reliability view', () => {
     }), Date.parse(STARTED) + TWELVE_MINUTES)
     expect(view?.tasks[0].failureReason).toContain('Stopped — no provider activity for 8m 0s.')
     expect(view?.tasks[0].detail).toContain('Elapsed: 8m 30s')
-    expect(view?.tasks[0].detail).toContain(`Last activity: ${STARTED}`)
+    expect(view?.tasks[0].detail).toContain(`Last activity: ${formatShortLocalDateTime(STARTED)}`)
+    expect(view?.tasks[0].detail).not.toContain(STARTED)
     expect(view?.tasks[0].detail).toContain('2 files changed in isolated workspace — not verified, not applied')
     expect(JSON.stringify(view)).not.toContain('SECRET provider transcript')
     expect(view?.tasks[0].attempt.includes('%')).toBe(false)

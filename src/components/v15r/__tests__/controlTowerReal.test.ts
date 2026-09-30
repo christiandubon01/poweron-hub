@@ -163,6 +163,7 @@ function wireSnapshot(overrides?: {
   taskStatuses?: [string, string]
   verification?: { verdict: 'pass' | 'fail' | 'unknown'; summary: string | null } | null
   changeset?: { ready: boolean; changeCount: number; safePaths: string[] } | null
+  attempt?: Record<string, unknown>
 }): RunSnapshotRow {
   const [t1, t2] = overrides?.taskStatuses ?? ['running', 'pending']
   const runId = overrides?.runId ?? 'run-9'
@@ -174,7 +175,7 @@ function wireSnapshot(overrides?: {
       { taskId: 'task-1', clientTaskKey: 'T1', title: 'Create marker file', role: 'implementer', status: t1, position: 1, dependencies: [], plannedAreas: ['agent-host/smoke'], permissionProfile: 'isolated-implementer' },
       { taskId: 'task-2', clientTaskKey: 'T2', title: 'Verify marker file', role: 'verifier', status: t2, position: 2, dependencies: ['T1'], plannedAreas: [], permissionProfile: 'read-only-verifier' },
     ],
-    attempts: [{ attemptId: 'attempt-1', taskId: 'task-1', ordinal: 1, status: 'running', requestedModel: 'requested-model-x', reportedModel: null, reportedModelSource: null }],
+    attempts: [{ attemptId: 'attempt-1', taskId: 'task-1', ordinal: 1, status: 'running', requestedModel: 'requested-model-x', reportedModel: null, reportedModelSource: null, ...overrides?.attempt }],
     gate: null,
     changeset: overrides?.changeset ?? null,
     verification: overrides?.verification ?? null,
@@ -457,6 +458,62 @@ describe('CT-CORE-1 run snapshot mapping', () => {
     const view = mapRunSnapshotRow(row)!
     expect(JSON.stringify(view)).not.toContain('SECRET PROMPT TEXT')
     expect(JSON.stringify(view)).not.toContain('secret provider tail')
+  })
+
+  async function candidateFilesText(row: RunSnapshotRow): Promise<string> {
+    fake.presenceRows = [presenceRow(new Date())]
+    fake.snapshots = [row]
+    await renderLive()
+    click(container.querySelector<HTMLButtonElement>('.ct-session-expand')!)
+    const candidateFiles = Array.from(container.querySelectorAll('.ct-facts > div')).find(item => item.querySelector('dt')?.textContent === 'Candidate files')
+    return candidateFiles?.querySelector('dd')?.textContent ?? ''
+  }
+
+  it('shows that changed files from an owner-stopped Implementer were not verified', async () => {
+    const text = await candidateFilesText(wireSnapshot({
+      runStatus: 'failed',
+      taskStatuses: ['failed', 'pending'],
+      attempt: { status: 'failed', terminalErrorCode: 'EXECUTION_CANCELLED_BY_OWNER', changedFileCount: 2 },
+    }))
+    expect(text).toBe('None — attempt stopped before verification')
+  })
+
+  it('keeps stopped Verifier candidate files as not reported', async () => {
+    const text = await candidateFilesText(wireSnapshot({
+      runStatus: 'failed',
+      taskStatuses: ['passed', 'failed'],
+      attempt: { taskId: 'task-2', status: 'failed', terminalErrorCode: 'PROVIDER_INACTIVITY_TIMEOUT', changedFileCount: 2 },
+    }))
+    expect(text).toBe('Not reported')
+  })
+
+  it('keeps ordinary Implementer failures and generic cancellation as not reported', async () => {
+    const ordinary = await candidateFilesText(wireSnapshot({
+      runStatus: 'failed',
+      taskStatuses: ['failed', 'pending'],
+      attempt: { status: 'failed', terminalErrorCode: 'PROVIDER_ERROR', changedFileCount: 2 },
+    }))
+    expect(ordinary).toBe('Not reported')
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    fake = new FakeService()
+    holder.service = fake
+    const genericCancellation = await candidateFilesText(wireSnapshot({
+      runStatus: 'failed',
+      taskStatuses: ['failed', 'pending'],
+      attempt: { status: 'failed', terminalErrorCode: 'EXECUTION_CANCELLED', changedFileCount: 2 },
+    }))
+    expect(genericCancellation).toBe('Not reported')
+  })
+
+  it('keeps a reported numeric candidate count', async () => {
+    const text = await candidateFilesText(wireSnapshot({
+      runStatus: 'completed',
+      taskStatuses: ['passed', 'passed'],
+      changeset: { ready: true, changeCount: 3, safePaths: ['one.ts', 'two.ts', 'three.ts'] },
+    }))
+    expect(text).toBe('3')
   })
 })
 
