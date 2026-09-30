@@ -48,19 +48,43 @@ export function CashPayrollView({ snapshot, partial }: { snapshot: CashOsSnapsho
   </div>
 }
 
-export function CashTransactionsView({ snapshot }: { snapshot: CashOsSnapshot }) {
+function kindLabel(kind: string | null | undefined): string {
+  if (!kind) return '—'
+  const labels: Record<string, string> = {
+    opening_balance: 'Opening Balance', income: 'Income', expense: 'Expense',
+    transfer: 'Transfer', card_debt_payment: 'Card / Loan Payment',
+    refund_reversal: 'Refund / Reversal', adjustment: 'Adjustment',
+  }
+  return labels[kind] ?? kind.replace(/_/g, ' ')
+}
+
+const addBtn = (onAdd: () => void) => (
+  <button onClick={onAdd} className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">+ Add</button>
+)
+
+export function CashTransactionsView({ snapshot, onAdd }: { snapshot: CashOsSnapshot; onAdd?: () => void }) {
   const accounts = snapshot.accounts.filter(a => a.status === 'active')
   const transactions = [...snapshot.transactions].sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id)).slice(0, 40)
-  return <div className="space-y-5"><CashCard title="Financial accounts">
-    {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
-      <strong>{account.display_name}</strong><span className="block text-xs text-[var(--text-muted)]">{account.account_type} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}</span>
-      <span className="mt-2 block font-mono">{money(snapshot.accountBalancesMinor[account.id])}</span>
-    </div>)}</div> : <CashEmpty>Account setup required.</CashEmpty>}
-  </CashCard><CashCard title="Recent ledger transactions">
-    {transactions.length ? <div className="overflow-x-auto"><table className="w-full min-w-[550px] text-left text-sm"><thead className="text-xs uppercase text-[var(--text-muted)]"><tr><th className="py-2">Date</th><th>Description</th><th>Category / project</th><th className="text-right">Movement</th></tr></thead><tbody>
-      {transactions.map(tx => <tr key={tx.id} className="border-t border-[var(--border-primary)]"><td className="py-2">{cashDate(tx.transaction_date)}</td><td>{tx.description || tx.transaction_kind}<span className="block text-xs text-[var(--text-muted)]">{tx.status}</span></td><td>{tx.category ?? '—'}{tx.project_id ? ` · ${tx.project_id}` : ''}</td><td className="text-right font-mono">{money(tx.amount_minor)}</td></tr>)}
-    </tbody></table></div> : <CashEmpty>No ledger transactions were loaded.</CashEmpty>}
-  </CashCard></div>
+  return <div className="space-y-5">
+    <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
+      {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
+        <strong>{account.display_name}</strong>
+        <span className="block text-xs text-[var(--text-muted)]">
+          {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
+        </span>
+        <span className="mt-2 block font-mono">{money(snapshot.accountBalancesMinor[account.id])}</span>
+      </div>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border-primary)] px-4 py-6 text-sm">
+        <p className="font-semibold text-[var(--text-primary)]">Add your first account</p>
+        <p className="mt-1 text-[var(--text-secondary)]">Track where your money lives — checking, savings, cash on hand, credit cards, and loans.</p>
+        {onAdd && <button onClick={onAdd} className="mt-3 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600">Add account</button>}
+      </div>}
+    </CashCard>
+    <CashCard title="Recent ledger transactions">
+      {transactions.length ? <div className="overflow-x-auto"><table className="w-full min-w-[550px] text-left text-sm"><thead className="text-xs uppercase text-[var(--text-muted)]"><tr><th className="py-2">Date</th><th>Description</th><th>Kind / Category</th><th className="text-right">Movement</th></tr></thead><tbody>
+        {transactions.map(tx => <tr key={tx.id} className="border-t border-[var(--border-primary)]"><td className="py-2">{cashDate(tx.transaction_date)}</td><td>{tx.description || kindLabel(tx.transaction_kind)}<span className="block text-xs text-[var(--text-muted)]">{tx.status}</span></td><td>{kindLabel(tx.transaction_kind)}{tx.category ? ` · ${tx.category}` : ''}{tx.project_id ? ` · ${tx.project_id}` : ''}</td><td className="text-right font-mono">{money(tx.amount_minor)}</td></tr>)}
+      </tbody></table></div> : <CashEmpty>No ledger transactions were loaded.</CashEmpty>}
+    </CashCard>
+  </div>
 }
 
 export function CashObligationsView({ snapshot }: { snapshot: CashOsSnapshot }) {

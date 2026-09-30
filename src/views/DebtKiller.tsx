@@ -12,6 +12,7 @@ import {
   CashObligationsView,
 } from '@/components/v15r/cash-os/CashOsViews'
 import { CashCard, CashEmpty, cashDate, money } from '@/components/v15r/cash-os/cashOsUi'
+import CashOsAddSheet from '@/components/v15r/cash-os/CashOsAddSheet'
 import DebtKillerLegacy from './DebtKillerLegacy'
 
 const tabs = ['Outlook', 'Calendar', 'Projects', 'Payroll', 'Transactions', 'Obligations', 'Debt Plan'] as const
@@ -68,7 +69,7 @@ function PreSetupOutlook({ sources }: { sources: CashOsSourceBundle | null }) {
   )
 }
 
-function PreSetupTransactions({ sources }: { sources: CashOsSourceBundle | null }) {
+function PreSetupTransactions({ sources, onAdd }: { sources: CashOsSourceBundle | null; onAdd?: () => void }) {
   if (!sources) {
     return <CashCard><p className="text-sm text-[var(--text-secondary)]">Transactions loading…</p></CashCard>
   }
@@ -76,23 +77,30 @@ function PreSetupTransactions({ sources }: { sources: CashOsSourceBundle | null 
   const transactions = [...sources.transactions]
     .sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id))
     .slice(0, 40)
+  const addAction = onAdd
+    ? <button onClick={onAdd} className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">+ Add</button>
+    : undefined
   return (
     <div className="space-y-5">
-      <CashCard title="Financial accounts">
+      <CashCard title="Financial accounts" action={addAction}>
         {accounts.length ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {accounts.map(account => (
               <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
                 <strong>{account.display_name}</strong>
                 <span className="block text-xs text-[var(--text-muted)]">
-                  {account.account_type} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
+                  {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
                 </span>
                 <span className="mt-2 block text-xs text-[var(--text-muted)]">Balance — Needs assumptions</span>
               </div>
             ))}
           </div>
         ) : (
-          <CashEmpty>Account setup required.</CashEmpty>
+          <div className="rounded-xl border border-dashed border-[var(--border-primary)] px-4 py-6 text-sm">
+            <p className="font-semibold text-[var(--text-primary)]">Add your first account</p>
+            <p className="mt-1 text-[var(--text-secondary)]">Track where your money lives — checking, savings, cash on hand, credit cards, and loans.</p>
+            {onAdd && <button onClick={onAdd} className="mt-3 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600">Add account</button>}
+          </div>
         )}
       </CashCard>
       <CashCard title="Recent ledger transactions">
@@ -168,6 +176,7 @@ export default function DebtKiller() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [tab, setTab] = useState<DebtKillerTab>('Outlook')
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [addSheetOpen, setAddSheetOpen] = useState(false)
   const cash = useCashOsSnapshot(!hasHydrated || isDemoMode)
   const scope = cash.scope
   const authoritative = cash.status === 'ready' && !!cash.snapshot && !cash.editing
@@ -182,6 +191,14 @@ export default function DebtKiller() {
     setSheetOpen(false)
   }
 
+  function openAddSheet() { setAddSheetOpen(true) }
+  function closeAddSheet() { setAddSheetOpen(false) }
+  function handleAddSuccess() {
+    cash.refresh()
+    setAddSheetOpen(false)
+    setTab('Transactions')
+  }
+
   function handleConfirmSetup(setup: Parameters<typeof cash.confirmSetup>[0]) {
     cash.confirmSetup(setup)
     setSheetOpen(false)
@@ -191,6 +208,16 @@ export default function DebtKiller() {
 
   return (
     <div className="min-h-screen space-y-5 bg-[var(--bg-secondary)] p-3 text-[var(--text-primary)] sm:p-6">
+
+      {/* Add sheet modal */}
+      {addSheetOpen && scope && (
+        <CashOsAddSheet
+          organizationId={scope.context.organizationId}
+          sources={cash.sources}
+          onClose={closeAddSheet}
+          onSuccess={handleAddSuccess}
+        />
+      )}
 
       {/* Assumptions sheet modal */}
       {sheetOpen && scope && (
@@ -226,7 +253,7 @@ export default function DebtKiller() {
 
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-orange-400">Power On Hub / Debt Killer</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-orange-400">Power On Hub / Cash OS</p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight">{tab}</h1>
           {cash.snapshot && (
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
@@ -367,7 +394,7 @@ export default function DebtKiller() {
               </p>
             </CashCard>
           )}
-          {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} />}
+          {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <PreSetupObligations sources={cash.sources} />}
         </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
@@ -422,7 +449,7 @@ export default function DebtKiller() {
           )}
           {tab === 'Projects' && <CashProjectsView snapshot={cash.snapshot} />}
           {tab === 'Payroll' && <CashPayrollView snapshot={cash.snapshot} partial={cash.status === 'partial'} />}
-          {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} />}
+          {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} />}
         </>
       ) : (

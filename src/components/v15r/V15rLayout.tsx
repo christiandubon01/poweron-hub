@@ -1055,7 +1055,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   ]
   // BUCKET 2 — PERSONAL TOOLS (default collapsed, gold border)
   const adminBucket2 = [
-    { label: 'Debt Killer', icon: Scissors, view: 'debt-killer', badge: null, subtitle: null },
+    { label: 'Cash OS', icon: Scissors, view: 'debt-killer', badge: null, subtitle: null },
     { label: 'Solar Income', icon: Calculator, view: 'income-calc', badge: null, subtitle: null },
     { label: 'Solar Training', icon: FlaskConical, view: 'solar-training', badge: 'NEW', subtitle: 'NEM 3.0 · Quiz · Progress' },
     { label: 'Wins Log', icon: Trophy, view: 'wins-log', badge: 'B51', subtitle: null },

@@ -13,11 +13,15 @@ export function cashDate(value: string | null | undefined): string {
     .format(new Date(Date.UTC(year, month - 1, day, 12)))
 }
 
-export function CashCard({ title, children, className = '' }: {
-  title?: string; children: ReactNode; className?: string
+export function CashCard({ title, children, className = '', action }: {
+  title?: string; children: ReactNode; className?: string; action?: ReactNode
 }) {
   return <section className={`rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5 ${className}`}>
-    {title && <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">{title}</h3>}
+    {title && !action && <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">{title}</h3>}
+    {title && action && <div className="mb-4 flex items-center justify-between gap-3">
+      <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">{title}</h3>
+      {action}
+    </div>}
     {children}
   </section>
 }
