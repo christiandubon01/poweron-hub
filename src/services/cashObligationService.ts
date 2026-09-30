@@ -7,6 +7,7 @@ import type {
   RecurringObligation,
 } from '@/finance/obligationsTypes'
 import { resolveFinanceContext } from './manualLedgerService'
+import { readCashPages } from './cashReadPagination'
 
 function db(): any {
   return supabase as any
@@ -88,6 +89,28 @@ function mapCommitment(row: any): CashCommitment {
     reconciliationState: row.reconciliation_state,
     actualTransactionId: row.actual_transaction_id,
     provenance: provenance(row.organization_id, 'cash_commitment', row.id, row.confidence),
+  }
+}
+
+/** Raw CASH-3 authority, including overdue rows and occurrence overrides. */
+export async function readCashObligationState(): Promise<{
+  obligations: RecurringObligation[]
+  occurrences: ObligationOccurrence[]
+  commitments: CashCommitment[]
+}> {
+  const { organizationId } = await resolveFinanceContext()
+  const from = db().from.bind(db())
+  const [obligationRows, occurrenceRows, commitmentRows] = await Promise.all([
+    readCashPages<any>('financial_obligations', q => q.select('*').eq('organization_id', organizationId), from),
+    readCashPages<any>('financial_obligation_occurrences', q => q.select('*').eq('organization_id', organizationId), from),
+    readCashPages<any>('cash_commitments', q => q.select('*').eq('organization_id', organizationId), from),
+  ])
+  const all = [...obligationRows, ...occurrenceRows, ...commitmentRows]
+  if (all.some(row => row.organization_id !== organizationId)) throw new Error('Obligation organization mismatch')
+  return {
+    obligations: obligationRows.map(mapObligation),
+    occurrences: occurrenceRows.map(mapOccurrence),
+    commitments: commitmentRows.map(mapCommitment),
   }
 }
 

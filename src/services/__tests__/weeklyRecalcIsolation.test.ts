@@ -468,7 +468,7 @@ describe('FORENSIC-KPI-2B2-2F R9 — recalculation is idempotent', () => {
 
 describe('FORENSIC-KPI-2B2-2H source contract — manual recalc UI retired, automatic derive wired', () => {
   const ROOT = process.cwd()
-  const moneySrc = readFileSync(join(ROOT, 'src/components/v15r/V15rMoneyPanel.tsx'), 'utf8')
+  const moneySrc = readFileSync(join(ROOT, 'src/components/v15r/V15rMoneyPerformancePanel.tsx'), 'utf8')
   const mergeSrc = readFileSync(join(ROOT, 'src/services/weeklyDataScopeMerge.ts'), 'utf8')
   const policySrc = readFileSync(join(ROOT, 'src/services/weeklyFinancialPolicy.ts'), 'utf8')
 

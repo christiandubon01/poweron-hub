@@ -127,7 +127,7 @@ describe('CASH — canonical cash guarantees preserved', () => {
   it('CASH-2: the 52-week view stays automatic (derived on read, no recalc button)', () => {
     const policy = src('src/services/weeklyFinancialPolicy.ts')
     expect(policy).toContain('resolveWeeklyDataForRead')
-    const money = src('src/components/v15r/V15rMoneyPanel.tsx')
+    const money = src('src/components/v15r/V15rMoneyPerformancePanel.tsx')
     expect(money).toContain('resolveWeeklyDataForRead(backup)')
     expect(money).not.toMatch(/>\s*Recalculate\s*</)
   })
@@ -190,7 +190,7 @@ describe('CASH — canonical cash guarantees preserved', () => {
   })
 
   it('CASH-6: Money binds Total Collected AND Cash Received to that lifetime authority', () => {
-    const money = src('src/components/v15r/V15rMoneyPanel.tsx')
+    const money = src('src/components/v15r/V15rMoneyPerformancePanel.tsx')
     expect(money).toContain('const totalCollectedLifetime = getLifetimeCollectedRevenue(backup)')
     expect(money).toContain('const totalCollected = totalCollectedLifetime')
     expect(money).toContain('const cashReceived = totalCollectedLifetime')
@@ -306,7 +306,7 @@ describe('CASH — canonical cash guarantees preserved', () => {
       'src/components/v15r/V15rProjectLogsTab.tsx',
       'src/components/v15r/V15rFieldLogPanel.tsx',
       'src/components/v15r/V15rHome.tsx',
-      'src/components/v15r/V15rMoneyPanel.tsx',
+      'src/components/v15r/V15rMoneyPerformancePanel.tsx',
       'src/components/v15r/V15rPricingIntelligencePanel.tsx',
       'src/components/v15r/ProjectSummaryBoxes.tsx',
       'src/components/v15r/charts/RCAChart.tsx',
@@ -327,7 +327,7 @@ describe('CASH — canonical cash guarantees preserved', () => {
       'src/components/v15r/V15rProjectLogsTab.tsx',
       'src/components/v15r/V15rFieldLogPanel.tsx',
       'src/components/v15r/V15rHome.tsx',
-      'src/components/v15r/V15rMoneyPanel.tsx',
+      'src/components/v15r/V15rMoneyPerformancePanel.tsx',
       'src/components/v15r/V15rPricingIntelligencePanel.tsx',
       'src/components/v15r/V15rEstimateTab.tsx',
       'src/components/v15r/ProjectSummaryBoxes.tsx',
@@ -416,7 +416,7 @@ describe('CASH — canonical cash guarantees preserved', () => {
     const layout = src('src/components/v15r/V15rLayout.tsx')
     expect(layout).toContain('getDemoBackupData()')
     expect(layout).toContain('isDemoMode')
-    const money = src('src/components/v15r/V15rMoneyPanel.tsx')
+    const money = src('src/components/v15r/V15rMoneyPerformancePanel.tsx')
     expect(money).toContain('(hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()')
     // The demo snapshot resolves through the same canonical authority.
     expect(() => getLifetimeCollectedRevenue(getDemoBackupData())).not.toThrow()

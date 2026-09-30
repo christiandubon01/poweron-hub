@@ -864,7 +864,7 @@ export function AppShell({ children }: AppShellProps) {
       // v15r Business
       case 'graph-dashboard': return <V15rDashboard />
       case 'field-log':       return <V15rFieldLogPanel serviceCallPrefill={serviceCallPrefill} onPrefillUsed={() => setServiceCallPrefill(null)} />
-      case 'money':           return <V15rMoneyPanel />
+      case 'money':           return <V15rMoneyPanel onNavigate={handleNav} />
       case 'income-calc':     return <V15rIncomeCalc />
       case 'price-book':      return <V15rPriceBookPanel />
       case 'team':            return <V15rTeamPanel />

@@ -1,16 +1,40 @@
 import { supabase } from '@/lib/supabase'
 import type {
+  FinancialAccountRow,
+  FinancialTransactionRow,
   FinancialAccountClass,
   FinancialAccountType,
   FinancialOwnershipContext,
   FinancialTransactionKind,
 } from '@/finance/ledgerTypes'
+import { readCashPages } from './cashReadPagination'
 
 type DbError = { code?: string; message: string }
 
-interface FinanceContext {
+export interface FinanceContext {
   userId: string
   organizationId: string
+}
+
+/** Complete ledger source for CASH-2/4/7. Links are not projection inputs. */
+export async function readFinancialLedgerState(): Promise<{
+  context: FinanceContext
+  accounts: FinancialAccountRow[]
+  transactions: FinancialTransactionRow[]
+}> {
+  const context = await resolveFinanceContext()
+  const from = untypedSupabase().from.bind(untypedSupabase())
+  const [accounts, transactions] = await Promise.all([
+    readCashPages<FinancialAccountRow>('financial_accounts', q =>
+      q.select('*').eq('organization_id', context.organizationId), from),
+    readCashPages<FinancialTransactionRow>('financial_transactions', q =>
+      q.select('*').eq('organization_id', context.organizationId), from),
+  ])
+  if (accounts.some(row => row.organization_id !== context.organizationId)
+    || transactions.some(row => row.organization_id !== context.organizationId)) {
+    throw new Error('Ledger organization mismatch')
+  }
+  return { context, accounts, transactions }
 }
 
 interface QueryResult<T> {

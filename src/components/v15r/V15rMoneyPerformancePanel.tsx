@@ -1,0 +1,833 @@
+// @ts-nocheck
+/**
+ * V15rMoneyPanel — Comprehensive money, cash flow, AR, and exposure tracking.
+ * Faithfully ported from HTML renderMoney().
+ *
+ * Sections:
+ * 1. 4 KPIs (Gross Revenue, Cash Received, Net Revenue, Total Exposure)
+ * 2. Service Job Performance (11 metrics)
+ * 3. Business Roll-Up (11 metrics with active vs forecasted AR)
+ * 4. Exposure Framework table (per project + signals)
+ * 5. Cash Waterfall bars
+ * 6. Payment Tracker (progress bars per project)
+ * 7. 52-Week visualization table
+ */
+
+import React, { useState, useRef, useEffect } from 'react'
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import {
+  getBackupData,
+  getProjectFinancials,
+  getCanonicalKpiInputs,
+  projectLogsFor,
+  resolveProjectBucket,
+  num,
+  fmt,
+  fmtK,
+  daysSince,
+  syncAllProjectFinanceBuckets,
+  isActiveProject,
+  type BackupData,
+} from '@/services/backupDataService'
+import {
+  isCurrentWeeklyRow,
+  resolveWeeklyDataForRead,
+} from '@/services/weeklyFinancialPolicy'
+import { getLifetimeCollectedRevenue } from '@/services/collectedRevenueRange'
+import { internalLaborRate } from './employeeCostUtils'
+import { AskAIButton, AskAIPanel } from './AskAIPanel'
+import type { Insight } from './AskAIPanel'
+import { useDemoMode } from '@/store/demoStore'
+import { getDemoBackupData } from '@/services/demoDataService'
+
+// ── Error Boundary Component ─────────────────────────────────────────────────
+class ChartErrorBoundary extends React.Component {
+  state = { hasError: false }
+  static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(err: any) { console.error('Chart error:', err) }
+  render() {
+    if (this.state.hasError) return <div className="p-4 text-red-400 text-sm">Chart failed to render</div>
+    return this.props.children
+  }
+}
+
+// ── Business Health Chart Component (Recharts) ──────────────────────────────
+function BusinessHealthChart({ backup }: { backup: BackupData }) {
+  // recharts imported at top of file
+  // Phase 6S-B hotfix: exclude archived + soft-deleted projects from the Money tab
+  // revenue-breakdown chart totals (display-only filter; data untouched).
+  const canonical = getCanonicalKpiInputs(backup)
+  const projects = canonical.projects
+  const settings = backup.settings || {} as any
+
+  // Calculate revenue breakdown
+  const pipeline = canonical.activeProjectContract
+  const paid = projects.reduce((s, p) => s + getProjectFinancials(p, backup).paid, 0)
+  const unbilled = Math.max(0, pipeline - paid)
+
+  // Calculate expense ratio
+  const overheadPct = num(settings.overheadPct || 30) / 100
+  const overheadAmount = paid * overheadPct
+  const profitMargin = Math.max(0, paid - overheadAmount)
+
+  const outerData = [
+    { name: 'Pipeline', value: pipeline, color: '#22c55e' },
+    { name: 'Paid', value: paid, color: '#3b82f6' },
+    { name: 'Unbilled', value: unbilled, color: '#eab308' },
+  ]
+  const innerData = [
+    { name: 'Overhead', value: overheadAmount, color: '#ef4444' },
+    { name: 'Profit Margin', value: profitMargin, color: '#14b8a6' },
+  ]
+
+  // Segment breakdown for visible labels
+  const segments = [
+    { name: 'Pipeline', value: pipeline, color: '#22c55e', ring: 'outer' },
+    { name: 'Paid', value: paid, color: '#3b82f6', ring: 'outer' },
+    { name: 'Unbilled', value: unbilled, color: '#eab308', ring: 'outer' },
+    { name: 'Overhead', value: overheadAmount, color: '#ef4444', ring: 'inner' },
+    // G5 fix: Profit Margin color changed to teal (#14b8a6) to match inner ring dataset color
+    { name: 'Profit Margin', value: profitMargin, color: '#14b8a6', ring: 'inner' }
+  ]
+
+  const outerSegments = segments.filter(s => s.ring === 'outer')
+  const innerSegments = segments.filter(s => s.ring === 'inner')
+
+  return (
+    <div className="space-y-4">
+      <div className="h-80">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={outerData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={120} innerRadius={50}>
+              {outerData.map((d, i) => <Cell key={i} fill={d.color} stroke="#1a1d27" strokeWidth={2} />)}
+            </Pie>
+            <Pie data={innerData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={45} innerRadius={0}>
+              {innerData.map((d, i) => <Cell key={i} fill={d.color} stroke="#1a1d27" strokeWidth={2} />)}
+            </Pie>
+            <Tooltip contentStyle={{ backgroundColor: '#374151', border: '1px solid #4b5563', borderRadius: 8 }} formatter={(v: number) => `$${v.toLocaleString()}`} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Segment Breakdown Legend */}
+      <div className="space-y-4 border-t border-gray-600 pt-4">
+        {/* Outer Ring */}
+        <div>
+          <p className="text-xs font-semibold text-gray-400 mb-2 uppercase">Revenue Breakdown (Outer Ring)</p>
+          <div className="space-y-1">
+            {outerSegments.map((seg) => (
+              <div key={seg.name} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }}></div>
+                  <span className="text-gray-300">{seg.name}</span>
+                </div>
+                <span className="text-gray-300">{fmtK(seg.value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Inner Ring */}
+        <div>
+          <p className="text-xs font-semibold text-gray-400 mb-2 uppercase">Expense Ratio (Inner Ring)</p>
+          <div className="space-y-1">
+            {innerSegments.map((seg) => (
+              <div key={seg.name} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }}></div>
+                  <span className="text-gray-300">{seg.name}</span>
+                </div>
+                <span className="text-gray-300">{fmtK(seg.value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
+
+export default function V15rMoneyPanel() {
+  const { isDemoMode, hasHydrated } = useDemoMode()
+  const [, setRemoteRefreshTick] = useState(0)
+  useEffect(() => {
+    const handler = () => setRemoteRefreshTick(t => t + 1)
+    window.addEventListener('poweron-remote-data-refreshed', handler)
+    return () => window.removeEventListener('poweron-remote-data-refreshed', handler)
+  }, [])
+  const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
+  const [weeklyEdit, setWeeklyEdit] = useState<string | null>(null)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [showWeeklyGaps, setShowWeeklyGaps] = useState(true)
+
+  // FORENSIC-KPI-2B2-2H: the 52-week view is an AUTOMATIC derived view of canonical
+  // dated cash. `weeklyData` below is resolved purely from in-memory canonical truth
+  // on every render via resolveWeeklyDataForRead — no manual recalc button, no save,
+  // no reload, no remote sync merely to refresh the chart. Canonical records change
+  // → the 52-week view reflects them on the next render. Manual override rows remain
+  // preserved (see weeklyFinancialPolicy.resolveWeeklyDataForRead).
+
+  if (!backup) {
+    return (
+      <div className="flex items-center justify-center w-full h-64 bg-[var(--bg-secondary)]">
+        <div className="text-gray-500 text-sm">No backup data. Import to view financials.</div>
+      </div>
+    )
+  }
+
+  const canonicalKpis = getCanonicalKpiInputs(backup)
+  const projects = canonicalKpis.projects
+  const logs = projects.flatMap(project => projectLogsFor(backup, project.id))
+  // Phase 6R-A: service money totals below must exclude deleted (tombstoned) and
+  // archived service logs so collected / outstanding / exposure aren't inflated.
+  const serviceLogs = canonicalKpis.serviceLogs
+  const weeklyData = resolveWeeklyDataForRead(backup)
+  const settings = backup.settings || {} as any
+  const mileRate = num(settings.mileRate || 0.66)
+  // COST-TRUTH-3: internal labor cost authority is settings.opCost. settings.billRate
+  // is a separate customer-billing authority and is never substituted here, and there
+  // is no invented fallback rate — an unset opCost yields 0 internal labor cost and the
+  // Total Labor Cost card says the rate is not configured rather than showing a
+  // plausible-looking invented number.
+  const opCostRate = internalLaborRate(settings)
+  const opCostRateMissing = opCostRate <= 0
+
+  // FORENSIC-MONEY-LIFETIME-1 — the ONE canonical lifetime collected figure this
+  // panel uses everywhere it means "cash the business has taken". See the Total
+  // Collected card below for the full rationale.
+  const totalCollectedLifetime = getLifetimeCollectedRevenue(backup)
+
+  // Sync finance buckets
+  syncAllProjectFinanceBuckets(backup)
+
+  // ── Per-project financials ─────────────────────────────────────────────
+  // Phase 6S-B hotfix: exclude archived + soft-deleted projects from ALL Money
+  // tab project-derived sections (Roll-Up totals, Exposure Framework, Cash
+  // Waterfall). projectMoney is the single source every project bucket/list/table
+  // below is built from, so filtering here hides them everywhere at once.
+  const moneyProjects = projects
+  const projectMoney = moneyProjects.map(p => {
+    const m = getProjectFinancials(p, backup)
+    return { p, ...m }
+  })
+
+  // ── Service calculations ───────────────────────────────────────────────
+  const svcCount = serviceLogs.length
+  const svcPaidCount = serviceLogs.filter(l => num(l.collected) > 0).length
+  const svcQuoted = canonicalKpis.serviceQuoted
+  const svcCollected = canonicalKpis.serviceCollected
+  const svcMatTotal = serviceLogs.reduce((s, l) => s + num(l.mat), 0)
+  const svcMilesTotal = serviceLogs.reduce((s, l) => s + num(l.mileCost != null ? l.mileCost : (num(l.miles) * mileRate)), 0)
+  const svcOpTotal = serviceLogs.reduce((s, l) => s + num(l.opCost != null ? l.opCost : (num(l.hrs) * opCostRate)), 0)
+  const svcDirectCosts = svcMatTotal + svcMilesTotal + svcOpTotal
+  const svcProfit = serviceLogs.reduce((s, l) => s + num(l.profit != null ? l.profit : (num(l.quoted) - num(l.mat) - num(l.miles) * mileRate - num(l.hrs) * opCostRate)), 0)
+  const svcOutstanding = canonicalKpis.serviceOutstanding
+  const svcAvgTicket = svcCount ? svcQuoted / svcCount : 0
+  const svcMargin = svcQuoted > 0 ? (svcProfit / svcQuoted) * 100 : 0
+
+  // ── Project aggregates ─────────────────────────────────────────────────
+  const projectContract = projectMoney.reduce((s, m) => s + m.contract, 0)
+  const projectPaid = projectMoney.reduce((s, m) => s + m.paid, 0)
+  const projectBilled = projectMoney.reduce((s, m) => s + m.billed, 0)
+  const projectAR = projectMoney.reduce((s, m) => s + m.ar, 0)
+  const projectUnbilled = projectMoney.reduce((s, m) => s + m.unbilled, 0)
+  const projectRisk = projectMoney.reduce((s, m) => s + m.risk, 0)
+
+  // Logged direct costs for projects
+  const projectLoggedDirectCosts = logs.reduce((s, l) => {
+    const matC = num(l.mat)
+    const mileC = num(l.miles) * mileRate
+    const labC = num(l.hrs) * opCostRate
+    return s + matC + mileC + labC
+  }, 0)
+
+  // Active vs open project money
+  const activeProjectMoney = projectMoney.filter(m => isActiveProject(m.p) && resolveProjectBucket(m.p) === 'active')
+  const openProjectMoney = projectMoney.filter(m => isActiveProject(m.p) && resolveProjectBucket(m.p) !== 'completed')
+
+  // Active AR with fallback logic
+  const receivableFallback = (m: any) => {
+    const b = num(m.billed), p = num(m.paid), r = num(m.risk), a = num(m.ar)
+    return b > 0 ? Math.max(0, b - p) : Math.max(0, a || r)
+  }
+  const activeProjectAR = activeProjectMoney.reduce((s, m) => s + receivableFallback(m), 0)
+  const forecastedProjectAR = openProjectMoney.reduce((s, m) => s + Math.max(0, num(m.risk)), 0)
+
+  // ── 4 KPIs ─────────────────────────────────────────────────────────────
+  const grossRevenue = projectContract + svcQuoted
+  // FORENSIC-KPI-2A: "Cash Received · Projects + Service" is historical collected
+  // cash and must read the same canonical authority as Header Paid and the Total
+  // Collected card. The local projectPaid above is the ACTIVE/display-scoped total
+  // that drives the project tables, so it excludes legitimate cash from archived /
+  // lost / cancelled projects — correct for those tables, wrong for this pill.
+  // FORENSIC-MONEY-LIFETIME-1: same canonical lifetime authority as the Total
+  // Collected card and the header "All Time" preset, so the two cannot diverge.
+  const cashReceived = totalCollectedLifetime
+  // netRevenue is computed below after totalCollected and combinedTotalCost are defined
+  const totalExposure = projectAR + projectUnbilled + Math.max(0, svcOutstanding)
+
+  // 52-week accum
+  const ytdAccum = weeklyData.length > 0 ? num(weeklyData[weeklyData.length - 1]?.accum) : 0
+
+  // ── 8 HEADER KPIs (Per-Business Summary) ────────────────────────────────────
+  // 1. Total Pipeline = active project contracts + adjusted service outstanding
+  const totalPipeline = canonicalKpis.pipeline
+
+  // 2. Total Collected — LIFETIME cash.
+  //
+  // FORENSIC-MONEY-LIFETIME-1: cash the business actually took must not vanish
+  // because a record later left the ACTIVE lists. canonicalKpis.collected keeps
+  // archived/lost/cancelled PROJECT cash (isCashHistoryProject) but its Service
+  // half is scoped to isActiveServiceCall, so archiving a paid Service call used
+  // to erase its collected cash from this card.
+  //
+  // getCollectedRevenueForRange(...).lifetimeTotal is the ONE canonical lifetime
+  // authority (Service payments[] reconciled to the collected cache + Project
+  // logged payments + manualPaidAdjustment, tombstones excluded, voids excluded,
+  // refunds signed). It is the same authority the header "All Time" preset uses,
+  // so Money and the header cannot diverge. Pipeline below is unchanged and stays
+  // an ACTIVE-scoped forward-looking figure — archiving a paid project may reduce
+  // Pipeline while Total Collected stays put.
+  const totalCollected = totalCollectedLifetime
+
+  // 3. Total Material Cost = sum of mat field across all logs + service logs
+  const projectMatCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + num(l.mat), 0), 0)
+  const totalMatCost = projectMatCost + svcMatTotal
+
+  // 4. Total Labor Cost = sum of hours × costRate across all logs
+  const totalLaborCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + (num(l.hrs) * opCostRate), 0), 0) + svcOpTotal
+
+  // 5. Total Mileage Cost = sum of miles × mileRate across all logs + service logs
+  const totalMileageCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + (num(l.miles) * mileRate), 0), 0) + svcMilesTotal
+
+  // 6. Combined Total Cost = mat + labor + mileage
+  const combinedTotalCost = totalMatCost + totalLaborCost + totalMileageCost
+
+  // B43 fix: Net Revenue = Total Collected (projects + service) minus Total Direct Costs (mat + labor + mileage)
+  // Previous formula used projectContract (full contract value, not cash received) which caused
+  // Net Revenue to exceed Pipeline. Correct: only collected cash minus actual logged costs.
+  const netRevenue = totalCollected - combinedTotalCost
+
+  // 7. Gross Margin % = ((collected - totalCost) / collected × 100)
+  const grossMarginPct = totalCollected > 0 ? ((totalCollected - combinedTotalCost) / totalCollected) * 100 : 0
+
+  // 8. Balance Left = total pipeline - total collected
+  const balanceLeft = totalPipeline - totalCollected
+
+  // Generate AI insights for collections
+  const generateMoneyInsights = (): Insight[] => {
+    const insights: Insight[] = []
+
+    // AR aging: flag projects with high exposure (> 50% of contract)
+    const highExposure = projectMoney.filter(m => {
+      const exposure = m.p.contract ? (m.unbilled / m.p.contract) * 100 : 0
+      return exposure > 50
+    })
+    if (highExposure.length > 0) {
+      insights.push({
+        icon: '⚠️',
+        text: `${highExposure.length} project(s) have >50% exposure. Prioritize collections.`,
+        severity: 'warning',
+      })
+    }
+
+    // Collection priorities: highest balance + oldest date
+    const overdue = projectMoney
+      .filter(m => m.unbilled > 1000)
+      .sort((a, b) => {
+        const aDays = daysSince(a.p.lastCollectedAt || '1970-01-01')
+        const bDays = daysSince(b.p.lastCollectedAt || '1970-01-01')
+        return bDays - aDays
+      })
+      .slice(0, 3)
+
+    if (overdue.length > 0) {
+      const topName = overdue[0].p.name
+      const topAR = fmtK(overdue[0].unbilled)
+      insights.push({
+        icon: 'ℹ️',
+        text: `Top follow-up: ${topName} (${topAR} AR, ${daysSince(overdue[0].p.lastCollectedAt || '1970-01-01')} days).`,
+        severity: 'info',
+      })
+    }
+
+    // Margin check
+    if (grossMarginPct < 30) {
+      insights.push({
+        icon: '⚠️',
+        text: `Gross margin is ${grossMarginPct.toFixed(1)}%. Below 30% threshold — review pricing.`,
+        severity: 'warning',
+      })
+    } else if (grossMarginPct >= 45) {
+      insights.push({
+        icon: '✓',
+        text: `Gross margin is healthy at ${grossMarginPct.toFixed(1)}%.`,
+        severity: 'success',
+      })
+    }
+
+    // Overall exposure — uses outer totalExposure (projectAR + projectUnbilled + svcOutstanding)
+    if (totalExposure > totalCollected) {
+      insights.push({
+        icon: 'ℹ️',
+        text: `Total exposure (${fmtK(totalExposure)}) exceeds collected. Cash flow risk.`,
+        severity: 'warning',
+      })
+    }
+
+    if (insights.length === 0) {
+      insights.push({
+        icon: '✓',
+        text: 'Collections and margins look solid.',
+        severity: 'success',
+      })
+    }
+
+    return insights
+  }
+
+  return (
+    <div className="min-h-screen bg-[var(--bg-secondary)] p-6 space-y-6">
+
+      {/* Header with AI button */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-white">Financial Overview</h2>
+        <AskAIButton onClick={() => setAiOpen(true)} />
+      </div>
+
+      {/* ── 8 HEADER KPI CARDS (Per-Business Summary) ──────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { lbl: 'Total Pipeline', val: fmtK(totalPipeline), sub: 'Active contracts + service outstanding' },
+          { lbl: 'Total Collected', val: fmtK(totalCollected), sub: 'Lifetime cash — Projects + Service', clr: '#10b981' },
+          { lbl: 'Total Material Cost', val: fmtK(totalMatCost), sub: 'All materials', isMaterialCard: true },
+          { lbl: 'Total Labor Cost', val: opCostRateMissing ? 'Rate not set' : fmtK(totalLaborCost), sub: opCostRateMissing ? 'Set Settings → operating cost' : 'All hours × internal rate', clr: opCostRateMissing ? '#f59e0b' : undefined },
+          { lbl: 'Total Mileage Cost', val: fmtK(totalMileageCost), sub: 'All miles × rate' },
+          { lbl: 'Combined Total Cost', val: opCostRateMissing ? 'Rate not set' : fmtK(combinedTotalCost), sub: 'Mat + Labor + Mile', clr: opCostRateMissing ? '#f59e0b' : undefined },
+          { lbl: 'Gross Margin %', val: opCostRateMissing ? '—' : grossMarginPct.toFixed(1) + '%', sub: '(Collected - Cost) / Collected', clr: opCostRateMissing ? '#f59e0b' : grossMarginPct >= 50 ? '#10b981' : grossMarginPct >= 30 ? '#f59e0b' : '#ef4444' },
+          { lbl: 'Balance Left', val: fmtK(balanceLeft), sub: 'Pipeline - Collected', clr: balanceLeft >= 0 ? '#10b981' : '#ef4444' },
+        ].map((k: any, i) => (
+          <div key={i} className="bg-[var(--bg-card)] border border-gray-700/50 rounded-lg p-3">
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">{k.lbl}</div>
+            <div className="text-lg font-bold font-mono mt-1" style={{ color: k.clr || '#f0f0ff' }}>{k.val}</div>
+            {k.isMaterialCard ? (
+              <div className="mt-1 space-y-0.5">
+                <div className="text-[10px] text-gray-500">Projects: <span className="text-gray-400 font-mono">{fmtK(projectMatCost)}</span></div>
+                <div className="text-[10px] text-gray-500">Service Calls: <span className="text-gray-400 font-mono">{fmtK(svcMatTotal)}</span></div>
+              </div>
+            ) : (
+              <div className="text-[10px] text-gray-600 mt-0.5">{k.sub}</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── BUSINESS HEALTH OVERVIEW (Dual-Ring Doughnut Chart) ──────────── */}
+      <ChartErrorBoundary>
+        <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Business Health Overview</h3>
+          <BusinessHealthChart backup={backup} />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4 text-[10px]">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-green-500 rounded-full" />
+              <span className="text-gray-300">Pipeline: <span className="font-mono font-bold">{fmtK(projectContract)}</span></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-blue-500 rounded-full" />
+              <span className="text-gray-300">Paid: <span className="font-mono font-bold">{fmtK(projectPaid)}</span></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-yellow-500 rounded-full" />
+              <span className="text-gray-300">Unbilled: <span className="font-mono font-bold">{fmtK(projectUnbilled)}</span></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-red-500 rounded-full" />
+              <span className="text-gray-300">Overhead: <span className="font-mono font-bold">{fmtK(projectPaid * (num(settings.overheadPct || 30) / 100))}</span></span>
+            </div>
+          </div>
+        </div>
+      </ChartErrorBoundary>
+
+      {/* ── 4 KPI PILLS ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { cls: 'border-l-emerald-500', lbl: 'Gross Revenue', val: fmtK(grossRevenue), sub: 'Contract + Quoted' },
+          { cls: 'border-l-blue-500', lbl: 'Cash Received', val: fmtK(cashReceived), sub: 'Projects + Service' },
+          { cls: 'border-l-cyan-500', lbl: 'Net Revenue', val: fmtK(netRevenue), sub: 'After direct costs', color: netRevenue >= 0 ? '#10b981' : '#ef4444' },
+          { cls: 'border-l-red-500', lbl: 'Total Exposure', val: fmtK(totalExposure), sub: 'AR + Unbilled + Svc' },
+        ].map((k, i) => (
+          <div key={i} className={`rounded-lg border border-gray-800 border-l-4 ${k.cls} bg-[var(--bg-card)] p-3`}>
+            <div className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">{k.lbl}</div>
+            <div className="text-lg font-bold font-mono mt-1" style={{ color: k.color || '#f0f0ff' }}>{k.val}</div>
+            <div className="text-[9px] text-gray-500 mt-0.5">{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── SERVICE JOB PERFORMANCE ──────────────────────────────────────── */}
+      <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Service Job Performance</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {[
+            { lbl: 'Jobs Logged', val: String(svcCount) },
+            { lbl: 'Jobs Paid', val: String(svcPaidCount) },
+            { lbl: 'Quoted Revenue', val: fmtK(svcQuoted) },
+            { lbl: 'Collected Cash', val: fmtK(svcCollected), clr: '#10b981' },
+            { lbl: 'Material Cost', val: fmtK(svcMatTotal), clr: '#f59e0b' },
+            { lbl: 'Mileage Cost', val: fmtK(svcMilesTotal) },
+            { lbl: 'Operating Cost', val: fmtK(svcOpTotal) },
+            { lbl: 'Avg Ticket', val: fmtK(svcAvgTicket) },
+            { lbl: 'Outstanding', val: fmtK(svcOutstanding), clr: svcOutstanding > 0 ? '#ef4444' : '#10b981' },
+            { lbl: 'Margin', val: svcMargin.toFixed(1) + '%', clr: svcMargin >= 50 ? '#10b981' : svcMargin >= 30 ? '#f59e0b' : '#ef4444' },
+            { lbl: 'Net Profit', val: fmtK(svcProfit), clr: svcProfit >= 0 ? '#10b981' : '#ef4444' },
+          ].map((m, i) => (
+            <div key={i} className="bg-[var(--bg-input)] rounded-lg p-2.5">
+              <div className="text-[8px] uppercase text-gray-500 font-bold tracking-wider">{m.lbl}</div>
+              <div className="text-sm font-bold font-mono mt-1" style={{ color: m.clr || '#e5e7eb' }}>{m.val}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── BUSINESS ROLL-UP ─────────────────────────────────────────────── */}
+      <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Business Roll-Up</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {[
+            { lbl: 'Project Contract', val: fmtK(projectContract) },
+            { lbl: 'Service Quoted', val: fmtK(svcQuoted) },
+            { lbl: 'Project Paid', val: fmtK(projectPaid), clr: '#10b981' },
+            { lbl: 'Service Collected', val: fmtK(svcCollected), clr: '#10b981' },
+            { lbl: 'Active Project AR', val: fmtK(activeProjectAR), clr: '#f59e0b' },
+            { lbl: 'Forecasted AR', val: fmtK(forecastedProjectAR), clr: '#f97316' },
+            { lbl: 'Service Outstanding', val: fmtK(svcOutstanding), clr: svcOutstanding > 0 ? '#ef4444' : '#10b981' },
+            { lbl: 'Project Unbilled', val: fmtK(projectUnbilled), clr: '#ef4444' },
+            { lbl: 'Logged Direct Costs', val: fmtK(projectLoggedDirectCosts) },
+            { lbl: '52-Week Accum', val: fmtK(ytdAccum), clr: '#3b82f6' },
+            { lbl: 'Total Direct Costs', val: fmtK(projectLoggedDirectCosts + svcDirectCosts) },
+          ].map((m, i) => (
+            <div key={i} className="bg-[var(--bg-input)] rounded-lg p-2.5">
+              <div className="text-[8px] uppercase text-gray-500 font-bold tracking-wider">{m.lbl}</div>
+              <div className="text-sm font-bold font-mono mt-1" style={{ color: m.clr || '#e5e7eb' }}>{m.val}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── EXPOSURE FRAMEWORK ───────────────────────────────────────────── */}
+      <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Exposure Framework</h3>
+        <div className="overflow-x-auto scrollbar-hide -mx-4 px-4"
+          style={{
+            WebkitOverflowScrolling: 'touch',
+            msOverflowStyle: 'none',
+            scrollbarWidth: 'none',
+          }}>
+          <table className="w-full text-[10px]">
+            <thead>
+              <tr className="text-gray-500 uppercase border-b border-gray-700">
+                <th className="text-left py-2 px-2 font-bold">Project</th>
+                <th className="text-right py-2 px-2 font-bold">Contract</th>
+                <th className="text-right py-2 px-2 font-bold">Billed</th>
+                <th className="text-right py-2 px-2 font-bold">Paid</th>
+                <th className="text-right py-2 px-2 font-bold">Retention</th>
+                <th className="text-right py-2 px-2 font-bold">Unbilled</th>
+                <th className="text-right py-2 px-2 font-bold">AR</th>
+                <th className="text-right py-2 px-2 font-bold">Risk</th>
+                <th className="text-left py-2 px-2 font-bold">Signal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projectMoney.map(m => {
+                const retP = m.contract > 0 ? (1 - (m.paid / m.contract)) * 100 : 100
+                const d = daysSince(m.p.lastMove)
+                const pp = m.paid / Math.max(m.contract, 1)
+
+                // Signal logic
+                let sig = '', sigClr = ''
+                if (m.paid > 0 && pp < 0.3) { sig = 'First pay in'; sigClr = '#10b981' }
+                else if (pp >= 0.8) { sig = 'Near complete'; sigClr = '#10b981' }
+                else if (m.ar > 0 && m.ar < m.contract * 0.15) { sig = 'Small AR risk'; sigClr = '#f59e0b' }
+                else if (m.ar >= m.contract * 0.15) { sig = 'Big AR risk'; sigClr = '#f59e0b' }
+                else if (m.unbilled < m.contract * 0.2 && m.unbilled > 0) { sig = 'Unbilled low'; sigClr = '#ef4444' }
+                else if (d > 14 && !m.paid) { sig = 'Money stalled'; sigClr = '#ef4444' }
+
+                return (
+                  <tr key={m.p.id} className="border-b border-gray-800/50 hover:bg-gray-700/20">
+                    <td className="py-2 px-2 text-gray-200 font-semibold">{m.p.name}</td>
+                    <td className="py-2 px-2 text-right font-mono text-gray-300">{fmtK(m.contract)}</td>
+                    <td className="py-2 px-2 text-right font-mono text-gray-300">{fmtK(m.billed)}</td>
+                    <td className="py-2 px-2 text-right font-mono text-emerald-400">{fmtK(m.paid)}</td>
+                    <td className="py-2 px-2 text-right font-mono text-gray-400">{retP.toFixed(0)}%</td>
+                    <td className="py-2 px-2 text-right font-mono text-red-400">{fmtK(m.unbilled)}</td>
+                    <td className="py-2 px-2 text-right font-mono text-yellow-400">{fmtK(m.ar)}</td>
+                    <td className="py-2 px-2 text-right font-mono text-orange-400">{fmtK(m.risk)}</td>
+                    <td className="py-2 px-2" style={{ color: sigClr }}>{sig || '\u2014'}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── CASH WATERFALL (Premium Quality) ────────────────────────────── */}
+      <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Cash Waterfall</h3>
+        <div className="space-y-4">
+          {projectMoney.map(m => {
+            const tot = Math.max(m.contract, 1)
+            const paidPct = (m.paid / tot) * 100
+            const arPct = (m.ar / tot) * 100
+            const unbilledPct = (m.unbilled / tot) * 100
+
+            return (
+              <div key={m.p.id} className="bg-[var(--bg-input)] rounded-lg p-3.5 border border-gray-700/30 hover:border-gray-600/50 transition-colors">
+                {/* Header with project name and total contract */}
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="text-[11px] font-semibold text-gray-200">{m.p.name}</span>
+                  <span className="text-[10px] font-mono text-gray-400">Contract: {fmtK(m.contract)}</span>
+                </div>
+
+                {/* Premium horizontal stacked bar */}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-6 bg-gray-700/30 rounded overflow-hidden flex" title={`Contract: $${m.contract} | Billed: $${m.billed} | Paid: $${m.paid} | AR: $${m.ar} | Unbilled: $${m.unbilled}`}>
+                    {/* Green segment = Paid (collected) */}
+                    {paidPct > 0 && (
+                      <div
+                        style={{ width: `${paidPct}%` }}
+                        className="bg-emerald-500 h-full flex items-center justify-center text-[9px] font-bold text-white transition-all hover:bg-emerald-600"
+                        title={`Paid: $${m.paid}`}
+                      >
+                        {paidPct > 12 && <span className="drop-shadow-md">${fmtK(m.paid)}</span>}
+                      </div>
+                    )}
+
+                    {/* Yellow segment = AR (billed but not paid) */}
+                    {arPct > 0 && (
+                      <div
+                        style={{ width: `${arPct}%` }}
+                        className="bg-yellow-500 h-full flex items-center justify-center text-[9px] font-bold text-gray-900 transition-all hover:bg-yellow-600"
+                        title={`AR (Billed): $${m.ar}`}
+                      >
+                        {arPct > 12 && <span className="drop-shadow-md">${fmtK(m.ar)}</span>}
+                      </div>
+                    )}
+
+                    {/* Red segment = Unbilled (contract - billed) */}
+                    {unbilledPct > 0 && (
+                      <div
+                        style={{ width: `${unbilledPct}%` }}
+                        className="bg-red-500 h-full flex items-center justify-center text-[9px] font-bold text-white transition-all hover:bg-red-600"
+                        title={`Unbilled: $${m.unbilled}`}
+                      >
+                        {unbilledPct > 12 && <span className="drop-shadow-md">${fmtK(m.unbilled)}</span>}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right-side total label */}
+                  <span className="text-[10px] font-mono text-gray-500 w-16 text-right">${fmtK(m.contract)}</span>
+                </div>
+
+                {/* Detailed breakdown footer */}
+                <div className="grid grid-cols-4 gap-2 mt-2.5 text-[9px]">
+                  <div className="flex items-center gap-1">
+                    <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full" />
+                    <span className="text-gray-400">Paid: <span className="font-mono font-semibold text-gray-200">${fmtK(m.paid)}</span></span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2.5 h-2.5 bg-yellow-500 rounded-full" />
+                    <span className="text-gray-400">AR: <span className="font-mono font-semibold text-gray-200">${fmtK(m.ar)}</span></span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full" />
+                    <span className="text-gray-400">Unbilled: <span className="font-mono font-semibold text-gray-200">${fmtK(m.unbilled)}</span></span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2.5 h-2.5 bg-blue-500 rounded-full" />
+                    <span className="text-gray-400">Billed: <span className="font-mono font-semibold text-gray-200">${fmtK(m.billed)}</span></span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── PAYMENT TRACKER ──────────────────────────────────────────────── */}
+      <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Payment Tracker</h3>
+        <div className="space-y-3">
+          {[...projectMoney].sort((a, b) => b.contract - a.contract).map(m => {
+            const tot = Math.max(m.contract, 1)
+            const paidPct = Math.min(100, (m.paid / tot) * 100)
+            const arPct = Math.min(100 - paidPct, (m.ar / tot) * 100)
+            const pp = m.paid / Math.max(m.contract, 1)
+
+            let chip = '', chipClr = ''
+            if (m.contract === 0) { chip = 'No quote'; chipClr = '#6b7280' }
+            else if (m.paid >= m.contract) { chip = 'Paid in full'; chipClr = '#10b981' }
+            else if (m.paid === 0 && m.billed === 0) { chip = 'Not started'; chipClr = '#6b7280' }
+            else if (pp < 0.3) { chip = 'Deposit in'; chipClr = '#3b82f6' }
+            else if (pp < 0.8) { chip = 'In progress'; chipClr = '#f59e0b' }
+            else { chip = 'Near done'; chipClr = '#10b981' }
+
+            return (
+              <div key={m.p.id} className="bg-[var(--bg-input)] rounded-lg p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div>
+                    <span className="text-xs font-semibold text-gray-200">{m.p.name}</span>
+                    <span className="text-[9px] text-gray-500 ml-2">{m.p.type}</span>
+                  </div>
+                  <span className="text-[9px] px-2 py-0.5 rounded-full font-bold" style={{ background: chipClr + '22', color: chipClr }}>{chip}</span>
+                </div>
+                <div className="flex h-2 rounded overflow-hidden bg-gray-700/50">
+                  {paidPct > 0 && <div style={{ width: `${paidPct}%`, background: '#10b981' }} />}
+                  {arPct > 0 && <div style={{ width: `${arPct}%`, background: '#f59e0b' }} />}
+                </div>
+                <div className="flex justify-between text-[9px] text-gray-500 mt-1">
+                  <span>Paid {fmtK(m.paid)} ({paidPct.toFixed(0)}%)</span>
+                  <span>Contract {fmtK(m.contract)}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── 52-WEEK VISUALIZATION ────────────────────────────────────────── */}
+      {weeklyData.length > 0 && (() => {
+        // B41 Fix 5: Compute Monday of current week as base for week 1
+        const todayBase = new Date()
+        const dayOfWeek = todayBase.getDay() // 0=Sun, 1=Mon, ...
+        const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+        const currentMonday = new Date(todayBase)
+        currentMonday.setHours(0, 0, 0, 0)
+        currentMonday.setDate(todayBase.getDate() + daysToMonday)
+        // weekStartDate(wk) = currentMonday + (wk - 1) * 7 days
+        function weekStartDate(wkNum: number): string {
+          const d = new Date(currentMonday.getTime() + (wkNum - 1) * 7 * 86400000)
+          return d.toISOString().slice(0, 10)
+        }
+        return (
+      <div className="rounded-xl border border-gray-800 bg-[var(--bg-card)] p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">52-Week Cash Flow</h3>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setShowWeeklyGaps(!showWeeklyGaps)}
+          className={`px-2 py-1 rounded text-xs font-semibold transition-all ${
+            showWeeklyGaps
+              ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
+              : 'bg-gray-700/30 text-gray-400 border border-gray-600/30'
+          }`}
+        >
+          {showWeeklyGaps ? 'Hide Gaps' : 'Show Gaps'}
+        </button>
+      </div>
+    </div>
+    <div className="overflow-x-auto scrollbar-hide -mx-6 px-6"
+      style={{
+        WebkitOverflowScrolling: 'touch',
+        msOverflowStyle: 'none',
+        scrollbarWidth: 'none',
+      }}>
+      <table className="w-full text-[10px]">
+        <thead>
+          <tr className="text-gray-500 uppercase border-b border-gray-700">
+            <th className="text-left py-2 px-1 font-bold">Wk</th>
+            <th className="text-left py-2 px-1 font-bold">Start</th>
+            <th className="text-right py-2 px-1 font-bold">Income</th>
+            <th className="text-right py-2 px-1 font-bold">Project</th>
+            <th className="text-right py-2 px-1 font-bold">Service</th>
+            <th className="text-right py-2 px-1 font-bold">Unbilled</th>
+            <th className="text-right py-2 px-1 font-bold">Pending</th>
+            <th className="text-right py-2 px-1 font-bold">Exposure</th>
+            <th className="text-right py-2 px-1 font-bold">Accum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {weeklyData.map((w: any) => {
+            const inc = num(w.proj) + num(w.svc)
+            const exposure = num(w.unbilled) + num(w.pendingInv)
+
+            // Persisted start is the weekly identity used by the shared reader.
+            const computedStart = w.start || weekStartDate(w.wk)
+            const today = new Date()
+            const weekStart = new Date(computedStart + 'T00:00:00')
+            const isCurrentWeek = isCurrentWeeklyRow(w, today)
+            const isPast = weekStart < today && !isCurrentWeek
+            const hasNoActivity = num(w.proj) === 0 && num(w.svc) === 0
+            const isGapWeek = isPast && hasNoActivity && showWeeklyGaps
+
+            // Row styling
+            let rowBorderClass = ''
+            let rowBgClass = ''
+            if (isCurrentWeek) {
+              rowBorderClass = 'border-l-2 border-l-blue-500'
+              rowBgClass = 'bg-blue-500/5'
+            } else if (isGapWeek) {
+              rowBorderClass = 'border-l-2 border-l-amber-500/60'
+              rowBgClass = 'bg-amber-500/5'
+            }
+
+            return (
+              <tr key={w.wk} className={`border-b border-gray-800/30 ${rowBorderClass} ${rowBgClass}`}>
+                <td className="py-1.5 px-1 font-mono text-gray-300">{w.wk}</td>
+                <td className="py-1.5 px-1 font-mono text-gray-300">{computedStart}</td>
+                <td className="py-1.5 px-1 text-right font-mono text-gray-300">{inc || '\u2014'}</td>
+                <td className="py-1.5 px-1 text-right font-mono text-gray-300">
+                  {isGapWeek && !w.proj ? (
+                    <span className="text-amber-500/70 text-[9px]">📅 No activity</span>
+                  ) : (w.proj || '\u2014')}
+                </td>
+                <td className="py-1.5 px-1 text-right font-mono text-gray-300">
+                  {isGapWeek && !w.svc ? (
+                    <span className="text-amber-500/70 text-[9px]">📅 No activity</span>
+                  ) : (w.svc || '\u2014')}
+                </td>
+                <td className="py-1.5 px-1 text-right font-mono text-gray-300">{w.unbilled || '\u2014'}</td>
+                <td className="py-1.5 px-1 text-right font-mono text-gray-300">{w.pendingInv || '\u2014'}</td>
+                <td className="py-1.5 px-1 text-right font-mono" style={{ color: exposure > 0 ? '#ef4444' : undefined }}>{exposure || '\u2014'}</td>
+                <td className="py-1.5 px-1 text-right font-mono font-bold" style={{ color: '#3b82f6' }}>
+                  {w.accum ? Math.round(num(w.accum)).toLocaleString() : '\u2014'}
+                  {isCurrentWeek && <span className="ml-1 text-blue-400 text-[9px]">← Current</span>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      </div>
+    </div>
+        ) // end IIFE return
+      })(/* B41 Fix 5 IIFE */)}
+
+      <AskAIPanel
+        panelName="Money"
+        insights={generateMoneyInsights()}
+        dataContext={{
+          totalPipeline,
+          totalCollected,
+          grossMarginPct,
+          balanceLeft,
+          totalMatCost,
+          totalLaborCost,
+          totalMileageCost,
+          combinedTotalCost,
+          activeProjects: projectMoney.length,
+          highExposureProjects: projectMoney.filter(m => {
+            const exposure = m.p.contract ? (m.unbilled / m.p.contract) * 100 : 0
+            return exposure > 50
+          }).map(m => ({ name: m.p.name, unbilled: m.unbilled, contract: m.p.contract })),
+          serviceTotals: { quoted: svcQuoted, collected: svcCollected, outstanding: svcOutstanding },
+        }}
+        isOpen={aiOpen}
+        onClose={() => setAiOpen(false)}
+      />
+    </div>
+  )
+}

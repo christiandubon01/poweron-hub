@@ -1,0 +1,78 @@
+import type { CashOsSnapshot } from '@/finance/cashOsSnapshot'
+import { CashCollectionClock } from './CashOsOutlook'
+import { CashCard, CashEmpty, cashDate, money } from './cashOsUi'
+
+export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
+  const { projection } = snapshot
+  const dates = [...new Set([...projection.datedEvents.map(e => e.date),
+    ...projection.datedMarkers.map(m => m.date).filter((date): date is string => !!date)])].sort()
+  return <CashCard title="Cash Calendar">
+    <p className="mb-5 text-xs text-[var(--text-secondary)]">Canonical events and unresolved markers in the selected projection horizon.</p>
+    {dates.length ? <div className="space-y-4">{dates.map(date => <div key={date} className="rounded-xl border border-[var(--border-primary)] p-4">
+      <h4 className="mb-2 font-semibold">{cashDate(date)}</h4>
+      {projection.datedEvents.filter(event => event.date === date).map(event => <p key={event.sourceKey} className="flex justify-between gap-3 py-1 text-sm">
+        <span>{event.label} <small className="text-[var(--text-muted)]">{event.confidence}</small></span><span className="font-mono">{event.direction === 'outflow' ? '−' : '+'}{money(event.amountMinor)}</span>
+      </p>)}
+      {projection.datedMarkers.filter(marker => marker.date === date).map(marker => <p key={`${marker.sourceKey}:${marker.reason}`} className="py-1 text-xs text-amber-300">{marker.label} · {marker.reason.replace(/_/g, ' ')} · {money(marker.amountMinor)}</p>)}
+    </div>)}</div> : <CashEmpty>No dated events in this horizon.</CashEmpty>}
+    <h4 className="mb-2 mt-6 font-semibold">Undated / unresolved</h4>
+    {projection.undatedMarkers.length ? projection.undatedMarkers.map(marker => <p key={`${marker.sourceKey}:${marker.reason}`} className="border-b border-[var(--border-primary)] py-2 text-xs text-amber-300">
+      {marker.label} · {marker.semanticCode === 'payment_timing_unknown' ? 'Payment timing unknown' : 'Date unknown'} · {money(marker.amountMinor)}
+    </p>) : <CashEmpty>No undated markers.</CashEmpty>}
+  </CashCard>
+}
+
+export function CashProjectsView({ snapshot }: { snapshot: CashOsSnapshot }) {
+  return <CashCollectionClock snapshot={snapshot} />
+}
+
+export function CashPayrollView({ snapshot, partial }: { snapshot: CashOsSnapshot; partial: boolean }) {
+  const { payroll } = snapshot
+  return <div className="space-y-5"><CashCard title="Cash payroll exposure">
+    <div className="grid gap-4 sm:grid-cols-3">
+      <div><span className="block text-xs text-[var(--text-muted)]">Paid through</span><strong>{cashDate(snapshot.setup.payrollPaidThroughDate)}</strong></div>
+      <div><span className="block text-xs text-[var(--text-muted)]">Open shift estimates</span><strong>{snapshot.setup.includeOpenShiftEstimates ? 'Included' : 'Excluded'}</strong></div>
+      <div><span className="block text-xs text-[var(--text-muted)]">Current exposure</span><strong className="font-mono">{partial ? 'Partial / Needs attention' : money(snapshot.payrollExposureMinor)}</strong></div>
+    </div>
+    <p className="mt-4 text-xs text-[var(--text-secondary)]">Base cash wages only. Loaded employer cost is not used as payroll cash exposure.</p>
+    <h4 className="mb-2 mt-6 text-sm font-semibold">Liabilities</h4>
+    {payroll.liabilities.length ? <div className="space-y-2">{payroll.liabilities.map(liability => <div key={liability.provenance.source.recordId} className="flex flex-wrap justify-between gap-3 border-b border-[var(--border-primary)] py-2 text-sm">
+      <div>{liability.label}<span className="block text-xs text-[var(--text-muted)]">{liability.provenance.confidence} · {liability.provenance.source.kind} · {liability.attribution.projectId ? `Project ${liability.attribution.projectId}` : 'Project unattributed'}</span></div>
+      <strong className="font-mono">{money(liability.amountMinor)}</strong>
+    </div>)}</div> : <CashEmpty>No unpaid payroll liabilities were derived from the loaded time rows.</CashEmpty>}
+    <p className="mt-4 text-xs text-[var(--text-secondary)]">Unattributed project payroll: {money(snapshot.collectionClock.unattributedPayrollMinor)}</p>
+  </CashCard>
+    <CashCard title="Payroll diagnostics">{snapshot.payrollDiagnostics.length ? <ul className="space-y-2 text-sm text-amber-300">{snapshot.payrollDiagnostics.map((diagnostic, index) => <li key={`${diagnostic.kind}:${diagnostic.sourceId ?? index}`}>
+      {diagnostic.kind.replace(/_/g, ' ')} · {diagnostic.note}
+    </li>)}</ul> : <CashEmpty>No payroll diagnostics.</CashEmpty>}</CashCard>
+  </div>
+}
+
+export function CashTransactionsView({ snapshot }: { snapshot: CashOsSnapshot }) {
+  const accounts = snapshot.accounts.filter(a => a.status === 'active')
+  const transactions = [...snapshot.transactions].sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id)).slice(0, 40)
+  return <div className="space-y-5"><CashCard title="Financial accounts">
+    {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
+      <strong>{account.display_name}</strong><span className="block text-xs text-[var(--text-muted)]">{account.account_type} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}</span>
+      <span className="mt-2 block font-mono">{money(snapshot.accountBalancesMinor[account.id])}</span>
+    </div>)}</div> : <CashEmpty>Account setup required.</CashEmpty>}
+  </CashCard><CashCard title="Recent ledger transactions">
+    {transactions.length ? <div className="overflow-x-auto"><table className="w-full min-w-[550px] text-left text-sm"><thead className="text-xs uppercase text-[var(--text-muted)]"><tr><th className="py-2">Date</th><th>Description</th><th>Category / project</th><th className="text-right">Movement</th></tr></thead><tbody>
+      {transactions.map(tx => <tr key={tx.id} className="border-t border-[var(--border-primary)]"><td className="py-2">{cashDate(tx.transaction_date)}</td><td>{tx.description || tx.transaction_kind}<span className="block text-xs text-[var(--text-muted)]">{tx.status}</span></td><td>{tx.category ?? '—'}{tx.project_id ? ` · ${tx.project_id}` : ''}</td><td className="text-right font-mono">{money(tx.amount_minor)}</td></tr>)}
+    </tbody></table></div> : <CashEmpty>No ledger transactions were loaded.</CashEmpty>}
+  </CashCard></div>
+}
+
+export function CashObligationsView({ snapshot }: { snapshot: CashOsSnapshot }) {
+  return <div className="grid gap-5 xl:grid-cols-2"><CashCard title="Recurring obligations">
+    {snapshot.obligations.length ? <div className="space-y-3">{snapshot.obligations.map(row => <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
+      <div className="flex justify-between gap-3"><strong>{row.name}</strong><span className="font-mono">{money(row.amount.minor)}</span></div>
+      <p className="mt-1 text-xs text-[var(--text-secondary)]">{row.recurrence.kind.replace(/_/g, ' ')} from {cashDate(row.recurrence.startDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}{row.projectId ? ` · Project ${row.projectId}` : ''}{row.debtAccountId ? ` · Debt ${row.debtAccountId}` : ''}</p>
+    </div>)}</div> : <CashEmpty>No recurring obligations were loaded.</CashEmpty>}
+  </CashCard><CashCard title="Cash commitments">
+    {snapshot.commitments.length ? <div className="space-y-3">{snapshot.commitments.map(row => <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
+      <div className="flex justify-between gap-3"><strong>{row.title}</strong><span className="font-mono">{money(row.amount.minor)}</span></div>
+      <p className="mt-1 text-xs text-[var(--text-secondary)]">{cashDate(row.expectedDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}{row.projectId ? ` · Project ${row.projectId}` : ''}{row.debtAccountId ? ` · Debt ${row.debtAccountId}` : ''}</p>
+    </div>)}</div> : <CashEmpty>No cash commitments were loaded.</CashEmpty>}
+  </CashCard></div>
+}
