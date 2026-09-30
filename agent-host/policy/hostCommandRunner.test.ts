@@ -14,8 +14,8 @@ import type { ChildProcess } from 'node:child_process';
 import { buildHostCheckEnvironment, executeHostCommand } from './hostCommandRunner.ts';
 import { parseValidationCommand } from './commandPolicy.ts';
 import { validatePlan } from '../control/types.ts';
-import { assertHostCheckRootOutsideCanonical, compareCanonicalTripwire, ensureHostDependencySnapshot, fingerprintCanonicalRepo, makeHostCheckCopy, removeHostCheckCopy, type CanonicalTripwire } from '../control/hostCheckIsolation.ts';
-import { buildVerifierHostCheckBlock, classifyHostCheckFailure, hostCheckTimeoutForDeadline, inferVerificationCommands, runVerifierHostChecks } from '../control/verifierHostChecks.ts';
+import { assertHostCheckRootOutsideCanonical, compareCanonicalTripwire, ensureHostDependencySnapshot, fingerprintCanonicalRepo, FingerprintError, makeHostCheckCopy, removeHostCheckCopy, type CanonicalTripwire } from '../control/hostCheckIsolation.ts';
+import { buildVerifierHostCheckBlock, classifyHostCheckFailure, hostCheckTimeoutForDeadline, inferVerificationCommands, runVerifierHostChecks, type HostCheckLogSink } from '../control/verifierHostChecks.ts';
 import { captureWorkspaceTree, writeCapturedBaseline } from '../workspace.ts';
 import { APPLY_OWNER_REASONS, projectCandidateApply } from '../control/applyCandidate.ts';
 import type { OrchestrationEventRecord } from '../lib/orchestrationTypes.ts';
@@ -209,31 +209,138 @@ test('CT-VERIFY-1 B: resolved Host roots cannot point into the canonical project
   } finally { await rm(alias, { recursive: false, force: true }); await rm(root, { recursive: true, force: true }); }
 });
 
-test('CT-VERIFY-1 B: tripwire detects tracked, untracked, and dependency changes without false positives', () => {
-  const before: CanonicalTripwire = { head: 'a', porcelainSha256: 'status', packageLockSha256: 'lock', nodeModulesTop: ['.package-lock.json', 'foo'], files: new Map([['tracked.ts', 'one'], ['node_modules/foo/index.js', 'dep']]) };
-  assert.equal(compareCanonicalTripwire(before, { ...before, files: new Map(before.files) }).modified, false);
-  assert.ok(compareCanonicalTripwire(before, { ...before, files: new Map([['tracked.ts', 'two'], ['node_modules/foo/index.js', 'dep']]) }).paths.includes('tracked.ts'));
-  assert.ok(compareCanonicalTripwire(before, { ...before, porcelainSha256: 'new-status', files: new Map([...before.files, ['untracked.ts', 'new']]) }).paths.includes('untracked.ts'));
-  assert.ok(compareCanonicalTripwire(before, { ...before, files: new Map([['tracked.ts', 'one'], ['node_modules/foo/index.js', 'changed']]) }).paths.includes('node_modules/foo/index.js'));
+test('CT-VERIFY-1C: tiered compare detects tracked, untracked, env, and node_modules changes without false positives', () => {
+  const base: CanonicalTripwire = {
+    head: 'a'.repeat(40), porcelainSha256: 'status',
+    dirtyFileSha256: new Map([['src/tracked.ts', 'one']]),
+    envSha256: new Map([['.env.local', 'env1']]),
+    packageLockSha256: 'lock',
+    nodeModulesEntries: new Map([['node_modules/foo/index.js', 'F:10:1000'], ['node_modules/.bin', 'DIR']]),
+  };
+  assert.equal(compareCanonicalTripwire(base, { ...base, dirtyFileSha256: new Map(base.dirtyFileSha256), envSha256: new Map(base.envSha256), nodeModulesEntries: new Map(base.nodeModulesEntries) }).modified, false);
+  assert.ok(compareCanonicalTripwire(base, { ...base, dirtyFileSha256: new Map([['src/tracked.ts', 'two']]) }).paths.includes('src/tracked.ts'));
+  assert.ok(compareCanonicalTripwire(base, { ...base, porcelainSha256: 'new-status', dirtyFileSha256: new Map([...base.dirtyFileSha256, ['untracked.ts', 'new']]) }).paths.includes('untracked.ts'));
+  assert.ok(compareCanonicalTripwire(base, { ...base, envSha256: new Map([['.env.local', 'env2']]) }).paths.includes('.env.local'));
+  assert.ok(compareCanonicalTripwire(base, { ...base, packageLockSha256: 'newlock' }).paths.includes('node_modules/.package-lock.json'));
+  assert.ok(compareCanonicalTripwire(base, { ...base, nodeModulesEntries: new Map([['node_modules/foo/index.js', 'F:10:2000'], ['node_modules/.bin', 'DIR']]) }).paths.includes('node_modules/foo/index.js'));
 });
 
-test('CT-VERIFY-1 B: fake checks changing project bytes trip the canonical fingerprint', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'ct-host-tripwire-'));
+test('CT-VERIFY-1C: tiered fingerprint detects a tracked edit, untracked add, .env.local change, and node_modules change', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ct-host-tiered-'));
   try {
-    await mkdir(path.join(root, 'src'));
+    await mkdir(path.join(root, 'src'), { recursive: true });
     await mkdir(path.join(root, 'node_modules', 'foo'), { recursive: true });
     await writeFile(path.join(root, 'src', 'tracked.ts'), 'before');
+    await writeFile(path.join(root, '.env.local'), 'env-before');
     await writeFile(path.join(root, 'node_modules', '.package-lock.json'), 'lock');
     await writeFile(path.join(root, 'node_modules', 'foo', 'index.js'), 'before');
-    const gitProbe = async () => ({ head: 'a'.repeat(40), status: Buffer.alloc(0) });
-    const before = await fingerprintCanonicalRepo(root, gitProbe);
-    assert.equal(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, gitProbe)).modified, false);
+    const probe = (status: Buffer) => async () => ({ head: 'a'.repeat(40), status });
+    const dirty = (rel: string) => Buffer.from(` M ${rel}\0`, 'utf8');
+    const before = await fingerprintCanonicalRepo(root, probe(Buffer.alloc(0)));
+    assert.equal(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, probe(Buffer.alloc(0)))).modified, false);
+
     await writeFile(path.join(root, 'src', 'tracked.ts'), 'fake check edited tracked file');
-    assert.ok(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, gitProbe)).paths.includes('src/tracked.ts'));
+    assert.ok(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, probe(dirty('src/tracked.ts')))).paths.includes('src/tracked.ts'));
+
     await writeFile(path.join(root, 'new.txt'), 'fake check created untracked file');
-    assert.ok(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, gitProbe)).paths.includes('new.txt'));
+    assert.ok(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, probe(Buffer.concat([dirty('src/tracked.ts'), Buffer.from('?? new.txt\0', 'utf8')])))).paths.includes('new.txt'));
+
+    await writeFile(path.join(root, '.env.local'), 'env-after');
+    assert.ok(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, probe(Buffer.concat([dirty('src/tracked.ts'), Buffer.from('?? new.txt\0', 'utf8')])))).paths.includes('.env.local'));
+
     await writeFile(path.join(root, 'node_modules', 'foo', 'index.js'), 'fake check edited dependency');
-    assert.ok(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, gitProbe)).paths.includes('node_modules/foo/index.js'));
+    assert.ok(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, probe(Buffer.concat([dirty('src/tracked.ts'), Buffer.from('?? new.txt\0', 'utf8')])))).paths.includes('node_modules/foo/index.js'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('CT-VERIFY-1C: a locked or unreadable node_modules entry records a marker instead of failing the fingerprint', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ct-host-tiered-unreadable-'));
+  try {
+    await mkdir(path.join(root, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(path.join(root, 'node_modules', 'foo'), { recursive: true });
+    await writeFile(path.join(root, 'node_modules', '.package-lock.json'), 'lock');
+    await writeFile(path.join(root, 'node_modules', 'foo', 'index.js'), 'before');
+    // Dangling junction under .bin: readlink resolves but realpath fails. The
+    // walk records a LINK marker and never follows it; the fingerprint succeeds.
+    await symlink(path.join(root, 'does-not-exist'), path.join(root, 'node_modules', '.bin', 'dangling'), process.platform === 'win32' ? 'junction' : 'dir');
+    const before = await fingerprintCanonicalRepo(root, async () => ({ head: 'a'.repeat(40), status: Buffer.alloc(0) }));
+    assert.ok(before.nodeModulesEntries.has('node_modules/.bin/dangling'));
+    assert.equal(compareCanonicalTripwire(before, await fingerprintCanonicalRepo(root, async () => ({ head: 'a'.repeat(40), status: Buffer.alloc(0) }))).modified, false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('CT-VERIFY-1C: git or node_modules/.package-lock.json failure throws a FingerprintError with step + path + code', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ct-host-tiered-fail-'));
+  try {
+    await mkdir(path.join(root, 'node_modules'), { recursive: true });
+    await writeFile(path.join(root, 'node_modules', 'foo'), 'x');
+    await assert.rejects(fingerprintCanonicalRepo(root, async () => { throw new Error('git blew up'); }), (error: unknown) => {
+      assert.ok(error instanceof FingerprintError);
+      assert.equal((error as FingerprintError).step, 'git');
+      assert.equal((error as FingerprintError).relPath, '(repository)');
+      return true;
+    });
+    await rm(path.join(root, 'node_modules', '.package-lock.json'), { force: true }).catch(() => undefined);
+    await assert.rejects(fingerprintCanonicalRepo(root, async () => ({ head: 'a'.repeat(40), status: Buffer.alloc(0) })), (error: unknown) => {
+      assert.ok(error instanceof FingerprintError);
+      assert.equal((error as FingerprintError).step, 'node_modules/.package-lock.json');
+      assert.equal((error as FingerprintError).relPath, 'node_modules/.package-lock.json');
+      assert.equal((error as FingerprintError).code, 'ENOENT');
+      return true;
+    });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('CT-VERIFY-1C: a dangling link in node_modules/.bin is skipped by the snapshot; an outside-pointing link refuses', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ct-host-snapshot-links-'));
+  try {
+    const repo = path.join(root, 'repo'); const local = path.join(root, 'local');
+    const outside = path.join(root, 'outside');
+    await mkdir(path.join(repo, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(path.join(repo, 'node_modules', 'foo'), { recursive: true });
+    await mkdir(outside);
+    await writeFile(path.join(repo, 'package-lock.json'), 'lock-1');
+    await writeFile(path.join(repo, 'node_modules', '.package-lock.json'), 'lock');
+    await writeFile(path.join(repo, 'node_modules', 'foo', 'index.js'), 'real');
+    // dangling junction: skipped + counted, snapshot still builds.
+    await symlink(path.join(root, 'does-not-exist'), path.join(repo, 'node_modules', '.bin', 'dangling'), process.platform === 'win32' ? 'junction' : 'dir');
+    const built = await ensureHostDependencySnapshot({ canonicalRepoPath: repo, repoKey: 'linkrepo', localAppData: local });
+    assert.equal(built.reused, false);
+    assert.equal(await readFile(path.join(built.path, 'foo', 'index.js'), 'utf8'), 'real');
+    assert.equal((await readdir(path.join(built.path, '.bin'))).includes('dangling'), false);
+    // outside-pointing junction: snapshot refused.
+    await symlink(outside, path.join(repo, 'node_modules', '.bin', 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(ensureHostDependencySnapshot({ canonicalRepoPath: repo, repoKey: 'linkrepo2', localAppData: local }), /escaping node_modules/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('CT-VERIFY-1C: UNAVAILABLE writes one Host-log line with step + path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ct-host-unavail-log-'));
+  try {
+    const canonical = path.join(root, 'canonical'); const baselineSource = path.join(root, 'baseline-source'); const candidate = path.join(root, 'candidate'); const workspaceRoot = path.join(root, 'host');
+    await mkdir(path.join(canonical, 'node_modules'), { recursive: true });
+    await mkdir(baselineSource); await mkdir(candidate); await mkdir(workspaceRoot);
+    await writeFile(path.join(canonical, 'package-lock.json'), 'lock');
+    await writeFile(path.join(canonical, 'tracked.ts'), 'original');
+    await writeFile(path.join(canonical, 'node_modules', '.package-lock.json'), 'lock');
+    await writeFile(path.join(baselineSource, 'tracked.ts'), 'original');
+    await writeFile(path.join(candidate, 'tracked.ts'), 'candidate');
+    await writeCapturedBaseline({ workspaceRoot, identity: { repoKey: 'repo', runId: 'run', attemptId: 'source' }, baselineHeadSha: 'a'.repeat(40), tree: await captureWorkspaceTree(baselineSource) });
+    const logs: string[] = [];
+    const sink: HostCheckLogSink = { error: (message) => { logs.push(message); } };
+    const failingFingerprint = (repo: string) => fingerprintCanonicalRepo(repo, async () => { throw new Error('git blew up'); });
+    const result = await runVerifierHostChecks({
+      canonicalRepoPath: canonical, workspaceRoot, repoKey: 'repo', runId: 'run', attemptId: 'verify-log', sourceAttemptId: 'source', candidateWorkspacePath: candidate,
+      changedFiles: [{ path: 'tracked.ts' }], verificationCommands: ['npm.cmd run typecheck'], localAppData: path.join(root, 'local'),
+      fingerprint: failingFingerprint,
+      materializeBaseline: async (destination: string) => { await cp(baselineSource, destination, { recursive: true }); },
+      onEvent: () => { /* events not asserted here */ },
+      hostLog: sink,
+    });
+    assert.equal(result.status, 'unavailable');
+    assert.match(result.reason ?? '', /fingerprint/);
+    assert.match(result.reason ?? '', /git/);
+    assert.ok(logs.some((line) => /host_check_unavailable/.test(line) && /git/.test(line) && /\(repository\)/.test(line)), `expected a host_check_unavailable log line with step + path, got: ${JSON.stringify(logs)}`);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -288,7 +395,7 @@ test('CT-VERIFY-1 B: fake baseline/candidate checks persist small events and det
     const common = {
       canonicalRepoPath: canonical, workspaceRoot, repoKey: 'repo', runId: 'run', sourceAttemptId: 'source', candidateWorkspacePath: candidate,
       changedFiles: [{ path: 'tracked.ts' }], verificationCommands: ['npm.cmd run typecheck'], localAppData: path.join(root, 'local'),
-      fingerprint: (repo: string) => fingerprintCanonicalRepo(repo, async () => ({ head: 'a'.repeat(40), status: Buffer.alloc(0) })),
+      fingerprint: (repo: string) => fingerprintCanonicalRepo(repo, async () => ({ head: 'a'.repeat(40), status: Buffer.from(' M tracked.ts\0', 'utf8') })),
       materializeBaseline: async (destination: string) => { await cp(baselineSource, destination, { recursive: true }); },
       onEvent: (type: string, payload: Record<string, string | number | boolean | null | string[]>) => { events.push({ type, payload }); },
     };
@@ -328,7 +435,10 @@ test('CT-VERIFY-1 B: fake baseline/candidate checks persist small events and det
       return { status: 'executed', classification: 'VALIDATION', decision: null, launches: 1, signalCategory: null, ownerActionRequired: false, exitCode: 0, timedOut: false, durationMs: 1, boundedOutput: '' };
     } });
     assert.equal(noDependencies.status, 'full');
-    await rm(path.join(canonical, 'node_modules'), { recursive: true });
+    await mkdir(path.join(canonical, 'node_modules', '.bin'), { recursive: true });
+    // An outside-pointing junction makes the dependency snapshot refuse while
+    // the tiered fingerprint still succeeds (the link is recorded as a marker).
+    await symlink(canonical, path.join(canonical, 'node_modules', '.bin', 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
     await writeFile(path.join(canonical, 'package-lock.json'), 'new lock needs a new snapshot');
     const unavailable = await runVerifierHostChecks({ ...common, attemptId: 'verify3', runCommand: async () => { throw new Error('Should not run'); } });
     assert.equal(unavailable.status, 'unavailable');

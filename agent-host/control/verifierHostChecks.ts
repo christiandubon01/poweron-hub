@@ -5,7 +5,7 @@ import path from 'node:path';
 import { parseValidationCommand } from '../policy/commandPolicy.ts';
 import { buildHostCheckEnvironment, executeHostCommand, HOST_CHECK_TOTAL_BUDGET_MS, HOST_CHECK_TIMEOUT_MS, type HostCommandResult } from '../policy/hostCommandRunner.ts';
 import { captureWorkspaceTree, materializeAttemptWorkspace, readCapturedBaseline, resolveAttemptWorkspacePath } from '../workspace.ts';
-import { assertHostCheckRootOutsideCanonical, compareCanonicalTripwire, ensureHostDependencySnapshot, fingerprintCanonicalRepo, makeHostCheckCopy, removeHostCheckCopy } from './hostCheckIsolation.ts';
+import { assertHostCheckRootOutsideCanonical, compareCanonicalTripwire, ensureHostDependencySnapshot, fingerprintCanonicalRepo, FingerprintError, makeHostCheckCopy, removeHostCheckCopy } from './hostCheckIsolation.ts';
 
 export interface HostCheckRecord {
   command: string;
@@ -71,6 +71,7 @@ function sameBaseline(a: ReadonlyMap<string, { sha256: string }>, b: ReadonlyMap
 
 function safeReason(error: unknown): string {
   const message = error instanceof Error ? error.message : '';
+  if (error instanceof FingerprintError) return formatFingerprintReason(error);
   if (message.includes('TIMED_OUT_POSSIBLE_SURVIVORS')) return 'TIMED_OUT_POSSIBLE_SURVIVORS';
   if (message.includes('total time budget')) return 'Host check total time budget exhausted';
   if (/overlap|isolation|escaped|cleanup/iu.test(message)) return 'Host check isolation path is unsafe';
@@ -78,6 +79,16 @@ function safeReason(error: unknown): string {
   if (/baseline/iu.test(message)) return 'the run-start baseline is no longer available';
   if (/tripwire|fingerprint|git/iu.test(message)) return 'the canonical project fingerprint could not be completed';
   return 'the Agent Host could not complete isolated checks';
+}
+
+/** Content-free fingerprint failure reason: step + repo-relative path + error code. */
+export function formatFingerprintReason(error: FingerprintError): string {
+  return `the canonical project fingerprint could not be completed (step: ${error.step}; path: ${error.relPath}; code: ${error.code})`;
+}
+
+/** Structural Host-log seam; production wires the real createHostLog logger. */
+export interface HostCheckLogSink {
+  error(message: string): void;
 }
 
 /**
@@ -102,17 +113,22 @@ export async function runVerifierHostChecks(options: {
   materializeBaseline?: (destination: string, headSha: string) => Promise<void>;
   localAppData?: string;
   totalBudgetMs?: number;
+  /** One safe, content-free line is written here for every UNAVAILABLE / integrity outcome. */
+  hostLog?: HostCheckLogSink;
 }): Promise<VerifierHostChecksResult> {
   const result: VerifierHostChecksResult = { status: 'full', reason: null, checks: [], canonicalChangedPaths: [], canonicalChangedPathCount: 0 };
+  const logUnavailable = (reason: string): void => { options.hostLog?.error(`host_check_unavailable: ${reason}`); };
   const commands = options.verificationCommands ?? inferVerificationCommands(options.changedFiles);
   if (commands.length === 0) {
     result.status = 'unavailable'; result.reason = 'no Host validation commands were selected for these changed paths';
+    logUnavailable(result.reason);
     options.onEvent('verification.host_check.unavailable', { status: 'UNAVAILABLE', reason: result.reason });
     return result;
   }
   const argvList = commands.map((command) => parseValidationCommand(command));
   if (argvList.some((argv) => argv === null)) {
     const reason = 'the plan requested an unsupported Host validation command';
+    logUnavailable(reason);
     options.onEvent('verification.host_check.unavailable', { status: 'UNAVAILABLE', reason });
     return { ...result, status: 'unavailable', reason };
   }
@@ -131,8 +147,9 @@ export async function runVerifierHostChecks(options: {
     requireBudget();
     try {
       before = await (options.fingerprint ?? fingerprintCanonicalRepo)(options.canonicalRepoPath);
-    } catch {
-      throw new Error('Canonical tripwire before-check fingerprint failed.');
+    } catch (error) {
+      // Preserve FingerprintError so safeReason can surface step + path + code.
+      throw error instanceof FingerprintError ? error : new Error('Canonical tripwire before-check fingerprint failed.');
     }
     requireBudget();
     const sourceBaseline = await readCapturedBaseline({ workspaceRoot: options.workspaceRoot, identity: { repoKey: options.repoKey, runId: options.runId, attemptId: options.sourceAttemptId } });
@@ -229,8 +246,9 @@ export async function runVerifierHostChecks(options: {
           result.canonicalChangedPaths = difference.paths; result.canonicalChangedPathCount = difference.count;
           options.onEvent('verification.host_check.canonical_modified', { status: 'CANONICAL_MODIFIED', changedPaths: difference.paths, changedPathCount: difference.count });
         }
-      } catch {
-        result.status = 'unavailable'; result.reason = 'the canonical project tripwire could not be completed';
+      } catch (error) {
+        result.status = 'unavailable';
+        result.reason = error instanceof FingerprintError ? formatFingerprintReason(error) : 'the canonical project tripwire could not be completed';
       }
     }
     if (Date.now() >= deadline && result.status !== 'canonical-modified') {
@@ -238,8 +256,9 @@ export async function runVerifierHostChecks(options: {
     }
   }
   if (result.status === 'unavailable') {
+    logUnavailable(result.reason ?? 'isolated checks could not run');
     options.onEvent('verification.host_check.unavailable', { status: 'UNAVAILABLE', reason: result.reason ?? 'isolated checks could not run' });
-    if (result.reason?.includes('tripwire') || result.reason?.includes('isolation') || result.reason?.includes('TIMED_OUT_POSSIBLE_SURVIVORS')) {
+    if (result.reason?.includes('fingerprint') || result.reason?.includes('tripwire') || result.reason?.includes('isolation') || result.reason?.includes('TIMED_OUT_POSSIBLE_SURVIVORS')) {
       options.onEvent('verification.host_check.integrity_unavailable', { status: 'UNAVAILABLE', reason: result.reason });
     }
   }

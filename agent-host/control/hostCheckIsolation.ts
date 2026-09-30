@@ -25,24 +25,94 @@ async function hashFile(file: string): Promise<string> {
   return hash.digest('hex');
 }
 
-async function hashTree(root: string, excluded = new Set<string>()): Promise<Map<string, string>> {
-  const files = new Map<string, string>();
-  async function walk(dir: string, prefix: string): Promise<void> {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      if (!prefix && excluded.has(entry.name.toLowerCase())) continue;
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      const full = path.join(dir, entry.name);
-      if (entry.isSymbolicLink()) {
-        files.set(relative, `LINK:${await readlink(full)}`); // Never traverse a junction or symlink.
-      } else if (entry.isDirectory()) {
-        await walk(full, relative);
-      } else if (entry.isFile()) {
-        files.set(relative, await hashFile(full));
+function errorCode(error: unknown, fallback: string): string {
+  const code = (error as { code?: unknown })?.code;
+  return typeof code === 'string' || typeof code === 'number' ? String(code) : fallback;
+}
+
+/** A fingerprint step failed with a stable, content-free reason (step + repo-relative path + error code). */
+export class FingerprintError extends Error {
+  readonly step: string;
+  readonly relPath: string;
+  readonly code: string;
+  constructor(step: string, relPath: string, code: string, message?: string) {
+    super(message ?? `fingerprint step "${step}" failed at ${relPath} (code ${code})`);
+    this.name = 'FingerprintError';
+    this.step = step;
+    this.relPath = relPath;
+    this.code = code;
+  }
+}
+
+const PORCELAIN_STATUS_CHARS = new Set<string>([' ', 'M', 'A', 'D', 'R', 'C', 'U', 'T', '?', '!']);
+
+/**
+ * Parse `git status --porcelain=v1 -z --untracked-files=all` into repo-relative
+ * paths (forward-slash, git style). Renames/copies contribute both the source
+ * and destination path. The porcelain hash already captures the raw status, so
+ * these paths only drive the per-file content hashes for in-place edits.
+ */
+function parsePorcelainPaths(status: Buffer): string[] {
+  const tokens: string[] = [];
+  let start = 0;
+  for (let i = 0; i <= status.length; i += 1) {
+    if (i === status.length || status[i] === 0) {
+      if (i > start) tokens.push(status.subarray(start, i).toString('utf8'));
+      start = i + 1;
+    }
+  }
+  const paths: string[] = [];
+  for (let idx = 0; idx < tokens.length; idx += 1) {
+    const tok = tokens[idx];
+    if (tok.length < 3) continue;
+    const x = tok[0], y = tok[1], sep = tok[2];
+    if (sep === ' ' && PORCELAIN_STATUS_CHARS.has(x) && PORCELAIN_STATUS_CHARS.has(y)) {
+      paths.push(tok.slice(3));
+      if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+        if (idx + 1 < tokens.length) { paths.push(tokens[idx + 1] as string); idx += 1; }
       }
     }
   }
-  await walk(root, '');
-  return files;
+  return paths;
+}
+
+/**
+ * Walk node_modules recording a stable marker per entry — never following links.
+ * Files record `F:size:mtimeMs`; directories record `DIR`; links record
+ * `LINK:target` (or `LINKERR:code` if readlink fails). A readdir/lstat failure
+ * records an `ERR:`/`FERR:` marker for that entry instead of failing the whole
+ * walk, so a single locked or broken entry cannot make the fingerprint UNAVAILABLE.
+ */
+async function walkNodeModules(root: string, prefix: string): Promise<Map<string, string>> {
+  const entries = new Map<string, string>();
+  async function walk(dir: string, prefix: string): Promise<void> {
+    let listed: import('node:fs').Dirent[];
+    try {
+      listed = await readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      entries.set(`${prefix}/`, `ERR:${errorCode(error, 'READDIR_FAILED')}`);
+      return;
+    }
+    for (const entry of listed) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        let target: string | null = null;
+        try { target = await readlink(full); } catch (error) { entries.set(rel, `LINKERR:${errorCode(error, 'READLINK_FAILED')}`); continue; }
+        entries.set(rel, `LINK:${target}`); // Never traverse a junction or symlink.
+      } else if (entry.isDirectory()) {
+        entries.set(rel, 'DIR');
+        await walk(full, rel);
+      } else if (entry.isFile()) {
+        try { const info = await lstat(full); entries.set(rel, `F:${info.size}:${Math.floor(info.mtimeMs)}`); }
+        catch (error) { entries.set(rel, `FERR:${errorCode(error, 'LSTAT_FAILED')}`); }
+      } else {
+        entries.set(rel, 'OTHER');
+      }
+    }
+  }
+  await walk(root, prefix);
+  return entries;
 }
 
 async function rejectLinks(root: string): Promise<void> {
@@ -53,6 +123,34 @@ async function rejectLinks(root: string): Promise<void> {
     }
   }
   await walk(root);
+}
+
+/**
+ * Walk node_modules and classify every link: a link that resolves to a real
+ * target OUTSIDE the node_modules tree refuses the snapshot; a dangling or
+ * unreadable link (readlink fails, or realpath fails because the target is
+ * missing) is skipped and counted; an internal link is allowed (the copy step
+ * drops it from the link-free snapshot). Returns the count of skipped links.
+ */
+async function assertNoEscapingLinks(root: string): Promise<{ skipped: number }> {
+  const rootReal = await realpath(root);
+  let skipped = 0;
+  async function walk(dir: string): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        let real: string | null = null;
+        try { real = await realpath(full); } catch { real = null; }
+        if (real === null) { skipped += 1; continue; } // dangling or unreadable link
+        if (real !== rootReal && !inside(rootReal, real)) throw new Error('Dependency snapshot contains a link escaping node_modules.');
+        // internal link: allowed; the copy filter drops it so the snapshot stays link-free.
+      } else if (entry.isDirectory()) {
+        await walk(full);
+      }
+    }
+  }
+  await walk(root);
+  return { skipped };
 }
 
 type DependencyManifest = Record<string, { size: number; mtimeMs: number }>;
@@ -115,10 +213,19 @@ export async function ensureHostDependencySnapshot(options: {
   const source = path.join(options.canonicalRepoPath, 'node_modules');
   const sourceInfo = await lstat(source);
   if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) throw new Error('Canonical dependencies are not a plain directory.');
-  await rejectLinks(source);
+  await assertNoEscapingLinks(source);
   const staging = path.join(root, `.staging-${randomUUID()}`);
   try {
-    await cp(source, staging, { recursive: true, errorOnExist: true, force: false });
+    await cp(source, staging, {
+      recursive: true, errorOnExist: true, force: false,
+      // Skip every link so the snapshot stays link-free (chmod then protects all
+      // bytes). External links were already refused by assertNoEscapingLinks;
+      // dangling/internal links are simply absent from the snapshot.
+      filter: async (_src, dest) => {
+        const info = await lstat(_src).catch(() => null);
+        return info === null || !info.isSymbolicLink();
+      },
+    });
     await rejectLinks(staging);
     await lockSnapshotFiles(staging);
     const manifest = JSON.stringify(await dependencyManifest(staging));
@@ -202,29 +309,83 @@ export async function removeHostCheckCopy(destination: string, workspaceRoot: st
   await rm(destination, { recursive: true, force: true });
 }
 
-export interface CanonicalTripwire { head: string; porcelainSha256: string; packageLockSha256: string | null; nodeModulesTop: string[]; files: Map<string, string>; }
+export interface CanonicalTripwire {
+  head: string;
+  porcelainSha256: string;
+  /** Repo-relative (git-style) dirty/untracked path → sha256 of its current bytes. */
+  dirtyFileSha256: Map<string, string>;
+  /** Root `.env*` file name → sha256 of its bytes (gitignored but watched). */
+  envSha256: Map<string, string>;
+  /** sha256 of node_modules/.package-lock.json (null only if the file is absent AND that is tolerated at build time). */
+  packageLockSha256: string;
+  /** `node_modules/...` entry → stable marker (`F:size:mtimeMs` / `DIR` / `LINK:target` / `LINKERR:code` / `FERR:code` / `ERR:code`). */
+  nodeModulesEntries: Map<string, string>;
+}
+
+async function runGitFingerprintStep(canonicalRepoPath: string): Promise<{ head: string; status: Buffer }> {
+  try {
+    const head = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: canonicalRepoPath, windowsHide: true, encoding: 'buffer' });
+    const status = await execFileAsync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: canonicalRepoPath, windowsHide: true, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+    return { head: String(head.stdout).trim(), status: Buffer.from(status.stdout) };
+  } catch (error) {
+    throw new FingerprintError('git', '(repository)', errorCode(error, 'GIT_FAILED'), `git fingerprint step failed (code ${errorCode(error, 'GIT_FAILED')})`);
+  }
+}
 
 /**
  * Checks run as the owner's Windows account. The Host detects writes to the
  * project; it cannot prevent arbitrary AI-authored test code from making them.
  * No Host-created cwd, environment value, or junction points to the project.
+ *
+ * Tiered fingerprint (CT-VERIFY-1C): the full-byte tree walk was replaced so a
+ * single locked/junction entry under node_modules (or a nested worktree folder)
+ * can no longer make the whole fingerprint UNAVAILABLE. Only a git failure or an
+ * unreadable node_modules/.package-lock.json fails the fingerprint; every other
+ * tier degrades to a stable marker instead of throwing.
  */
 export async function fingerprintCanonicalRepo(canonicalRepoPath: string, gitProbe?: () => Promise<{ head: string; status: Buffer }>): Promise<CanonicalTripwire> {
-  const git = gitProbe ? await gitProbe() : await (async () => {
-    const head = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: canonicalRepoPath, windowsHide: true, encoding: 'buffer' });
-    const status = await execFileAsync('git', ['status', '--porcelain=v1', '-z', '-uall'], { cwd: canonicalRepoPath, windowsHide: true, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 });
-    return { head: String(head.stdout).trim(), status: Buffer.from(status.stdout) };
-  })();
+  let git: { head: string; status: Buffer };
+  if (gitProbe) {
+    try { git = await gitProbe(); }
+    catch (error) { throw new FingerprintError('git', '(repository)', errorCode(error, 'GIT_FAILED'), `git fingerprint step failed (code ${errorCode(error, 'GIT_FAILED')})`); }
+  } else {
+    git = await runGitFingerprintStep(canonicalRepoPath);
+  }
+
+  const dirtyFileSha256 = new Map<string, string>();
+  for (const rel of parsePorcelainPaths(git.status)) {
+    const full = path.join(canonicalRepoPath, rel);
+    let info: import('node:fs').Stats;
+    try { info = await lstat(full); } catch { continue; } // deleted entries are captured by the porcelain hash.
+    if (!info.isFile()) continue;
+    try { dirtyFileSha256.set(rel, await hashFile(full)); }
+    catch { /* an unreadable dirty file is still flagged dirty by the porcelain hash; never UNAVAILABLE. */ }
+  }
+
+  const envSha256 = new Map<string, string>();
+  let rootEntries: import('node:fs').Dirent[] = [];
+  try { rootEntries = await readdir(canonicalRepoPath, { withFileTypes: true }); } catch { /* env tier degrades to empty. */ }
+  for (const entry of rootEntries) {
+    if (!entry.isFile() || !/^\.env/u.test(entry.name)) continue;
+    try { envSha256.set(entry.name, await hashFile(path.join(canonicalRepoPath, entry.name))); }
+    catch { /* an unreadable env file is skipped, never UNAVAILABLE. */ }
+  }
+
   const nodeModules = path.join(canonicalRepoPath, 'node_modules');
-  const top = await readdir(nodeModules).catch(() => []);
-  const files = await hashTree(canonicalRepoPath, new Set(['.git']));
-  const lock = await hashFile(path.join(nodeModules, '.package-lock.json')).catch(() => null);
+  let packageLockSha256: string;
+  try { packageLockSha256 = await hashFile(path.join(nodeModules, '.package-lock.json')); }
+  catch (error) {
+    throw new FingerprintError('node_modules/.package-lock.json', 'node_modules/.package-lock.json', errorCode(error, 'HASH_FAILED'), `node_modules/.package-lock.json is unreadable (code ${errorCode(error, 'HASH_FAILED')})`);
+  }
+  const nodeModulesEntries = await walkNodeModules(nodeModules, 'node_modules');
+
   return {
     head: git.head,
     porcelainSha256: createHash('sha256').update(git.status).digest('hex'),
-    packageLockSha256: lock,
-    nodeModulesTop: top.sort(),
-    files,
+    dirtyFileSha256,
+    envSha256,
+    packageLockSha256,
+    nodeModulesEntries,
   };
 }
 
@@ -233,9 +394,14 @@ export function compareCanonicalTripwire(before: CanonicalTripwire, after: Canon
   if (before.head !== after.head) paths.add('.git/HEAD');
   if (before.porcelainSha256 !== after.porcelainSha256) paths.add('(git status changed)');
   if (before.packageLockSha256 !== after.packageLockSha256) paths.add('node_modules/.package-lock.json');
-  if (before.nodeModulesTop.join('\0') !== after.nodeModulesTop.join('\0')) paths.add('node_modules/(top-level listing)');
-  for (const key of new Set([...before.files.keys(), ...after.files.keys()])) {
-    if (before.files.get(key) !== after.files.get(key)) paths.add(key);
+  for (const key of new Set([...before.dirtyFileSha256.keys(), ...after.dirtyFileSha256.keys()])) {
+    if (before.dirtyFileSha256.get(key) !== after.dirtyFileSha256.get(key)) paths.add(key);
+  }
+  for (const key of new Set([...before.envSha256.keys(), ...after.envSha256.keys()])) {
+    if (before.envSha256.get(key) !== after.envSha256.get(key)) paths.add(key);
+  }
+  for (const key of new Set([...before.nodeModulesEntries.keys(), ...after.nodeModulesEntries.keys()])) {
+    if (before.nodeModulesEntries.get(key) !== after.nodeModulesEntries.get(key)) paths.add(key);
   }
   return { modified: paths.size > 0, paths: [...paths].sort().slice(0, 32), count: paths.size };
 }

@@ -14,7 +14,7 @@ import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.
 import { adjudicateAttemptWorkspace, captureWorkspaceTree, createWorkspacePolicyBaseline, describeWorkspaceDelta, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, writeCandidateChangeIndex, type AttemptWorkspace } from '../workspace.ts';
 import { buildVerifierHostEvidence, type BuildVerifierHostEvidenceOptions, type VerifierHostEvidence } from '../control/verifierEvidence.ts';
 import { buildVerifierHostEvidenceBlock, buildVerifierHostEvidenceUnavailableBlock } from '../control/planning.ts';
-import { buildVerifierHostCheckBlock, runVerifierHostChecks, type VerifierHostChecksResult } from '../control/verifierHostChecks.ts';
+import { buildVerifierHostCheckBlock, runVerifierHostChecks, type HostCheckLogSink, type VerifierHostChecksResult } from '../control/verifierHostChecks.ts';
 import {
   absoluteTimeoutMessage,
   isProviderTimeoutErrorCode,
@@ -144,6 +144,8 @@ export interface AttemptExecutorDependencies {
    */
   verifierEvidenceBuilder?: ((options: BuildVerifierHostEvidenceOptions) => Promise<VerifierHostEvidence>) | undefined;
   verifierHostChecksRunner?: typeof runVerifierHostChecks | undefined;
+  /** CT-VERIFY-1C: one safe line per UNAVAILABLE / integrity outcome; production wires the Host log. */
+  hostLog?: HostCheckLogSink | undefined;
 }
 
 export interface AttemptExecutorShutdownResult {
@@ -165,6 +167,7 @@ export class AttemptExecutor {
   private readonly workspacePreparer: NonNullable<AttemptExecutorDependencies['workspacePreparer']>;
   private readonly verifierEvidenceBuilder: NonNullable<AttemptExecutorDependencies['verifierEvidenceBuilder']>;
   private readonly verifierHostChecksRunner: typeof runVerifierHostChecks;
+  private readonly hostLog: HostCheckLogSink | undefined;
   private readonly activeExecutions = new Map<string, ActiveExecutionEntry>();
   private acceptingExecutions = true;
   private shutdownPromise: Promise<AttemptExecutorShutdownResult> | null = null;
@@ -183,6 +186,7 @@ export class AttemptExecutor {
     this.workspacePreparer = dependencies.workspacePreparer ?? materializeAttemptWorkspace;
     this.verifierEvidenceBuilder = dependencies.verifierEvidenceBuilder ?? buildVerifierHostEvidence;
     this.verifierHostChecksRunner = dependencies.verifierHostChecksRunner ?? runVerifierHostChecks;
+    this.hostLog = dependencies.hostLog;
   }
 
   execute(input: AttemptExecutionInput): Promise<AttemptExecutionOutcome> {
@@ -382,9 +386,11 @@ export class AttemptExecutor {
                 changedFiles: evidence.changedFiles,
                 verificationCommands: commands,
                 onEvent: (type, payload) => this.persistWorkspaceEvent(input, type, payload),
+                hostLog: this.hostLog,
               });
             } catch {
               hostChecks = { status: 'unavailable', reason: 'the canonical project tripwire could not be completed', checks: [], canonicalChangedPaths: [], canonicalChangedPathCount: 0 };
+              this.hostLog?.error('host_check_unavailable: the canonical project tripwire could not be completed');
               try { this.persistWorkspaceEvent(input, 'verification.host_check.unavailable', { status: 'UNAVAILABLE', reason: hostChecks.reason }); } catch { /* fail-closed status remains */ }
               try { this.persistWorkspaceEvent(input, 'verification.host_check.integrity_unavailable', { status: 'UNAVAILABLE', reason: hostChecks.reason }); } catch { /* fail-closed status remains */ }
             }

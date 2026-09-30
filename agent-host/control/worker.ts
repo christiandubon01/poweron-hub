@@ -1684,6 +1684,7 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
   executor = new AttemptExecutor({
     store,
     registry,
+    hostLog: logger,
     workspaceConfig: {
       canonicalRepoPath,
       workspaceRoot: path.join(statePaths.baseDir, 'workspaces'),
