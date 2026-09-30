@@ -12,6 +12,8 @@ import {
 } from '../policy/policy.ts';
 import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.ts';
 import { adjudicateAttemptWorkspace, captureWorkspaceTree, createWorkspacePolicyBaseline, describeWorkspaceDelta, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, writeCandidateChangeIndex, type AttemptWorkspace } from '../workspace.ts';
+import { buildVerifierHostEvidence, type BuildVerifierHostEvidenceOptions, type VerifierHostEvidence } from '../control/verifierEvidence.ts';
+import { buildVerifierHostEvidenceBlock, buildVerifierHostEvidenceUnavailableBlock } from '../control/planning.ts';
 import {
   absoluteTimeoutMessage,
   isProviderTimeoutErrorCode,
@@ -133,6 +135,13 @@ export interface AttemptExecutorDependencies {
   policyController?: AttemptPolicyController | undefined;
   workspaceConfig?: { canonicalRepoPath: string; workspaceRoot: string; repoKey: string } | undefined;
   workspacePreparer?: ((options: Parameters<typeof materializeAttemptWorkspace>[0]) => Promise<AttemptWorkspace>) | undefined;
+  /**
+   * CT-VERIFY-1 Part A: builds the Host evidence (changed-file list + bounded
+   * unified diff) for a Verifier attempt. Defaults to the real builder; tests
+   * inject a fake to avoid git/fs fixtures. Failures are soft and never block
+   * the verifier launch.
+   */
+  verifierEvidenceBuilder?: ((options: BuildVerifierHostEvidenceOptions) => Promise<VerifierHostEvidence>) | undefined;
 }
 
 export interface AttemptExecutorShutdownResult {
@@ -152,6 +161,7 @@ export class AttemptExecutor {
   private readonly policyController: AttemptPolicyController;
   private readonly workspaceConfig: AttemptExecutorDependencies['workspaceConfig'];
   private readonly workspacePreparer: NonNullable<AttemptExecutorDependencies['workspacePreparer']>;
+  private readonly verifierEvidenceBuilder: NonNullable<AttemptExecutorDependencies['verifierEvidenceBuilder']>;
   private readonly activeExecutions = new Map<string, ActiveExecutionEntry>();
   private acceptingExecutions = true;
   private shutdownPromise: Promise<AttemptExecutorShutdownResult> | null = null;
@@ -168,6 +178,7 @@ export class AttemptExecutor {
     this.policyController = dependencies.policyController ?? createAttemptPolicyController();
     this.workspaceConfig = dependencies.workspaceConfig;
     this.workspacePreparer = dependencies.workspacePreparer ?? materializeAttemptWorkspace;
+    this.verifierEvidenceBuilder = dependencies.verifierEvidenceBuilder ?? buildVerifierHostEvidence;
   }
 
   execute(input: AttemptExecutionInput): Promise<AttemptExecutionOutcome> {
@@ -318,6 +329,53 @@ export class AttemptExecutor {
             readOnly: true,
             workspaceState: 'ready',
           });
+          // CT-VERIFY-1 Part A: build Host evidence (changed-file list + bounded
+          // unified diff) and append it to the verifier prompt. The verifier's
+          // read-only tree has no .git and no node_modules, so the Host computes
+          // the authoritative scope and diff FOR it. Soft-fail: any error leaves
+          // the base prompt intact and the verifier still launches.
+          try {
+            const evidence = await this.verifierEvidenceBuilder({
+              canonicalRepoPath: this.workspaceConfig.canonicalRepoPath,
+              workspaceRoot: this.workspaceConfig.workspaceRoot,
+              repoKey: this.workspaceConfig.repoKey,
+              runId: input.runId,
+              verifierAttemptId: input.attemptId,
+              sourceAttemptId: candidate.sourceAttemptId,
+              baselineHeadSha: candidate.baselineHeadSha,
+              candidateWorkspacePath: workspace.workspacePath,
+            });
+            // Metadata-only event; diff content lives in the sidecar file, never
+            // in the payload (8192-byte event limit).
+            this.persistWorkspaceEvent(input, 'workspace.diff.ready', {
+              workspaceId: workspace.workspaceId,
+              baselineHeadSha: workspace.baselineHeadSha,
+              status: evidence.status,
+              diffFilePath: evidence.diffFilePath,
+              changedFileCount: evidence.changedFileCount,
+              diffSha256: evidence.diffSha256,
+              diffSizeBytes: evidence.diffSizeBytes,
+              truncated: evidence.truncated,
+              omittedFileCount: evidence.omittedPaths.length,
+            });
+            executionInput = { ...executionInput, prompt: `${executionInput.prompt}\n\n${buildVerifierHostEvidenceBlock(evidence)}` };
+          } catch {
+            // A5: the builder itself threw. Append an explicit UNAVAILABLE block so
+            // the Verifier never silently receives a prompt with no evidence (which
+            // could be mistaken for "nothing changed"). Safe, content-free reason.
+            const reason = 'the Agent Host could not build or persist evidence for this attempt';
+            executionInput = { ...executionInput, prompt: `${executionInput.prompt}\n\n${buildVerifierHostEvidenceUnavailableBlock(reason)}` };
+            try {
+              this.persistWorkspaceEvent(input, 'workspace.diff.ready', {
+                workspaceId: workspace.workspaceId,
+                status: 'unavailable', diffFilePath: null, diffSha256: null,
+                diffSizeBytes: null, changedFileCount: null, truncated: false,
+                omittedFileCount: null,
+              });
+            } catch {
+              // Event persistence is best effort after the evidence failure.
+            }
+          }
         } catch {
           return await this.finishWorkspacePreparationFailure(input, context, startedAt, workspaceId);
         }

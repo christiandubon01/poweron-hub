@@ -43,6 +43,8 @@ import {
   evaluateControlTowerUiSmokeAcceptance,
   buildTaskPrompt,
   buildArchitectPrompt,
+  buildVerifierPrompt,
+  buildVerifierHostEvidenceBlock,
   EXECUTABLE_ROLE_PROFILE_PAIRS,
 } from './planning.ts';
 import { parseTaskControlSpec, ProductionExecutionPort, VERIFIER_VERDICT_EVENT, TaskSpecContractError } from './supervisorPort.ts';
@@ -913,6 +915,85 @@ test('buildTaskPrompt synthesizes role-specific prompts from validated fields', 
   assert.match(verifierPrompt, /You are the Verifier/);
   assert.match(verifierPrompt, /VERDICT: PASS/);
   assert.ok(!verifierPrompt.includes('You may create or modify'));
+});
+
+test('CT-VERIFY-1: buildVerifierPrompt carries read-only environment guidance', () => {
+  const plan = validatePlan(validPlanInput());
+  assert.ok(plan.ok && plan.plan);
+  const verifierPrompt = buildVerifierPrompt(plan.plan.tasks[1], plan.plan);
+  assert.match(verifierPrompt, /ENVIRONMENT LIMITS \(authoritative\):/);
+  assert.match(verifierPrompt, /NO node_modules and NO \.git/);
+  assert.match(verifierPrompt, /Do NOT run npm test, vitest, tsc, git/);
+  assert.match(verifierPrompt, /Judge SCOPE from the Host changed-file list/);
+});
+
+test('CT-VERIFY-1: buildVerifierHostEvidenceBlock renders changed files + bounded diff', () => {
+  const block = buildVerifierHostEvidenceBlock({
+    status: 'full',
+    reason: null,
+    changedFiles: [
+      { kind: 'modify', path: 'src/a.ts' },
+      { kind: 'add', path: 'src/b.ts' },
+    ],
+    changedFileCount: 2,
+    diffText: 'diff --git a/src/a.ts b/src/a.ts\n-old\n+new\n',
+    truncated: false,
+  });
+  assert.match(block, /HOST EVIDENCE \(computed by the Agent Host — authoritative\):/);
+  assert.match(block, /Changed files \(2\):/);
+  assert.match(block, /- modify: src\/a\.ts/);
+  assert.match(block, /- add: src\/b\.ts/);
+  assert.match(block, /Unified diff \(baseline commit vs candidate; line endings normalized\):/);
+  assert.match(block, /-old/);
+  assert.match(block, /\+new/);
+  assert.ok(!block.includes('diff above was truncated'));
+  assert.ok(!block.includes('PARTIAL'));
+  assert.ok(!block.includes('UNAVAILABLE'));
+});
+
+test('CT-VERIFY-1: buildVerifierHostEvidenceBlock notes truncation', () => {
+  const block = buildVerifierHostEvidenceBlock({
+    status: 'full',
+    reason: null,
+    changedFiles: [{ kind: 'modify', path: 'src/big.ts' }],
+    changedFileCount: 1,
+    diffText: 'diff --git a/src/big.ts b/src/big.ts\n',
+    truncated: true,
+  });
+  assert.match(block, /diff above was truncated by the Host/);
+});
+
+test('CT-VERIFY-1 A5: unavailable block never presents a changed-file list as complete', () => {
+  const block = buildVerifierHostEvidenceBlock({
+    status: 'unavailable',
+    reason: 'captured baseline for the source attempt could not be read',
+    changedFiles: [],
+    changedFileCount: 0,
+    diffText: '',
+    truncated: false,
+  });
+  assert.match(block, /HOST EVIDENCE UNAVAILABLE:/);
+  assert.match(block, /captured baseline for the source attempt could not be read/);
+  // Must NOT present a "Changed files (0)" line as if the scope were known.
+  assert.ok(!block.includes('Changed files'));
+  assert.ok(!/authoritative/.test(block));
+});
+
+test('CT-VERIFY-1 A5: partial block shows the complete list but flags omitted diffs', () => {
+  const block = buildVerifierHostEvidenceBlock({
+    status: 'partial',
+    reason: 'diff omitted for 1 file(s): baseline differs from HEAD or file exceeds the 2000-line cap (uncommitted work at run start or too-large file)',
+    changedFiles: [{ kind: 'modify', path: 'src/dirty.ts' }],
+    changedFileCount: 1,
+    diffText: 'diff --git a/src/dirty.ts b/src/dirty.ts\ndiff omitted: baseline differs from HEAD (uncommitted work at run start)\n',
+    truncated: false,
+    omittedPaths: ['src/dirty.ts'],
+  });
+  assert.match(block, /HOST EVIDENCE \(PARTIAL/);
+  assert.match(block, /Changed files \(1\):/);
+  assert.match(block, /- modify: src\/dirty\.ts/);
+  assert.match(block, /diff omitted: baseline differs from HEAD/);
+  assert.match(block, /1 file\(s\) above had their diff omitted/);
 });
 
 /* -------------------------------------------------------------------------- */

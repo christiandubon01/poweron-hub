@@ -527,6 +527,12 @@ export function buildVerifierPrompt(task: PlanTask, plan: ControlPlan): string {
   }
   lines.push('');
   lines.push('Check the actual files in this working directory, not the implementer description.');
+  lines.push('');
+  lines.push('ENVIRONMENT LIMITS (authoritative):');
+  lines.push('- This working tree is READ-ONLY and contains NO node_modules and NO .git.');
+  lines.push('- Do NOT run npm test, vitest, tsc, git, or any other command in this tree. They will fail and tell you nothing about the candidate.');
+  lines.push('- Judge SCOPE from the Host changed-file list below. Judge BEHAVIOR from the candidate files.');
+  lines.push('');
   lines.push('End with these lines only. Put at most 8 EVIDENCE lines and at most 8 FAILED_CHECK lines before SUMMARY.');
   lines.push('EVIDENCE: <repo-relative path>');
   lines.push('FAILED_CHECK: <short check id>');
@@ -536,6 +542,83 @@ export function buildVerifierPrompt(task: PlanTask, plan: ControlPlan): string {
   lines.push('VERDICT: FAIL');
   lines.push('Do not include hidden reasoning.');
   return lines.join('\n');
+}
+
+/**
+ * CT-VERIFY-1 Part A: render the HOST EVIDENCE block (changed files + bounded
+ * unified diff) computed by the Agent Host into the Verifier prompt. The block
+ * is appended at runtime by the executor after the base verifier prompt, so the
+ * Verifier receives the authoritative scope and diff without needing .git or
+ * node_modules in its read-only tree.
+ *
+ * A5: the status is rendered explicitly. When `unavailable`, the block NEVER
+ * presents a changed-file list as complete. When `partial`, the changed-file
+ * list is complete but one or more per-file diffs were omitted, and the reason
+ * is surfaced. The Verifier must never treat an empty/partial list as the full
+ * scope.
+ */
+export function buildVerifierHostEvidenceBlock(evidence: {
+  status: 'full' | 'partial' | 'unavailable';
+  reason: string | null;
+  changedFiles: readonly { kind: 'add' | 'modify' | 'delete'; path: string }[];
+  changedFileCount: number;
+  diffText: string;
+  truncated: boolean;
+  omittedPaths?: readonly string[];
+}): string {
+  const lines: string[] = [];
+
+  if (evidence.status === 'unavailable') {
+    lines.push('HOST EVIDENCE UNAVAILABLE:');
+    lines.push(`Reason: ${evidence.reason ?? 'the Agent Host could not compute the changed-file list or diff for this attempt.'}`);
+    lines.push('The changed-file list and diff below are NOT available. Judge scope and behavior by inspecting the candidate files directly; do NOT assume an empty changed-file list means nothing changed.');
+    return lines.join('\n');
+  }
+
+  const heading = evidence.status === 'partial'
+    ? 'HOST EVIDENCE (PARTIAL — computed by the Agent Host; some diff content omitted or truncated):'
+    : 'HOST EVIDENCE (computed by the Agent Host — authoritative):';
+  lines.push(heading);
+  lines.push(`Changed files (${evidence.changedFileCount}):`);
+  if (evidence.changedFiles.length > 0) {
+    for (const change of evidence.changedFiles) {
+      lines.push(`- ${change.kind}: ${change.path}`);
+    }
+  } else {
+    lines.push('- (none)');
+  }
+  lines.push('');
+  lines.push('Unified diff (baseline commit vs candidate; line endings normalized):');
+  lines.push(evidence.diffText.trim().length > 0 ? evidence.diffText.trim() : '(no diff content)');
+  if (evidence.status === 'partial') {
+    const omitted = evidence.omittedPaths ?? [];
+    if (omitted.length > 0) {
+      lines.push('');
+      lines.push(`NOTE: ${omitted.length} file(s) above had their diff omitted (${evidence.reason ?? 'baseline differs from HEAD or file too large'}). The file is still listed as changed; inspect it directly to judge its behavior.`);
+    }
+  }
+  if (evidence.truncated) {
+    lines.push('');
+    lines.push('NOTE: the diff above was truncated by the Host. Inspect the listed changed files directly for the full content.');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * A5 helper for the executor's soft-failure path: when the evidence builder
+ * itself throws, render an explicit UNAVAILABLE block so the Verifier never
+ * silently receives a prompt with no evidence (which could be mistaken for
+ * "nothing changed").
+ */
+export function buildVerifierHostEvidenceUnavailableBlock(reason: string): string {
+  return buildVerifierHostEvidenceBlock({
+    status: 'unavailable',
+    reason,
+    changedFiles: [],
+    changedFileCount: 0,
+    diffText: '',
+    truncated: false,
+  });
 }
 
 export function buildReviewerPrompt(task: PlanTask, plan: ControlPlan): string {

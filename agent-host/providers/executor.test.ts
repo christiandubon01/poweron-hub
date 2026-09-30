@@ -21,8 +21,10 @@ import {
   type AttemptExecutionInput,
 } from './executor.ts';
 import type { AttemptWorkspace } from '../workspace.ts';
+import { captureWorkspaceTree, writeCapturedBaseline } from '../workspace.ts';
 import { mapPermissionProfileToCodexSandbox } from './codex.ts';
 import { evaluateControlTowerUiSmokeAcceptance, CONTROL_TOWER_UI_SMOKE_LINE, CONTROL_TOWER_UI_SMOKE_PATH } from '../control/planning.ts';
+import { buildVerifierHostEvidence, verifierDiffSidecarPath, type BuildVerifierHostEvidenceOptions, type VerifierHostEvidence } from '../control/verifierEvidence.ts';
 import { classifyAttemptFailure, supervisorTick } from '../supervisor/supervisor.ts';
 import { ProductionExecutionPort, VERIFIER_VERDICT_EVENT } from '../control/supervisorPort.ts';
 
@@ -229,6 +231,7 @@ function createExecutor(
     policyController: ReturnType<typeof createNoOpAttemptPolicyController>;
     workspaceConfig: { canonicalRepoPath: string; workspaceRoot: string; repoKey: string };
     workspacePreparer: (options: { canonicalRepoPath: string; workspaceRoot: string; identity: { repoKey: string; runId: string; attemptId: string } }) => Promise<AttemptWorkspace>;
+    verifierEvidenceBuilder: (options: BuildVerifierHostEvidenceOptions) => Promise<VerifierHostEvidence>;
   }> = {},
 ): AttemptExecutor {
   return new AttemptExecutor({
@@ -242,6 +245,7 @@ function createExecutor(
     policyController: overrides.policyController ?? createNoOpAttemptPolicyController(),
     workspaceConfig: overrides.workspaceConfig,
     workspacePreparer: overrides.workspacePreparer,
+    verifierEvidenceBuilder: overrides.verifierEvidenceBuilder,
   });
 }
 
@@ -416,6 +420,416 @@ test('ATB-7B2: verifier reads the implementer candidate copy and leaves canonica
   assert.equal((prepared?.payload as Record<string, unknown>).materializationMode, 'candidate-copy');
   assert.equal((prepared?.payload as Record<string, unknown>).readOnly, true);
   store.close();
+});
+
+test('CT-VERIFY-1: verifier prompt carries Host evidence (changed files + diff) and emits a small workspace.diff.ready event', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'verify1-evidence-'));
+  const repoPath = path.join(root, 'repo');
+  const workspaceRoot = path.join(root, 'runtime', 'workspaces');
+  await mkdir(repoPath);
+  await git(repoPath, ['init']);
+  await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
+  await git(repoPath, ['config', 'user.name', 'Fixture']);
+  await writeFile(path.join(repoPath, 'README.md'), 'COMMITTED\n');
+  await git(repoPath, ['add', '.']);
+  await git(repoPath, ['commit', '-m', 'baseline']);
+
+  const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  store.createRun({ runId: 'run-1', title: 'Run' });
+  store.createTask({
+    taskId: 'task-impl',
+    runId: 'run-1',
+    title: 'Implement',
+    spec: { policy: { authorizedWritePaths: [CONTROL_TOWER_UI_SMOKE_PATH] }, plan: { role: 'implementer', plannedAreas: ['agent-host/smoke'] } },
+  });
+  store.createTask({
+    taskId: 'task-v',
+    runId: 'run-1',
+    title: 'Verify',
+    spec: { policy: { authorizedWritePaths: [] }, plan: { role: 'verifier', plannedAreas: ['agent-host/smoke'] } },
+  });
+  store.addDependency('task-v', 'task-impl');
+  store.createAttempt({ attemptId: 'attempt-impl', taskId: 'task-impl', hostInstanceId: 'host-instance-1' });
+  store.createAttempt({ attemptId: 'attempt-v', taskId: 'task-v', hostInstanceId: 'host-instance-1' });
+
+  const smokeBytes = Buffer.from(`${CONTROL_TOWER_UI_SMOKE_LINE}\n`, 'utf8');
+  const adapter = new FakeAdapter({
+    id: 'codex',
+    onExecute: async (request) => {
+      if (request.permissionProfile === 'task-implementer') {
+        await mkdir(path.join(request.workingDirectory, 'agent-host', 'smoke'), { recursive: true });
+        await writeFile(path.join(request.workingDirectory, CONTROL_TOWER_UI_SMOKE_PATH), smokeBytes);
+      }
+      return createExecutionResult({ executionId: request.executionId });
+    },
+  });
+  const executor = createExecutor(store, [adapter], { workspaceConfig: { canonicalRepoPath: repoPath, workspaceRoot, repoKey: 'repo-key' } });
+
+  await executor.execute(createExecutionInput({
+    taskId: 'task-impl',
+    attemptId: 'attempt-impl',
+    permissionProfile: 'task-implementer',
+    workingDirectory: repoPath,
+  }));
+
+  const verified = await executor.execute(createExecutionInput({
+    taskId: 'task-v',
+    attemptId: 'attempt-v',
+    permissionProfile: 'verifier',
+    workingDirectory: repoPath,
+    prompt: 'Verify the candidate.',
+  }));
+  assert.equal(verified.attempt.status, 'passed');
+
+  const verifierRequest = adapter.executeRequests[1];
+  assert.ok(verifierRequest);
+  // The Host evidence block was appended to the verifier prompt with the changed
+  // file and the diff. (The ENVIRONMENT LIMITS guidance is authored by
+  // buildVerifierPrompt in planning.ts and is tested in control.test.ts; this
+  // test passes a raw prompt that bypasses that builder.)
+  assert.match(verifierRequest.prompt, /HOST EVIDENCE \(computed by the Agent Host — authoritative\):/);
+  assert.match(verifierRequest.prompt, /Changed files \(1\):/);
+  assert.match(verifierRequest.prompt, /- add: agent-host\/smoke\/control-tower-ui-e2e\.txt/);
+  assert.match(verifierRequest.prompt, /new file mode 100644/);
+  assert.match(verifierRequest.prompt, /CONTROL_TOWER_UI_E2E_OK final/);
+
+  // The durable event is metadata-only and small (no diff content).
+  const diffEvent = store.listEvents().find((event) => event.type === 'workspace.diff.ready' && event.attemptId === 'attempt-v');
+  assert.ok(diffEvent);
+  const payload = diffEvent!.payload as Record<string, unknown>;
+  assert.equal(payload.changedFileCount, 1);
+  assert.equal(typeof payload.diffSha256, 'string');
+  assert.equal(typeof payload.diffFilePath, 'string');
+  assert.equal(typeof payload.diffSizeBytes, 'number');
+  assert.equal(typeof payload.truncated, 'boolean');
+  assert.equal(payload.diffText, undefined);
+  assert.equal(payload.diff, undefined);
+  assert.ok(Buffer.byteLength(JSON.stringify(payload), 'utf8') < TEXT_FIELD_MAX_BYTES);
+
+  // The sidecar diff file lives beside the attempt workspace, never in the repo.
+  const diffPath = verifierDiffSidecarPath({
+    workspaceRoot,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-v' },
+  });
+  assert.ok(!diffPath.startsWith(repoPath));
+  const sidecar = await readFile(diffPath, 'utf8');
+  assert.match(sidecar, /new file mode 100644/);
+  assert.equal(payload.diffFilePath, diffPath);
+
+  // A thrown builder cannot silently turn an empty evidence block into a PASS.
+  store.createTask({
+    taskId: 'task-v-throw', runId: 'run-1', title: 'Verify builder failure',
+    spec: { policy: { authorizedWritePaths: [] }, plan: { role: 'verifier', plannedAreas: ['agent-host/smoke'] } },
+  });
+  store.addDependency('task-v-throw', 'task-impl');
+  store.createAttempt({ attemptId: 'attempt-v-throw', taskId: 'task-v-throw', hostInstanceId: 'host-instance-1' });
+  const throwingExecutor = createExecutor(store, [adapter], {
+    workspaceConfig: { canonicalRepoPath: repoPath, workspaceRoot, repoKey: 'repo-key' },
+    verifierEvidenceBuilder: async () => { throw new Error('secret-looking builder detail'); },
+  });
+  const thrown = await throwingExecutor.execute(createExecutionInput({
+    taskId: 'task-v-throw', attemptId: 'attempt-v-throw', permissionProfile: 'verifier', workingDirectory: repoPath,
+    prompt: 'Verify the candidate.',
+  }));
+  assert.equal(thrown.attempt.status, 'passed');
+  const thrownPrompt = adapter.executeRequests.at(-1)?.prompt ?? '';
+  assert.match(thrownPrompt, /HOST EVIDENCE UNAVAILABLE:/);
+  assert.doesNotMatch(thrownPrompt, /Changed files \(0\)/);
+  assert.doesNotMatch(thrownPrompt, /secret-looking builder detail/);
+  const unavailableEvent = store.listEvents().find((event) => event.type === 'workspace.diff.ready' && event.attemptId === 'attempt-v-throw');
+  assert.equal((unavailableEvent?.payload as Record<string, unknown>)?.status, 'unavailable');
+  assert.ok(Buffer.byteLength(JSON.stringify(unavailableEvent?.payload), 'utf8') < TEXT_FIELD_MAX_BYTES);
+
+  // Canonical repo is untouched by evidence building.
+  const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: repoPath, windowsHide: true });
+  assert.equal(status.stdout.trim(), '');
+  store.close();
+});
+
+/* -------------------------------------------------------------------------- */
+/* CT-VERIFY-1 Part A: buildVerifierHostEvidence unit tests                    */
+/* -------------------------------------------------------------------------- */
+
+async function evidenceFixture(): Promise<{
+  root: string;
+  repoPath: string;
+  workspaceRoot: string;
+  baselineWs: string;
+  candidateWs: string;
+  baselineHeadSha: string;
+  cleanup: () => Promise<void>;
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'evidence-unit-'));
+  const repoPath = path.join(root, 'repo');
+  const workspaceRoot = path.join(root, 'ws');
+  const baselineWs = path.join(root, 'baseline-ws');
+  const candidateWs = path.join(root, 'candidate-ws');
+  await mkdir(repoPath, { recursive: true });
+  await git(repoPath, ['init']);
+  await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
+  await git(repoPath, ['config', 'user.name', 'Fixture']);
+  return { root, repoPath, workspaceRoot, baselineWs, candidateWs, baselineHeadSha: 'deadbeef', cleanup: async () => { await rm(root, { recursive: true, force: true }); } };
+}
+
+async function writeBaselineFiles(f: {
+  workspaceRoot: string;
+  baselineWs: string;
+  baselineHeadSha: string;
+}, files: Record<string, string | Buffer>): Promise<void> {
+  await mkdir(f.baselineWs, { recursive: true });
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(f.baselineWs, ...rel.split('/'));
+    await mkdir(path.dirname(abs), { recursive: true });
+    await writeFile(abs, content);
+  }
+  const tree = await captureWorkspaceTree(f.baselineWs);
+  await writeCapturedBaseline({
+    workspaceRoot: f.workspaceRoot,
+    identity: { repoKey: 'repokey1', runId: 'run-1', attemptId: 'attempt-impl' },
+    baselineHeadSha: f.baselineHeadSha,
+    tree,
+  });
+}
+
+async function writeCandidateFiles(candidateWs: string, files: Record<string, string | Buffer>): Promise<void> {
+  await mkdir(candidateWs, { recursive: true });
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(candidateWs, ...rel.split('/'));
+    await mkdir(path.dirname(abs), { recursive: true });
+    await writeFile(abs, content);
+  }
+}
+
+test('buildVerifierHostEvidence: modify diff shows removed/added lines with context', async () => {
+  const f = await evidenceFixture();
+  try {
+    await writeFile(path.join(f.repoPath, 'file.txt'), 'line1\nline2\nline3\n');
+    await git(f.repoPath, ['add', '.']);
+    await git(f.repoPath, ['commit', '-m', 'baseline']);
+    f.baselineHeadSha = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: f.repoPath, windowsHide: true }).then((r) => r.stdout.trim());
+    await writeBaselineFiles(f, { 'file.txt': 'line1\nline2\nline3\n' });
+    await writeCandidateFiles(f.candidateWs, { 'file.txt': 'line1\nCHANGED\nline3\n' });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: f.baselineHeadSha,
+      candidateWorkspacePath: f.candidateWs,
+    });
+    assert.deepEqual(evidence.changedFiles, [{ kind: 'modify', path: 'file.txt' }]);
+    assert.match(evidence.diffText, /-line2/);
+    assert.match(evidence.diffText, /\+CHANGED/);
+    assert.match(evidence.diffText, / line1/);
+    assert.match(evidence.diffText, / line3/);
+    assert.equal(evidence.truncated, false);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('buildVerifierHostEvidence: add and delete get new-file/deleted-file headers', async () => {
+  const f = await evidenceFixture();
+  try {
+    await writeFile(path.join(f.repoPath, 'gone.txt'), 'gone\n');
+    await git(f.repoPath, ['add', '.']);
+    await git(f.repoPath, ['commit', '-m', 'baseline']);
+    f.baselineHeadSha = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: f.repoPath, windowsHide: true }).then((r) => r.stdout.trim());
+    await writeBaselineFiles(f, { 'gone.txt': 'gone\n' });
+    await writeCandidateFiles(f.candidateWs, { 'new.txt': 'fresh\n' });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: f.baselineHeadSha,
+      candidateWorkspacePath: f.candidateWs,
+    });
+    const kinds = evidence.changedFiles.map((c) => `${c.kind}:${c.path}`).sort();
+    assert.deepEqual(kinds, ['add:new.txt', 'delete:gone.txt']);
+    assert.match(evidence.diffText, /new file mode 100644/);
+    assert.match(evidence.diffText, /deleted file mode 100644/);
+    assert.match(evidence.diffText, /\+fresh/);
+    assert.match(evidence.diffText, /-gone/);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('buildVerifierHostEvidence: binary file yields a binary-changed line, no hunks', async () => {
+  const f = await evidenceFixture();
+  try {
+    const bin = Buffer.from([0x00, 0x01, 0x02, 0x03]);
+    await writeBaselineFiles(f, { 'bin.dat': bin });
+    await writeCandidateFiles(f.candidateWs, { 'bin.dat': Buffer.from([0x00, 0x01, 0x02, 0x04]) });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: 'deadbeef',
+      candidateWorkspacePath: f.candidateWs,
+      gitShow: async () => bin,
+    });
+    assert.deepEqual(evidence.changedFiles, [{ kind: 'modify', path: 'bin.dat' }]);
+    assert.match(evidence.diffText, /Binary file bin\.dat changed/);
+    assert.doesNotMatch(evidence.diffText, /@@/);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('buildVerifierHostEvidence: CRLF-vs-LF same text is not a change (line-ending-aware)', async () => {
+  const f = await evidenceFixture();
+  try {
+    const text = 'alpha\nbeta\n';
+    await writeBaselineFiles(f, { 'le.txt': text });
+    await writeCandidateFiles(f.candidateWs, { 'le.txt': text.replaceAll('\n', '\r\n') });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: 'deadbeef',
+      candidateWorkspacePath: f.candidateWs,
+      gitShow: async () => Buffer.from(text, 'utf8'),
+    });
+    assert.deepEqual(evidence.changedFiles, []);
+    assert.match(evidence.diffText, /\(no changed files\)/);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('buildVerifierHostEvidence: total cap truncates and sets truncated', async () => {
+  const f = await evidenceFixture();
+  try {
+    const before = Array.from({ length: 60 }, (_, i) => `old${i}`).join('\n') + '\n';
+    const after = Array.from({ length: 60 }, (_, i) => `new${i}`).join('\n') + '\n';
+    await writeBaselineFiles(f, { 'big.txt': before });
+    await writeCandidateFiles(f.candidateWs, { 'big.txt': after });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: 'deadbeef',
+      candidateWorkspacePath: f.candidateWs, gitShow: async () => Buffer.from(before, 'utf8'),
+      totalCapBytes: 64,
+    });
+    assert.equal(evidence.truncated, true);
+    assert.match(evidence.diffText, /truncated/);
+    assert.equal(evidence.status, 'partial');
+    assert.ok(evidence.diffSizeBytes <= 64);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('buildVerifierHostEvidence: CRLF captured baseline matches LF git-show bytes', async () => {
+  const f = await evidenceFixture();
+  try {
+    await writeBaselineFiles(f, { 'le.txt': 'alpha\r\nbeta\r\n' });
+    await writeCandidateFiles(f.candidateWs, { 'le.txt': 'alpha\nchanged\n' });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: f.baselineHeadSha,
+      candidateWorkspacePath: f.candidateWs,
+      gitShow: async () => Buffer.from('alpha\nbeta\n'),
+    });
+    assert.equal(evidence.status, 'full');
+    assert.match(evidence.diffText, /-beta/);
+    assert.match(evidence.diffText, /\+changed/);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('buildVerifierHostEvidence: per-file cap has a marker and sidecar failure rejects', async () => {
+  const f = await evidenceFixture();
+  try {
+    const before = Array.from({ length: 30 }, (_, i) => `old${i}`).join('\n') + '\n';
+    const after = Array.from({ length: 30 }, (_, i) => `new${i}`).join('\n') + '\n';
+    await writeBaselineFiles(f, { 'large.txt': before });
+    await writeCandidateFiles(f.candidateWs, { 'large.txt': after });
+    const options = {
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: f.baselineHeadSha,
+      candidateWorkspacePath: f.candidateWs, gitShow: async () => Buffer.from(before, 'utf8'), perFileLineCap: 8,
+    };
+    const evidence = await buildVerifierHostEvidence(options);
+    assert.equal(evidence.status, 'partial');
+    assert.equal(evidence.truncated, true);
+    assert.match(evidence.diffText, /per-file diff line cap \(8\) reached/);
+    assert.equal(await readFile(evidence.diffFilePath, 'utf8'), evidence.diffText);
+    await assert.rejects(() => buildVerifierHostEvidence({
+      ...options, verifierAttemptId: 'attempt-v-write-fail',
+      writeFileImpl: async () => { throw new Error('simulated sidecar write failure'); },
+    }), /simulated sidecar write failure/);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('CT-VERIFY-1 A5: missing baseline yields status unavailable and never presents an empty list as complete', async () => {
+  const f = await evidenceFixture();
+  try {
+    // No writeBaselineFiles call → readCapturedBaseline returns null.
+    await writeCandidateFiles(f.candidateWs, { 'file.txt': 'line1\n' });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: 'deadbeef',
+      candidateWorkspacePath: f.candidateWs,
+    });
+    assert.equal(evidence.status, 'unavailable');
+    assert.ok(evidence.reason);
+    assert.deepEqual(evidence.changedFiles, []);
+    assert.equal(evidence.changedFileCount, 0);
+    assert.match(evidence.diffText, /HOST EVIDENCE UNAVAILABLE/);
+    assert.deepEqual(evidence.omittedPaths, []);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('CT-VERIFY-1 A6: file dirty at run start (baseline on-disk differs from HEAD) → diff omitted, file still listed, status partial', async () => {
+  const f = await evidenceFixture();
+  try {
+    // HEAD blob is the clean version.
+    await writeFile(path.join(f.repoPath, 'file.txt'), 'line1\nline2\nline3\n');
+    await git(f.repoPath, ['add', '.']);
+    await git(f.repoPath, ['commit', '-m', 'baseline']);
+    f.baselineHeadSha = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: f.repoPath, windowsHide: true }).then((r) => r.stdout.trim());
+    // Captured baseline is the DIRTY on-disk version (owner had uncommitted work at run start).
+    await writeBaselineFiles(f, { 'file.txt': 'line1\nDIRTY\nline3\n' });
+    // Provider then modified the dirty file.
+    await writeCandidateFiles(f.candidateWs, { 'file.txt': 'line1\nPROVIDER\nline3\n' });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: f.baselineHeadSha,
+      candidateWorkspacePath: f.candidateWs,
+    });
+    // File is still listed as changed.
+    assert.deepEqual(evidence.changedFiles, [{ kind: 'modify', path: 'file.txt' }]);
+    assert.equal(evidence.changedFileCount, 1);
+    // But the diff is omitted with the explicit drift note.
+    assert.match(evidence.diffText, /diff omitted: baseline differs from HEAD \(uncommitted work at run start\)/);
+    assert.ok(!/\+PROVIDER/.test(evidence.diffText));
+    assert.equal(evidence.status, 'partial');
+    assert.deepEqual(evidence.omittedPaths, ['file.txt']);
+    assert.ok(evidence.reason);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('CT-VERIFY-1: file exceeding the LCS input line cap emits "diff too large — omitted", never a sliced incorrect diff', async () => {
+  const f = await evidenceFixture();
+  try {
+    const cap = 2000;
+    const before = Array.from({ length: cap + 50 }, (_, i) => `old${i}`).join('\n') + '\n';
+    const after = Array.from({ length: cap + 50 }, (_, i) => `new${i}`).join('\n') + '\n';
+    await writeBaselineFiles(f, { 'huge.txt': before });
+    await writeCandidateFiles(f.candidateWs, { 'huge.txt': after });
+    const evidence = await buildVerifierHostEvidence({
+      canonicalRepoPath: f.repoPath, workspaceRoot: f.workspaceRoot, repoKey: 'repokey1', runId: 'run-1',
+      verifierAttemptId: 'attempt-v', sourceAttemptId: 'attempt-impl', baselineHeadSha: 'deadbeef',
+      candidateWorkspacePath: f.candidateWs, gitShow: async () => Buffer.from(before, 'utf8'),
+    });
+    assert.deepEqual(evidence.changedFiles, [{ kind: 'modify', path: 'huge.txt' }]);
+    assert.match(evidence.diffText, /diff too large — omitted/);
+    // Must NOT emit hunk lines (which would imply a silently-sliced, incorrect diff).
+    assert.ok(!/@@/.test(evidence.diffText));
+    assert.equal(evidence.status, 'partial');
+    assert.deepEqual(evidence.omittedPaths, ['huge.txt']);
+  } finally {
+    await f.cleanup();
+  }
 });
 
 test('executor: failed policy-accepted Implementer is never offered to Verifier', async () => {
