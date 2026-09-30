@@ -68,21 +68,24 @@ export function useCashOsSnapshot(demoUnavailable: boolean) {
         if (token !== generation.current) return
         setup = loadCashOsSessionSetup(scope.context.organizationId)
         const timezoneReason = cashOsTimezoneReason(scope.storedTimezone, setup)
-        if (timezoneReason) {
-          setState({ ...INITIAL, status: 'setup_required', reason: timezoneReason, scope, setup })
-          return
-        }
-        if (!setup) {
-          setState({ ...INITIAL, status: 'setup_required',
-            reason: missingCashOsSessionReason(scope.context.organizationId), scope })
-          return
-        }
-        if (scope.storedTimezone && scope.storedTimezone !== CASH_OS_TIMEZONE) {
+        // Only TIMEZONE_MISMATCH is a hard conflict (stored timezone doesn't match engine).
+        // TIMEZONE_CONFIRMATION_REQUIRED is an assumption gap — sources still load,
+        // but snapshot is blocked below alongside the missing-setup check.
+        if (timezoneReason === 'TIMEZONE_MISMATCH') {
           setState({ ...INITIAL, status: 'setup_required', reason: 'TIMEZONE_MISMATCH', scope, setup })
           return
         }
-        sources = await readCashOsSources(scope, setup.payrollPaidThroughDate, now)
+        // Pass null when payrollPaidThroughDate is unknown — the read service skips
+        // payroll queries rather than treating "today" as a meaningful sentinel date.
+        const payrollCutoff = setup?.payrollPaidThroughDate ?? null
+        sources = await readCashOsSources(scope, payrollCutoff, now)
         if (token !== generation.current) return
+        if (!setup || timezoneReason) {
+          setState({ ...INITIAL, status: 'setup_required',
+            reason: timezoneReason ?? missingCashOsSessionReason(scope.context.organizationId),
+            scope, sources })
+          return
+        }
         if (!sources.accounts.some(a => a.status === 'active' && a.account_class === 'asset' && a.include_in_cash)) {
           setState({ ...INITIAL, status: 'setup_required', reason: 'ACCOUNT_SETUP_REQUIRED', scope, setup, sources })
           return

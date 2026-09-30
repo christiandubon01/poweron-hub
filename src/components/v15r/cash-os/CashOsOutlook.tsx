@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CashOsSnapshot } from '@/finance/cashOsSnapshot'
 import type { CashProjectionConfidenceMode, CashProjectionHorizon, DailyCashProjection } from '@/finance/cashProjectionTypes'
 import type { CollectionClockEntry } from '@/finance/projectCollectionClockTypes'
+import CashMoneyPlan from './CashMoneyPlan'
 import CashTrajectoryChart from './CashTrajectoryChart'
 import { CashCard, CashEmpty, cashDate, money } from './cashOsUi'
 
@@ -94,6 +95,7 @@ export default function CashOsOutlook({ snapshot, horizonDays, confidenceMode, o
     </div>)}</div>
     <CashTrajectoryChart projection={projection} horizonDays={horizonDays} confidenceMode={confidenceMode}
       onHorizon={onHorizon} onConfidence={onConfidence} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
+    <CashMoneyPlan totalCashMinor={projection.anchor.closingCashMinor} />
     <div className="grid gap-5 xl:grid-cols-2"><CashCollectionClock snapshot={snapshot} /><CashUpcomingEvents snapshot={snapshot} /></div>
     <CashDayDetail day={day} />
   </div>

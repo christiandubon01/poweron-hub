@@ -77,11 +77,37 @@ describe('CASH-8 hook lifecycle', () => {
     expect(control.reads).toBe(0)
     expect(host.textContent).toContain('DEMO_UNAVAILABLE')
   })
-  it('shows setup required before a source read when no session assumptions exist', async () => {
+  it('loads raw sources even when no session assumptions exist', async () => {
     sessionStorage.clear()
     await act(async () => { root.render(<Probe />) })
-    expect(control.reads).toBe(0)
+    expect(control.reads).toBe(1)
     expect(host.textContent).toContain('SESSION_SETUP_REQUIRED')
+  })
+  it('has scope and sources but no setup or snapshot when setup_required', async () => {
+    sessionStorage.clear()
+    let captured: any = null
+    function Capture() {
+      const cash = useCashOsSnapshot(false)
+      captured = cash
+      return null
+    }
+    await act(async () => { root.render(<Capture />) })
+    expect(captured.status).toBe('setup_required')
+    expect(captured.scope).not.toBeNull()
+    expect(captured.sources).not.toBeNull()
+    expect(captured.setup).toBeNull()
+    expect(captured.snapshot).toBeNull()
+  })
+  it('does not have a snapshot (no allocation/projection fabricated) when setup is absent', async () => {
+    sessionStorage.clear()
+    // Verified implicitly: the state capture test above checks snapshot === null.
+    // This named test asserts the same via the Probe text to make the intent explicit.
+    await act(async () => { root.render(<Probe />) })
+    const text = host.textContent ?? ''
+    // status is setup_required and there is no ready/partial that would imply a built snapshot
+    expect(text).toContain('setup_required')
+    expect(text).not.toContain(':ready')
+    expect(text).not.toContain(':partial')
   })
   it('requires account setup rather than treating missing accounts as zero', async () => {
     control.accountMode = 'none'
@@ -102,14 +128,30 @@ describe('CASH-8 hook lifecycle', () => {
     await act(async () => { root.render(<Probe />) })
     expect(host.textContent).toContain('error:LEDGER_READ_FAILED')
   })
-  it('requires timezone confirmation when the stored value is absent', async () => {
+  it('requires timezone confirmation when the stored value is absent — but still loads sources', async () => {
     control.timezone = null
     sessionStorage.clear()
     await act(async () => { root.render(<Probe />) })
     expect(host.textContent).toContain('TIMEZONE_CONFIRMATION_REQUIRED')
-    expect(control.reads).toBe(0)
+    // Sources load even without timezone confirmation (assumption gap, not hard conflict)
+    expect(control.reads).toBe(1)
   })
-  it('blocks a conflicting stored timezone', async () => {
+  it('has sources but no snapshot when TIMEZONE_CONFIRMATION_REQUIRED', async () => {
+    control.timezone = null
+    sessionStorage.clear()
+    let captured: any = null
+    function Capture() {
+      const cash = useCashOsSnapshot(false)
+      captured = cash
+      return null
+    }
+    await act(async () => { root.render(<Capture />) })
+    expect(captured.status).toBe('setup_required')
+    expect(captured.reason).toBe('TIMEZONE_CONFIRMATION_REQUIRED')
+    expect(captured.sources).not.toBeNull()
+    expect(captured.snapshot).toBeNull()
+  })
+  it('blocks a conflicting stored timezone and does not load sources', async () => {
     control.timezone = 'America/New_York'
     await act(async () => { root.render(<Probe />) })
     expect(host.textContent).toContain('TIMEZONE_MISMATCH')

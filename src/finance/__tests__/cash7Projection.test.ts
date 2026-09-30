@@ -502,3 +502,58 @@ describe('CASH-7 deterministic projection', () => {
       '2026-10-01', Number.MAX_SAFE_INTEGER + 1)] }))).toThrow(/safe integer/)
   })
 })
+
+describe('CASH-7 project collection marker classification – branch ordering regression', () => {
+  const PAST = '2026-05-22'  // clearly before DAY = '2026-09-29'
+
+  function pastProject(): ClockProject {
+    return project({ depositPct: 0, phaseTimeline: [{ phaseName: 'Deposit',
+      paymentTriggerPct: 30, confirmedStartDate: '2026-05-01', actualEndDate: PAST }] })
+  }
+
+  it('classifies a past-dated collection with known amount as overdue_unsettled', () => {
+    const result = computeCashProjection(makeInput({ projects: [pastProject()],
+      collectionEvidence: [evidence()], confidenceMode: 'upside' }))
+    expect(result.datedMarkers).toContainEqual(expect.objectContaining({ reason: 'overdue_unsettled', date: PAST }))
+    expect(result.datedEvents.filter(e => e.movementBasis === 'project_collection')).toHaveLength(0)
+  })
+
+  it('classifies a past-dated collection with null amount (unlinked collections) as collection_linkage_unknown', () => {
+    const result = computeCashProjection(makeInput({ projects: [pastProject()],
+      collectionEvidence: [evidence(500)], confidenceMode: 'upside' }))
+    const m = result.datedMarkers.find(m => m.date === PAST)
+    expect(m).toBeDefined()
+    expect(m?.reason).toBe('collection_linkage_unknown')
+    expect(result.datedMarkers.some(m => m.reason === 'overdue_unsettled' && m.amountMinor === null)).toBe(false)
+    expect(result.datedEvents.filter(e => e.movementBasis === 'project_collection')).toHaveLength(0)
+  })
+
+  it('classifies a future-dated null-amount collection as unknown_amount not collection_linkage_unknown', () => {
+    const result = computeCashProjection(makeInput({ projects: [project()],
+      collectionEvidence: [evidence(500)], confidenceMode: 'upside', horizonDays: 90 }))
+    expect(result.datedMarkers).toContainEqual(expect.objectContaining({ reason: 'unknown_amount' }))
+    expect(result.datedMarkers.some(m => m.reason === 'collection_linkage_unknown')).toBe(false)
+  })
+
+  it('admits a future-dated known-amount collection to datedEvents', () => {
+    const result = computeCashProjection(makeInput({ projects: [project()],
+      collectionEvidence: [evidence()], confidenceMode: 'upside', horizonDays: 90 }))
+    expect(result.datedEvents.filter(e => e.movementBasis === 'project_collection').length).toBeGreaterThan(0)
+  })
+
+  it('classifies a null-dated null-amount collection as unknown_amount in undatedMarkers', () => {
+    const p = project({ depositPct: 10, plannedStart: null, startDate: null,
+      phaseTimeline: [{ phaseName: 'NoDate', paymentTriggerPct: 0 }] })
+    const result = computeCashProjection(makeInput({ projects: [p],
+      collectionEvidence: [evidence(500)], confidenceMode: 'upside' }))
+    expect(result.undatedMarkers).toContainEqual(expect.objectContaining({ reason: 'unknown_amount' }))
+  })
+
+  it('classifies a null-dated known-amount collection as unknown_date in undatedMarkers', () => {
+    const p = project({ depositPct: 10, plannedStart: null, startDate: null,
+      phaseTimeline: [{ phaseName: 'NoDate', paymentTriggerPct: 0 }] })
+    const result = computeCashProjection(makeInput({ projects: [p],
+      collectionEvidence: [evidence()], confidenceMode: 'upside' }))
+    expect(result.undatedMarkers).toContainEqual(expect.objectContaining({ reason: 'unknown_date' }))
+  })
+})

@@ -55,10 +55,12 @@ export function cashOsDateAt(now: Date, timezone: string): string {
   return `${part('year')}-${part('month')}-${part('day')}`
 }
 
-/** SELECT-only source capture. The caller supplies one instant for every engine. */
+/** SELECT-only source capture. The caller supplies one instant for every engine.
+ *  Pass payrollPaidThroughDate=null when session assumptions have not been confirmed;
+ *  the payroll queries are skipped and the bundle returns empty arrays for those fields. */
 export async function readCashOsSources(
   scope: CashOsScope,
-  payrollPaidThroughDate: string,
+  payrollPaidThroughDate: string | null,
   now: Date,
 ): Promise<CashOsSourceBundle> {
   const { userId, organizationId } = scope.context
@@ -71,15 +73,21 @@ export async function readCashOsSources(
   const [ledger, obligations, entries, sessions, profiles] = await Promise.all([
     readFinancialLedgerState().catch(error => { throw new Error(`LEDGER_READ_FAILED: ${String(error)}`) }),
     readCashObligationState().catch(error => { throw new Error(`OBLIGATION_READ_FAILED: ${String(error)}`) }),
-    readCashPages<any>('time_entries', q => q.select('id,org_id,employee_profile_id,work_date,paid_minutes,status,approval_status')
-      .eq('org_id', organizationId).gt('work_date', payrollPaidThroughDate).lte('work_date', asOfDate), from)
-      .catch(error => { throw new Error(`PAYROLL_READ_FAILED: ${String(error)}`) }),
-    readCashPages<any>('employee_work_sessions', q => q.select('id,org_id,employee_profile_id,work_date,project_id,clock_in_at,lunch_out_at,lunch_in_at,clock_out_at,paid_minutes,status')
-      .eq('org_id', organizationId).gt('work_date', payrollPaidThroughDate).lte('work_date', asOfDate), from)
-      .catch(error => { throw new Error(`PAYROLL_READ_FAILED: ${String(error)}`) }),
-    readCashPages<any>('employee_profiles', q => q.select('id,org_id,backup_employee_id')
-      .eq('org_id', organizationId), from)
-      .catch(error => { throw new Error(`PAYROLL_READ_FAILED: ${String(error)}`) }),
+    payrollPaidThroughDate !== null
+      ? readCashPages<any>('time_entries', q => q.select('id,org_id,employee_profile_id,work_date,paid_minutes,status,approval_status')
+          .eq('org_id', organizationId).gt('work_date', payrollPaidThroughDate).lte('work_date', asOfDate), from)
+          .catch(error => { throw new Error(`PAYROLL_READ_FAILED: ${String(error)}`) })
+      : Promise.resolve([]),
+    payrollPaidThroughDate !== null
+      ? readCashPages<any>('employee_work_sessions', q => q.select('id,org_id,employee_profile_id,work_date,project_id,clock_in_at,lunch_out_at,lunch_in_at,clock_out_at,paid_minutes,status')
+          .eq('org_id', organizationId).gt('work_date', payrollPaidThroughDate).lte('work_date', asOfDate), from)
+          .catch(error => { throw new Error(`PAYROLL_READ_FAILED: ${String(error)}`) })
+      : Promise.resolve([]),
+    payrollPaidThroughDate !== null
+      ? readCashPages<any>('employee_profiles', q => q.select('id,org_id,backup_employee_id')
+          .eq('org_id', organizationId), from)
+          .catch(error => { throw new Error(`PAYROLL_READ_FAILED: ${String(error)}`) })
+      : Promise.resolve([]),
   ])
   if (ledger.context.organizationId !== organizationId || ledger.context.userId !== userId
     || obligations.obligations.some(row => row.organizationId !== organizationId)
