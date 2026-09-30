@@ -92,8 +92,9 @@ export default function CashOsSetupPanel({ organizationId, storedTimezone, exist
           <option value="">Choose explicitly</option><option value="true">Yes</option><option value="false">No</option>
         </select>
       </label>
-      <label className="flex items-start gap-2 text-sm text-[var(--text-secondary)] sm:col-span-2">
-        <input type="checkbox" checked={timezoneConfirmed} onChange={e => setTimezoneConfirmed(e.target.checked)} className="mt-1" />
+      <label className="flex cursor-pointer items-start gap-3 text-sm text-[var(--text-secondary)] sm:col-span-2">
+        <input type="checkbox" checked={timezoneConfirmed} onChange={e => setTimezoneConfirmed(e.target.checked)}
+          className="mt-0.5 h-5 w-5 flex-shrink-0 cursor-pointer accent-orange-500" />
         <span>I confirm {CASH_OS_TIMEZONE} is the timekeeping and Cash OS work-date basis{storedTimezone ? ' stored for this organization.' : ' for this session.'}</span>
       </label>
       {error && <p role="alert" className="text-sm text-amber-300 sm:col-span-2">{error}</p>}
