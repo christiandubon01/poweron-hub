@@ -1,6 +1,7 @@
 import type { CashOsSnapshot } from '@/finance/cashOsSnapshot'
 import { CashCollectionClock } from './CashOsOutlook'
 import { CashCard, CashEmpty, cashDate, money } from './cashOsUi'
+import CashOsObligations from './CashOsObligations'
 
 export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
   const { projection } = snapshot
@@ -87,16 +88,12 @@ export function CashTransactionsView({ snapshot, onAdd }: { snapshot: CashOsSnap
   </div>
 }
 
-export function CashObligationsView({ snapshot }: { snapshot: CashOsSnapshot }) {
-  return <div className="grid gap-5 xl:grid-cols-2"><CashCard title="Recurring obligations">
-    {snapshot.obligations.length ? <div className="space-y-3">{snapshot.obligations.map(row => <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
-      <div className="flex justify-between gap-3"><strong>{row.name}</strong><span className="font-mono">{money(row.amount.minor)}</span></div>
-      <p className="mt-1 text-xs text-[var(--text-secondary)]">{row.recurrence.kind.replace(/_/g, ' ')} from {cashDate(row.recurrence.startDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}{row.projectId ? ` · Project ${row.projectId}` : ''}{row.debtAccountId ? ` · Debt ${row.debtAccountId}` : ''}</p>
-    </div>)}</div> : <CashEmpty>No recurring obligations were loaded.</CashEmpty>}
-  </CashCard><CashCard title="Cash commitments">
-    {snapshot.commitments.length ? <div className="space-y-3">{snapshot.commitments.map(row => <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
-      <div className="flex justify-between gap-3"><strong>{row.title}</strong><span className="font-mono">{money(row.amount.minor)}</span></div>
-      <p className="mt-1 text-xs text-[var(--text-secondary)]">{cashDate(row.expectedDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}{row.projectId ? ` · Project ${row.projectId}` : ''}{row.debtAccountId ? ` · Debt ${row.debtAccountId}` : ''}</p>
-    </div>)}</div> : <CashEmpty>No cash commitments were loaded.</CashEmpty>}
-  </CashCard></div>
+export function CashObligationsView({ snapshot, onRefresh }: { snapshot: CashOsSnapshot; onRefresh?: () => void }) {
+  return (
+    <CashOsObligations
+      obligations={snapshot.obligations}
+      commitments={snapshot.commitments}
+      onRefresh={onRefresh ?? (() => {})}
+    />
+  )
 }
