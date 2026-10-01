@@ -164,7 +164,10 @@ export async function runVerifierHostChecks(options: {
     for (const [index, command] of commands.entries()) {
       const argv = argvList[index];
       if (!argv) throw new Error('Invalid validation command.');
-      const noDependencies = (argv[0].toLowerCase().startsWith('node') && argv.includes('--test')) || (argv[1] === 'run' && argv[2] === 'agent-host:test');
+      // agent-host:test needs @supabase/supabase-js (imported via the control
+      // test graph), so it uses the dependency snapshot pair like every other
+      // npm command — not the node_modules-less 'node' pair.
+      const noDependencies = argv[0].toLowerCase().startsWith('node') && argv.includes('--test');
       const pairKey = noDependencies ? 'node' : 'dependencies';
       let pair = pairs.get(pairKey);
       if (!pair) {

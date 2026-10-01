@@ -1066,6 +1066,98 @@ describe('CT-LIVE-0A1 approval to run', () => {
   })
 })
 
+/* ── Parts 1/3/5: Run command label, failed filter, architect identity ────── */
+describe('CT Control Tower parts 1/3/5 — run command, failed filter, architect identity', () => {
+  it('does not label the Run command with a Scope Pack title (Part 1)', async () => {
+    fake.presenceRows = [presenceRow(new Date())]
+    fake.snapshots = [wireSnapshot()]
+    await renderLive()
+    expect(container.querySelector('.ct-run')).not.toBeNull()
+    expect(container.querySelector('.ct-command-scope')).toBeNull()
+  })
+
+  it('shows "Starting tasks" only while the run is pending and clears it once running (Part 1)', async () => {
+    await driveToPlanReview()
+    click(button('Approve Run'))
+    await settle()
+    const approval = fake.inserted[1]
+    fake.completeRequest(approval.clientRequestId, { runId: 'run-new', planId: PLAN_ID, planHash: PLAN_HASH })
+    await waitForPoll()
+    fake.snapshots = [wireSnapshot({ runId: 'run-new', runStatus: 'pending', title: 'New approved run', taskStatuses: ['pending', 'pending'] })]
+    await waitForPoll()
+    expect(container.textContent).toContain('Starting tasks')
+    fake.snapshots = [wireSnapshot({ runId: 'run-new', runStatus: 'running', title: 'New approved run', taskStatuses: ['running', 'pending'] })]
+    await waitForPoll()
+    expect(container.textContent).not.toContain('Starting tasks')
+  })
+
+  it('lists a verifier-rejected completed run under Failed Runs (not Completed) with the rejection card text (Part 3)', async () => {
+    fake.presenceRows = [presenceRow(new Date())]
+    fake.snapshots = [wireSnapshot({
+      runId: 'run-rejected',
+      runStatus: 'completed',
+      title: 'Rejected E2E',
+      taskStatuses: ['passed', 'passed'],
+      verification: { verdict: 'fail', summary: 'The candidate lacks the capacity module.' },
+      changeset: { ready: true, changeCount: 1, safePaths: ['agent-host/control/capacity.ts'] },
+    })]
+    await renderLive()
+    const failedButton = ([...container.querySelectorAll<HTMLButtonElement>('.ct-history-filters button')].find(b => b.textContent?.startsWith('Failed')))!
+    const completedButton = ([...container.querySelectorAll<HTMLButtonElement>('.ct-history-filters button')].find(b => b.textContent?.startsWith('Completed')))!
+    expect(failedButton.querySelector('.ct-count')?.textContent).toBe('1')
+    expect(completedButton.querySelector('.ct-count')?.textContent).toBe('0')
+    // Default filter for a rejected run is Failed, so the card is visible with the rejection summary.
+    expect(container.querySelector('.ct-failure-summary')?.textContent).toContain('Verification failed · 2 tasks executed · Candidate rejected')
+    // Selecting Completed hides the rejected run (empty state); selecting Failed shows it again.
+    click(completedButton)
+    await settle()
+    expect([...container.querySelectorAll('.ct-session')]).toHaveLength(0)
+    expect(container.textContent).toContain('No completed runs')
+    click(failedButton)
+    await settle()
+    expect([...container.querySelectorAll('.ct-session')]).toHaveLength(1)
+  })
+
+  it('maps the run architect through mapRunSnapshotRow without copying requested into reported (Part 5)', () => {
+    const present = wireSnapshot()
+    ;(present.snapshot as Record<string, unknown>).architect = { provider: 'claude', requestedModel: 'claude-opus-4-8', reportedModel: null, reasoningEffort: 'high' }
+    const presentView = mapRunSnapshotRow(present)!
+    expect(presentView.architect).not.toBeNull()
+    expect(presentView.architect!.provider).toBe('claude')
+    expect(presentView.architect!.requestedModel).toBe('claude-opus-4-8')
+    expect(presentView.architect!.reportedModel).toBeNull()
+    expect(presentView.architect!.effort).toBe('high')
+    // Legacy run: no architect wire → null → the UI shows "Not reported".
+    const legacyView = mapRunSnapshotRow(wireSnapshot())!
+    expect(legacyView.architect).toBeNull()
+  })
+
+  it('renders the Architect routing row as "Plan approved" with "Requested · <model>" from run.architect; legacy stays "Not reported" (Part 5)', async () => {
+    fake.presenceRows = [presenceRow(new Date())]
+    const run = wireSnapshot({ runId: 'run-arch', runStatus: 'completed', taskStatuses: ['passed', 'passed'] })
+    ;(run.snapshot as Record<string, unknown>).architect = { provider: 'claude', requestedModel: 'claude-opus-4-8', reportedModel: null, reasoningEffort: 'high' }
+    fake.snapshots = [run]
+    await renderLive()
+    const routingRows = container.querySelectorAll('.ct-routing > div')
+    expect(routingRows.length).toBeGreaterThan(0)
+    const architectRow = routingRows[0]
+    expect(architectRow.querySelector('b')?.textContent).toBe('Architect')
+    expect(architectRow.querySelector('small')?.textContent).toBe('Requested · claude-opus-4-8')
+    expect(architectRow.textContent).toContain('Plan approved')
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    fake = new FakeService()
+    holder.service = fake
+    fake.presenceRows = [presenceRow(new Date())]
+    fake.snapshots = [wireSnapshot({ runId: 'run-legacy', runStatus: 'completed', taskStatuses: ['passed', 'passed'] })]
+    await renderLive()
+    const legacyRows = container.querySelectorAll('.ct-routing > div')
+    expect(legacyRows[0].textContent).toContain('Not reported')
+    expect(legacyRows[0].querySelector('small')).toBeNull()
+  })
+})
+
 /* ── Hook harness for fail-closed service-guard cases (§36 16) ────────────── */
 let latest: ReturnType<typeof useControlTowerReal> | null = null
 function HookHarness({ pollIntervalMs }: { pollIntervalMs?: number }) {

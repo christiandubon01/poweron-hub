@@ -379,6 +379,13 @@ export interface ControlTowerRunView {
   interimVerdicts?: InterimVerdictView[]
   handoffs?: HandoffView[]
   signals?: SignalView[]
+  /**
+   * The Architect identity that produced the approved plan, carried on the run
+   * so the Architect role node can render provider/model/effort truth even when
+   * the run has no Architect execution tasks. Absent/invalid on legacy runs;
+   * reportedModel is never copied from requestedModel.
+   */
+  architect?: { provider: string; requestedModel: string | null; reportedModel: string | null; effort: EffortLevel | null } | null
 }
 
 const RUN_PHASE_LABEL: Record<RunState, string> = {
@@ -599,6 +606,7 @@ export function mapRunSnapshotRow(row: RunSnapshotRow, nowMs: number = Date.now(
     interimVerdicts,
     handoffs: mapHandoffs(wire.handoffs),
     signals,
+    architect: mapRunArchitect(wire.architect),
   }
 }
 
@@ -610,6 +618,27 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
 
 function optString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+/**
+ * Map the run-level Architect identity from the published snapshot. provider
+ * must be a non-empty string; requestedModel and reportedModel are a non-empty
+ * string or null; effort must be one of EFFORT_LEVELS or null. requestedModel
+ * is NEVER copied into the reported slot. Absent/invalid → null (legacy runs
+ * and runs whose plan produced no valid architect stay null).
+ */
+function mapRunArchitect(value: unknown): { provider: string; requestedModel: string | null; reportedModel: string | null; effort: EffortLevel | null } | null {
+  if (!isRecord(value)) return null
+  const provider = optString(value.provider)
+  if (!provider) return null
+  const effortRaw = value.effort != null ? value.effort : value.reasoningEffort
+  const effort = EFFORT_LEVELS.includes(effortRaw as EffortLevel) ? (effortRaw as EffortLevel) : null
+  return {
+    provider,
+    requestedModel: optString(value.requestedModel),
+    reportedModel: optString(value.reportedModel),
+    effort,
+  }
 }
 
 function safeRefs(value: unknown): string[] {

@@ -311,9 +311,23 @@ export function buildAgentTeamTopology(run: TowerSession | null): AgentTeamTopol
       taskLabel = focusTask?.title ?? null
       taskAttempt = focusTask?.attempt ?? null
       signalCount = roleSignalCount(roleTasks, signals)
+      // The Architect role often has no execution task — the plan it produced is
+      // the run's architect truth. Fall back to the run-level architect identity
+      // published on the snapshot ONLY when there are no Architect tasks. State
+      // logic is unchanged (an empty task set stays IDLE); only the model truth
+      // is filled in so the node is not blanked to "Not reported".
+      if (role === 'architect' && roleTasks.length === 0 && run?.architect) {
+        provider = run.architect.provider
+        effort = run.architect.effort
+        requestedModel = run.architect.requestedModel
+        reportedModel = run.architect.reportedModel
+      }
     }
 
-    if (verdictState) state = MAX_STATE(state, verdictState)
+    // A CONTINUE verdict only keeps a node ACTIVE while the run is in flight;
+    // on a finished run it must not revive a settled node. All other verdict
+    // states (WATCH, BLOCKED, NEEDS_OWNER, PASS, FAIL) apply exactly as before.
+    if (verdict && verdictState && (verdict.state !== 'CONTINUE' || runActive)) state = MAX_STATE(state, verdictState)
 
     return {
       role,

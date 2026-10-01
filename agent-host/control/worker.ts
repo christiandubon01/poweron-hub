@@ -116,6 +116,34 @@ import {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+/**
+ * Validate the Architect identity from a plan result so it can be carried on
+ * every task spec.plan. provider must be a non-empty string (≤200 chars);
+ * requestedModel and reportedModel are a string or null (each ≤200 chars,
+ * otherwise null). requestedModel is NEVER copied into the reported slot — an
+ * Architect that reported no model honestly stays null. Returns null when there
+ * is no architect wire or no valid provider, so spec.plan simply omits it.
+ */
+function validatePlanArchitectIdentity(
+  result: unknown,
+  reasoningEffort: EffortLevel | null,
+): { provider: string; requestedModel: string | null; reportedModel: string | null; reasoningEffort: EffortLevel | null } | null {
+  const wire = isRecord(result) && isRecord(result.architect) ? result.architect : null;
+  if (!wire) return null;
+  const cleanString = (input: unknown): string | null => {
+    if (typeof input !== 'string' || input.length === 0 || input.length > 200) return null;
+    return input;
+  };
+  const provider = cleanString(wire.provider);
+  if (!provider) return null;
+  return {
+    provider,
+    requestedModel: cleanString(wire.requestedModel),
+    reportedModel: cleanString(wire.reportedModel),
+    reasoningEffort,
+  };
+}
 import type { EffortLevel } from '../providers/effort.ts';
 import {
   HEARTBEAT_INTERVAL_MS,
@@ -1020,6 +1048,13 @@ export async function handleApprovePlan(options: {
   }
   const planForTasks: ControlPlan = { ...plan, constraints, ...(ownerScope ? { ownerScope } : {}) };
 
+  // The Architect identity from the approved plan result is carried on every
+  // task spec.plan so the snapshot can publish it as run-level truth (an
+  // Architect role node can render provider/model/effort even with no Architect
+  // execution tasks). Only added when a valid provider exists; never copies the
+  // requested model into the reported slot.
+  const architectForRun = validatePlanArchitectIdentity(planRow.result, options.roleEffort?.architect ?? null);
+
   // Build every task spec first. An oversized spec must fail before any run row exists.
   const prepared = planForTasks.tasks.map((task, index) => {
     const taskId = `${plan.planId}:${task.clientTaskKey}`;
@@ -1046,6 +1081,7 @@ export async function handleApprovePlan(options: {
         role: task.role,
         plannedAreas: task.plannedAreas,
         ...(task.verificationCommands ? { verificationCommands: task.verificationCommands } : {}),
+        ...(architectForRun ? { architect: architectForRun } : {}),
       },
       ...(plan.scopePack
         ? {
