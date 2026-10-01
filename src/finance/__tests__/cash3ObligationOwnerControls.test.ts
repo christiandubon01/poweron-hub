@@ -232,3 +232,73 @@ describe('CASH-OS-2C Obligation + Commitment Owner Controls', () => {
     expect(cancelBody).toContain("status: 'canceled'")
   })
 })
+
+// ─── CASH-OS-2C Pre-setup Rendering Path ─────────────────────────────────────
+
+const debtKillerSrc = readFileSync(resolve(__dirname, '../../views/DebtKiller.tsx'), 'utf8')
+const obligationsSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsObligations.tsx'), 'utf8')
+
+describe('CASH-OS-2C Pre-setup Rendering Path', () => {
+
+  // ─── 23: Pre-setup branch uses CashOsObligations ─────────────────────────
+
+  it('23: pre-setup Obligations tab renders CashOsObligations (not PreSetupObligations)', () => {
+    // The pre-setup branch must reference CashOsObligations for the Obligations tab
+    const preSetupIdx = debtKillerSrc.indexOf("tab === 'Obligations' && <CashOsObligations")
+    expect(preSetupIdx).toBeGreaterThan(-1)
+    // PreSetupObligations must not appear anywhere — it was removed
+    expect(debtKillerSrc).not.toContain('PreSetupObligations')
+  })
+
+  // ─── 24: Pre-setup passes source obligations ─────────────────────────────
+
+  it('24: pre-setup CashOsObligations receives obligations from cash.sources', () => {
+    expect(debtKillerSrc).toContain('cash.sources?.obligations ?? []')
+  })
+
+  // ─── 25: Pre-setup passes source commitments ─────────────────────────────
+
+  it('25: pre-setup CashOsObligations receives commitments from cash.sources', () => {
+    expect(debtKillerSrc).toContain('cash.sources?.commitments ?? []')
+  })
+
+  // ─── 26: Pre-setup passes cash.refresh as onRefresh ──────────────────────
+
+  it('26: pre-setup CashOsObligations receives cash.refresh as onRefresh', () => {
+    const preSetupCallIdx = debtKillerSrc.indexOf("tab === 'Obligations' && <CashOsObligations")
+    const preSetupCallEnd = debtKillerSrc.indexOf('/>', preSetupCallIdx)
+    const callSite = debtKillerSrc.slice(preSetupCallIdx, preSetupCallEnd)
+    expect(callSite).toContain('onRefresh={cash.refresh}')
+  })
+
+  // ─── 27: Session Assumptions gate calculations, not planned-outflow CRUD ─
+
+  it('27: Session Assumptions gate snapshot calculations — Obligations CRUD is available in setup_required state', () => {
+    // The preSetup flag allows the Obligations tab even without a snapshot
+    const preSetupFlagIdx = debtKillerSrc.indexOf("cash.status === 'setup_required' && cash.sources !== null")
+    expect(preSetupFlagIdx).toBeGreaterThan(-1)
+    // The preSetup rendering branch includes the Obligations tab
+    const obligationsInPreSetup = debtKillerSrc.indexOf("tab === 'Obligations' && <CashOsObligations")
+    expect(obligationsInPreSetup).toBeGreaterThan(preSetupFlagIdx)
+  })
+
+  // ─── 28: Ready-state Obligations also uses the same component ────────────
+
+  it('28: ready-state Obligations tab also uses CashOsObligations (via CashObligationsView)', () => {
+    // CashObligationsView delegates to CashOsObligations — both states share the same implementation
+    expect(debtKillerSrc).toContain("tab === 'Obligations' && <CashObligationsView")
+    // CashOsViews.tsx must delegate to CashOsObligations
+    const viewsSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsViews.tsx'), 'utf8')
+    expect(viewsSrc).toContain('CashOsObligations')
+  })
+
+  // ─── 29: No duplicate obligation form implementation ─────────────────────
+
+  it('29: obligation form JSX exists only in CashOsObligations.tsx, not re-implemented in DebtKiller', () => {
+    // The form fields (name, amount, schedule) must not be re-implemented in DebtKiller
+    expect(debtKillerSrc).not.toContain("placeholder=\"Obligation name\"")
+    expect(debtKillerSrc).not.toContain("placeholder=\"Commitment title\"")
+    // CashOsObligations is the single source of truth for the obligation form
+    expect(obligationsSrc).toContain('CashOsObligations')
+  })
+})
