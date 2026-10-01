@@ -159,6 +159,40 @@ export async function reconcilePlannedOutflow(input: {
   return Array.isArray(data) ? data[0] : data
 }
 
+/** Ensure a concrete occurrence row exists for a specific obligation + scheduled date.
+ *  Uses the unique constraint (organization_id, obligation_id, scheduled_date) to
+ *  safely re-enter: returns the existing id if already present and still reconcilable. */
+export async function materializeObligation(input: {
+  obligationId: string
+  scheduledDate: string
+}): Promise<{ id: string }> {
+  if (!input.obligationId) throw new Error('obligationId is required')
+  if (!input.scheduledDate || !/^\d{4}-\d{2}-\d{2}$/.test(input.scheduledDate)) {
+    throw new Error('Enter a valid scheduled date')
+  }
+  const ctx = await resolveFinanceContext()
+  const { data: existing } = await db()
+    .from('financial_obligation_occurrences')
+    .select('id, status, reconciliation_state')
+    .eq('organization_id', ctx.organizationId)
+    .eq('obligation_id', input.obligationId)
+    .eq('scheduled_date', input.scheduledDate)
+    .maybeSingle()
+  if (existing) {
+    if (existing.reconciliation_state === 'reconciled') throw new Error('This occurrence has already been reconciled')
+    if (existing.status !== 'scheduled') throw new Error('Only scheduled occurrences can be reconciled')
+    return { id: existing.id }
+  }
+  const { data, error } = await db()
+    .from('financial_obligation_occurrences')
+    .insert({ organization_id: ctx.organizationId, obligation_id: input.obligationId, scheduled_date: input.scheduledDate })
+    .select('id')
+    .single()
+  if (error) throw new Error(error.message)
+  if (!data?.id || typeof data.id !== 'string') throw new Error('Occurrence materialization did not return an id')
+  return { id: data.id }
+}
+
 // ─── CASH-OS-2C: Obligation + Commitment write authority ─────────────────────
 
 export type ObligationRecurrenceSchedule =

@@ -242,9 +242,11 @@ function TransactionForm({ mode, sources, onSuccess }: {
     setError(null)
     try {
       const amountMinor = parseDollars(amount)
+      // Schema: amount_minor is signed — positive for asset inflows, negative for outflows
+      const signedAmountMinor = mode === 'income' ? amountMinor : -amountMinor
       await recordManualTransaction({
         accountId,
-        amountMinor,
+        amountMinor: signedAmountMinor,
         transactionDate: date,
         kind: mode,
         economicEffect: mode === 'income' ? 'inflow' : 'outflow',

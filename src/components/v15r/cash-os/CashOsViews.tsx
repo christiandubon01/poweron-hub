@@ -93,6 +93,9 @@ export function CashObligationsView({ snapshot, onRefresh }: { snapshot: CashOsS
     <CashOsObligations
       obligations={snapshot.obligations}
       commitments={snapshot.commitments}
+      occurrences={snapshot.occurrences}
+      transactions={snapshot.transactions}
+      accounts={snapshot.accounts}
       onRefresh={onRefresh ?? (() => {})}
     />
   )

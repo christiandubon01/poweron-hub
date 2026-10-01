@@ -355,7 +355,7 @@ export default function DebtKiller() {
             </CashCard>
           )}
           {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} />}
-          {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} onRefresh={cash.refresh} />}
+          {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} onRefresh={cash.refresh} />}
         </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
         <CashCard title="Partial / Needs attention">

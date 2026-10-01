@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import type { RecurringObligation, CashCommitment } from '@/finance/obligationsTypes'
+import type { RecurringObligation, CashCommitment, ObligationOccurrence } from '@/finance/obligationsTypes'
+import type { FinancialTransactionRow, FinancialAccountRow } from '@/finance/ledgerTypes'
+import { generateRecurrenceDates } from '@/finance/recurrence'
 import {
   createFinancialObligation,
   updateFinancialObligation,
@@ -7,6 +9,8 @@ import {
   createCashCommitment,
   updateCashCommitment,
   cancelCashCommitment,
+  reconcilePlannedOutflow,
+  materializeObligation,
   validateObligationInput,
   validateCommitmentInput,
   OBLIGATION_SCHEDULES,
@@ -88,6 +92,110 @@ function RequiredControl({ checked, onChange }: { checked: boolean; onChange: (v
   )
 }
 
+// ─── Reconciliation helpers ───────────────────────────────────────────────────
+
+function offsetIsoDate(isoDate: string, days: number): string {
+  const d = new Date(isoDate + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+function candidateTxs(
+  transactions: FinancialTransactionRow[],
+  plannedMinor: number,
+): FinancialTransactionRow[] {
+  return transactions
+    .filter(tx =>
+      tx.status === 'posted' &&
+      tx.transaction_kind !== 'opening_balance' &&
+      tx.transaction_kind !== 'transfer' &&
+      tx.amount_minor < 0 &&
+      Math.abs(tx.amount_minor) === plannedMinor,
+    )
+    .sort((a, b) => b.transaction_date.localeCompare(a.transaction_date))
+}
+
+function reconcilableDates(
+  obligation: RecurringObligation,
+  occurrences: ObligationOccurrence[],
+  today: string,
+): Array<{ date: string; occurrenceId: string | null }> {
+  const start = offsetIsoDate(today, -90)
+  const end = offsetIsoDate(today, 7)
+  const dates = generateRecurrenceDates(obligation.recurrence, start, end)
+  const occByDate = new Map(
+    occurrences.filter(o => o.obligationId === obligation.id).map(o => [o.scheduledDate, o]),
+  )
+  return dates
+    .filter(d => {
+      const occ = occByDate.get(d)
+      if (!occ) return true
+      return occ.reconciliationState !== 'reconciled' && occ.status === 'scheduled'
+    })
+    .map(d => ({ date: d, occurrenceId: occByDate.get(d)?.id ?? null }))
+    .reverse()
+}
+
+// ─── Transaction picker panel ─────────────────────────────────────────────────
+
+function ReconcilePanel({
+  label, amountMinor, dateLabel, transactions, accounts, pending, error, onSelect, onBack,
+}: {
+  label: string; amountMinor: number; dateLabel: string
+  transactions: FinancialTransactionRow[]; accounts: FinancialAccountRow[]
+  pending: boolean; error: string | null
+  onSelect: (txId: string) => void; onBack: () => void
+}) {
+  const candidates = candidateTxs(transactions, amountMinor)
+  const accountName = (id: string) => accounts.find(a => a.id === id)?.display_name ?? 'Unknown account'
+  return (
+    <CashCard title="Mark as paid">
+      <p className="mb-1 text-sm font-semibold">{label}</p>
+      <p className="mb-4 text-xs text-[var(--text-secondary)]">{dateLabel} · {money(amountMinor)}</p>
+      <h4 className="mb-2 text-sm font-semibold">Select the actual transaction</h4>
+      <p className="mb-3 text-xs text-[var(--text-secondary)]">
+        Only posted expenses with exactly {money(amountMinor)} are shown. Partial matches are not supported in this version.
+        If the transaction is not listed, record it first (Add Money → Expense), then return here.
+      </p>
+      {candidates.length ? (
+        <div className="space-y-2">
+          {candidates.map(tx => (
+            <button key={tx.id} type="button" disabled={pending}
+              onClick={() => onSelect(tx.id)}
+              className="w-full rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3 text-left text-sm hover:border-orange-500/50 hover:bg-orange-500/5 disabled:opacity-40">
+              <div className="flex justify-between gap-2">
+                <span className="font-medium">{tx.description || tx.transaction_kind.replace(/_/g, ' ')}</span>
+                <span className="whitespace-nowrap font-mono text-red-300">{money(tx.amount_minor)}</span>
+              </div>
+              <span className="block text-xs text-[var(--text-secondary)]">
+                {cashDate(tx.transaction_date)} · {accountName(tx.account_id)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-[var(--border-primary)] p-4 text-sm text-[var(--text-secondary)]">
+          No posted expense for exactly {money(amountMinor)} found. Enter the exact amount when recording the transaction, then return here to reconcile.
+        </div>
+      )}
+      {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
+      <button type="button" onClick={onBack} className={`mt-4 ${btnGhost}`}>Back</button>
+    </CashCard>
+  )
+}
+
+// ─── Reconciliation success ───────────────────────────────────────────────────
+
+type ReconcileSuccess = {
+  kind: 'occurrence' | 'commitment'
+  name: string
+  dateLabel: string
+  txDescription: string
+  txDate: string
+  txAmountMinor: number
+  isRecurring: boolean
+}
+
 // ─── Mode types ───────────────────────────────────────────────────────────────
 
 type Mode =
@@ -98,6 +206,8 @@ type Mode =
   | 'add-commitment'
   | 'edit-commitment'
   | 'confirm-cancel'
+  | 'reconcile-commitment'
+  | 'reconcile-occurrence'
 
 // ─── Obligation form ──────────────────────────────────────────────────────────
 
@@ -243,18 +353,26 @@ function CommitmentForm({
 export default function CashOsObligations({
   obligations,
   commitments,
+  occurrences = [],
+  transactions = [],
+  accounts = [],
   onRefresh,
 }: {
   obligations: RecurringObligation[]
   commitments: CashCommitment[]
+  occurrences?: ObligationOccurrence[]
+  transactions?: FinancialTransactionRow[]
+  accounts?: FinancialAccountRow[]
   onRefresh: () => void
 }) {
   const [mode, setMode] = useState<Mode>('list')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [reconcileDate, setReconcileDate] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [successResult, setSuccessResult] = useState<ReconcileSuccess | null>(null)
 
-  function reset() { setMode('list'); setSelectedId(null); setPending(false); setError(null) }
+  function reset() { setMode('list'); setSelectedId(null); setReconcileDate(null); setPending(false); setError(null) }
 
   const selectedObligation = obligations.find(o => o.id === selectedId) ?? null
   const selectedCommitment = commitments.find(c => c.id === selectedId) ?? null
@@ -353,6 +471,55 @@ export default function CashOsObligations({
     }
   }
 
+  // ─── Reconciliation handlers ────────────────────────────────────────────────
+
+  async function handleReconcileCommitment(transactionId: string) {
+    if (!selectedId) return
+    const tx = transactions.find(t => t.id === transactionId)
+    const commitment = selectedCommitment
+    setPending(true); setError(null)
+    try {
+      await reconcilePlannedOutflow({ commitmentId: selectedId, transactionId })
+      setSuccessResult({
+        kind: 'commitment',
+        name: commitment?.title ?? selectedId,
+        dateLabel: commitment ? cashDate(commitment.expectedDate) : '',
+        txDescription: tx?.description || (tx?.transaction_kind ?? 'expense').replace(/_/g, ' '),
+        txDate: tx ? cashDate(tx.transaction_date) : '',
+        txAmountMinor: tx ? Math.abs(tx.amount_minor) : (commitment?.amount.minor ?? 0),
+        isRecurring: false,
+      })
+      setMode('list'); setSelectedId(null); setReconcileDate(null); setPending(false); setError(null)
+      onRefresh()
+    } catch (err) {
+      setPending(false); setError(err instanceof Error ? err.message : 'Reconciliation failed')
+    }
+  }
+
+  async function handleReconcileOccurrence(transactionId: string) {
+    if (!selectedId || !reconcileDate) return
+    const tx = transactions.find(t => t.id === transactionId)
+    const obligation = selectedObligation
+    setPending(true); setError(null)
+    try {
+      const { id: occurrenceId } = await materializeObligation({ obligationId: selectedId, scheduledDate: reconcileDate })
+      await reconcilePlannedOutflow({ occurrenceId, transactionId })
+      setSuccessResult({
+        kind: 'occurrence',
+        name: obligation?.name ?? selectedId,
+        dateLabel: cashDate(reconcileDate),
+        txDescription: tx?.description || (tx?.transaction_kind ?? 'expense').replace(/_/g, ' '),
+        txDate: tx ? cashDate(tx.transaction_date) : '',
+        txAmountMinor: tx ? Math.abs(tx.amount_minor) : (obligation?.amount.minor ?? 0),
+        isRecurring: true,
+      })
+      setMode('list'); setSelectedId(null); setReconcileDate(null); setPending(false); setError(null)
+      onRefresh()
+    } catch (err) {
+      setPending(false); setError(err instanceof Error ? err.message : 'Reconciliation failed')
+    }
+  }
+
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   if (mode === 'add-obligation' || mode === 'edit-obligation') {
@@ -416,16 +583,105 @@ export default function CashOsObligations({
     )
   }
 
+  if (mode === 'reconcile-commitment' && selectedCommitment) {
+    return (
+      <ReconcilePanel
+        label={selectedCommitment.title}
+        amountMinor={selectedCommitment.amount.minor}
+        dateLabel={cashDate(selectedCommitment.expectedDate)}
+        transactions={transactions}
+        accounts={accounts}
+        pending={pending}
+        error={error}
+        onSelect={handleReconcileCommitment}
+        onBack={reset}
+      />
+    )
+  }
+
+  if (mode === 'reconcile-occurrence' && selectedObligation) {
+    const obligation = selectedObligation
+    const dates = reconcilableDates(obligation, occurrences, todayInLA())
+    if (!reconcileDate) {
+      return (
+        <CashCard title="Mark occurrence as paid">
+          <p className="mb-1 text-sm font-semibold">{obligation.name}</p>
+          <p className="mb-4 text-xs text-[var(--text-secondary)]">
+            {money(obligation.amount.minor)} · {OBLIGATION_SCHEDULE_LABELS[scheduleFromObligation(obligation)] ?? obligation.recurrence.kind.replace(/_/g, ' ')}
+          </p>
+          <h4 className="mb-2 text-sm font-semibold">Which payment are you recording?</h4>
+          {dates.length ? (
+            <div className="space-y-2">
+              {dates.map(d => (
+                <button key={d.date} type="button"
+                  onClick={() => setReconcileDate(d.date)}
+                  className="w-full rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3 text-left text-sm hover:border-orange-500/50 hover:bg-orange-500/5">
+                  <span className="font-medium">{cashDate(d.date)}</span>
+                  <span className="ml-2 text-xs text-[var(--text-secondary)]">{d.occurrenceId ? 'unreconciled' : 'virtual'}</span>
+                </button>
+              ))}
+            </div>
+          ) : <CashEmpty>No unreconciled scheduled dates in the past 90 days.</CashEmpty>}
+          {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
+          <button type="button" onClick={reset} className={`mt-4 ${btnGhost}`}>Cancel</button>
+        </CashCard>
+      )
+    }
+    return (
+      <ReconcilePanel
+        label={obligation.name}
+        amountMinor={obligation.amount.minor}
+        dateLabel={cashDate(reconcileDate)}
+        transactions={transactions}
+        accounts={accounts}
+        pending={pending}
+        error={error}
+        onSelect={handleReconcileOccurrence}
+        onBack={() => setReconcileDate(null)}
+      />
+    )
+  }
+
   const addBtn = (onClick: () => void, label: string) => (
     <button onClick={onClick} className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">{label}</button>
   )
 
   return (
+    <div className="space-y-5">
+      {successResult && (
+        <div className="rounded-xl border border-green-600/40 bg-green-500/[0.08] p-4 text-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold text-green-300">✓ Payment recorded</p>
+              <p className="mt-1">
+                <span className="font-medium">{successResult.name}</span>
+                {' · '}{successResult.dateLabel}
+              </p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                Transaction: {successResult.txDescription}
+                {successResult.txDate ? ` · ${successResult.txDate}` : ''}
+                {' · '}{money(successResult.txAmountMinor)}
+              </p>
+              {successResult.isRecurring && (
+                <p className="mt-2 text-xs text-green-400">
+                  This obligation continues — next scheduled payment will appear automatically.
+                </p>
+              )}
+            </div>
+            <button type="button" onClick={() => setSuccessResult(null)} className={btnGhost}>Dismiss</button>
+          </div>
+        </div>
+      )}
     <div className="grid gap-5 xl:grid-cols-2">
       <CashCard title="Recurring obligations" action={addBtn(() => setMode('add-obligation'), '+ Obligation')}>
         {obligations.length ? (
           <div className="space-y-3">
-            {obligations.map(row => (
+            {obligations.map(row => {
+              const reconciledOccs = occurrences
+                .filter(o => o.obligationId === row.id && o.reconciliationState === 'reconciled')
+                .sort((a, b) => b.scheduledDate.localeCompare(a.scheduledDate))
+                .slice(0, 3)
+              return (
               <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -434,6 +690,13 @@ export default function CashOsObligations({
                     <p className="mt-1 text-xs text-[var(--text-secondary)]">
                       {OBLIGATION_SCHEDULE_LABELS[scheduleFromObligation(row)] ?? row.recurrence.kind.replace(/_/g, ' ')} from {cashDate(row.recurrence.startDate)} · {row.requirement} · {row.confidence} · {row.status}{row.category ? ` · ${row.category}` : ''}
                     </p>
+                    {reconciledOccs.length > 0 && (
+                      <div className="mt-2 space-y-0.5 border-t border-[var(--border-primary)] pt-2">
+                        {reconciledOccs.map(occ => (
+                          <p key={occ.id} className="text-xs text-green-400/80">✓ {cashDate(occ.scheduledDate)} — paid</p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {row.status === 'active' && (
                     <div className="flex shrink-0 gap-1.5">
@@ -441,11 +704,14 @@ export default function CashOsObligations({
                         onClick={() => { setSelectedId(row.id); setMode('edit-obligation') }}>Edit</button>
                       <button type="button" className={btnMicro}
                         onClick={() => { setSelectedId(row.id); setMode('confirm-archive') }}>Archive</button>
+                      <button type="button" className={btnMicro}
+                        onClick={() => { setSuccessResult(null); setSelectedId(row.id); setReconcileDate(null); setMode('reconcile-occurrence') }}>Mark Paid</button>
                     </div>
                   )}
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         ) : <CashEmpty>No recurring obligations. Add one to start tracking planned cash outflows.</CashEmpty>}
       </CashCard>
@@ -471,6 +737,8 @@ export default function CashOsObligations({
                           onClick={() => { setSelectedId(row.id); setMode('edit-commitment') }}>Edit</button>
                         <button type="button" className={btnMicro}
                           onClick={() => { setSelectedId(row.id); setMode('confirm-cancel') }}>Cancel</button>
+                        <button type="button" className={btnMicro}
+                          onClick={() => { setSuccessResult(null); setSelectedId(row.id); setMode('reconcile-commitment') }}>Mark Paid</button>
                       </div>
                     )}
                   </div>
@@ -480,6 +748,7 @@ export default function CashOsObligations({
           </div>
         ) : <CashEmpty>No one-time commitments. Add one for upcoming planned expenses.</CashEmpty>}
       </CashCard>
+    </div>
     </div>
   )
 }
