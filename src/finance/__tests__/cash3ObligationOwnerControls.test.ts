@@ -302,3 +302,82 @@ describe('CASH-OS-2C Pre-setup Rendering Path', () => {
     expect(obligationsSrc).toContain('CashOsObligations')
   })
 })
+
+// ─── CASH-OS-2C Required Checkbox UI ─────────────────────────────────────────
+
+describe('CASH-OS-2C Required Checkbox UI', () => {
+
+  // ─── 30: Both forms render a styled checkbox ─────────────────────────────
+
+  it('30: both obligation and commitment forms render a styled checkbox', () => {
+    // Each form must have a checkbox input
+    const checkboxCount = (obligationsSrc.match(/type="checkbox"/g) ?? []).length
+    expect(checkboxCount).toBe(2)
+    // Each checkbox carries the accent-orange-500 class matching the CashOsSetupPanel pattern
+    const accentCount = (obligationsSrc.match(/accent-orange-500/g) ?? []).length
+    expect(accentCount).toBe(2)
+  })
+
+  // ─── 31: Both checkboxes carry explicit sizing ────────────────────────────
+
+  it('31: both checkboxes have h-5 w-5 sizing class', () => {
+    const sizedCount = (obligationsSrc.match(/h-5 w-5/g) ?? []).length
+    expect(sizedCount).toBe(2)
+  })
+
+  // ─── 32: Both labels are cursor-pointer ──────────────────────────────────
+
+  it('32: both checkbox labels carry cursor-pointer so clicking the label toggles the checkbox', () => {
+    const cursorCount = (obligationsSrc.match(/cursor-pointer/g) ?? []).length
+    expect(cursorCount).toBeGreaterThanOrEqual(2)
+  })
+
+  // ─── 33: Both forms default isRequired to true for new records ──────────
+
+  it('33: both ObligationForm and CommitmentForm default isRequired to true for new records', () => {
+    // The pattern appears exactly twice — once per form
+    const matches = obligationsSrc.match(/useState\(initial \? initial\.requirement === 'required' : true\)/g) ?? []
+    expect(matches).toHaveLength(2)
+  })
+
+  // ─── 34: Existing required/optional edit initialization is intact ─────────
+
+  it('34: edit initialization reads requirement from the existing record for both forms', () => {
+    // When `initial` is provided the state reads initial.requirement === 'required'
+    expect(obligationsSrc).toContain("initial.requirement === 'required'")
+  })
+
+  // ─── 35: ObligationForm onSubmit payload carries isRequired ─────────────
+
+  it('35: ObligationForm onSubmit call includes isRequired field', () => {
+    // The obligation form onSubmit call passes isRequired as a named field
+    expect(obligationsSrc).toContain('onSubmit({ name, amountRaw, schedule, anchorDate, category, isRequired, confidence })')
+  })
+
+  // ─── 36: CommitmentForm onSubmit payload carries isRequired ──────────────
+
+  it('36: CommitmentForm onSubmit call includes isRequired field', () => {
+    // The commitment form onSubmit call passes isRequired as a named field
+    expect(obligationsSrc).toContain('onSubmit({ title, amountRaw, expectedDate, category, isRequired, confidence })')
+  })
+
+  // ─── 37: isRequired reaches createFinancialObligation payload ────────────
+
+  it('37: obligation create handler passes isRequired in CreateObligationInput payload', () => {
+    const handlerIdx = obligationsSrc.indexOf('handleObligationSubmit')
+    expect(handlerIdx).toBeGreaterThan(-1)
+    const handlerBody = obligationsSrc.slice(handlerIdx, handlerIdx + 1500)
+    expect(handlerBody).toContain('isRequired: fields.isRequired')
+    expect(handlerBody).toContain('createFinancialObligation(')
+  })
+
+  // ─── 38: isRequired reaches createCashCommitment payload ─────────────────
+
+  it('38: commitment create handler passes isRequired in CreateCommitmentInput payload', () => {
+    const handlerIdx = obligationsSrc.indexOf('handleCommitmentSubmit')
+    expect(handlerIdx).toBeGreaterThan(-1)
+    const handlerBody = obligationsSrc.slice(handlerIdx, handlerIdx + 1500)
+    expect(handlerBody).toContain('isRequired: fields.isRequired')
+    expect(handlerBody).toContain('createCashCommitment(')
+  })
+})

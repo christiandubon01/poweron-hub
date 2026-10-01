@@ -126,8 +126,9 @@ function ObligationForm({
           <option value="possible">Possible</option>
         </select>
       </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} />
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)}
+          className="h-5 w-5 flex-shrink-0 cursor-pointer accent-orange-500" />
         Required (included in protected cash)
       </label>
       {error && <p className="text-xs text-red-300">{error}</p>}
@@ -195,8 +196,9 @@ function CommitmentForm({
           <option value="possible">Possible</option>
         </select>
       </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} />
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)}
+          className="h-5 w-5 flex-shrink-0 cursor-pointer accent-orange-500" />
         Required (included in protected cash)
       </label>
       {error && <p className="text-xs text-red-300">{error}</p>}
