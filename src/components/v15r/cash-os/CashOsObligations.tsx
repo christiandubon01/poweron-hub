@@ -54,6 +54,40 @@ const btnGhost = 'rounded-lg border border-[var(--border-primary)] px-4 py-2 tex
 const btnDanger = 'rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-red-700'
 const btnMicro = 'rounded px-2 py-1 text-xs font-medium border border-[var(--border-primary)] hover:bg-white/5 disabled:opacity-40'
 
+// ─── Required toggle ─────────────────────────────────────────────────────────
+// Native checkboxes are invisible on the app's near-black background because
+// accent-color only tints the checkmark, not the unchecked box chrome. This
+// component renders the visual state explicitly so both checked and unchecked
+// are always visible regardless of OS theme.
+
+function RequiredControl({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex min-h-[44px] cursor-pointer items-center gap-3 py-1.5">
+      <input
+        type="checkbox"
+        className="peer sr-only"
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+      />
+      <span
+        aria-hidden="true"
+        className={[
+          'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border-2 transition-colors',
+          'peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500 peer-focus-visible:ring-offset-1',
+          checked ? 'border-orange-500 bg-orange-500' : 'border-[var(--border-primary)] bg-transparent',
+        ].join(' ')}
+      >
+        {checked && (
+          <svg aria-hidden="true" width="11" height="9" viewBox="0 0 11 9" fill="none">
+            <path d="M1 4.5l3 3L10 1" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </span>
+      <span className="text-sm">Required (included in protected cash)</span>
+    </label>
+  )
+}
+
 // ─── Mode types ───────────────────────────────────────────────────────────────
 
 type Mode =
@@ -126,11 +160,7 @@ function ObligationForm({
           <option value="possible">Possible</option>
         </select>
       </label>
-      <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)}
-          className="h-5 w-5 flex-shrink-0 cursor-pointer accent-orange-500" />
-        Required (included in protected cash)
-      </label>
+      <RequiredControl checked={isRequired} onChange={setIsRequired} />
       {error && <p className="text-xs text-red-300">{error}</p>}
       <div className="flex gap-3 pt-1">
         <button type="submit" disabled={pending} className={btnPrimary}>
@@ -196,11 +226,7 @@ function CommitmentForm({
           <option value="possible">Possible</option>
         </select>
       </label>
-      <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)}
-          className="h-5 w-5 flex-shrink-0 cursor-pointer accent-orange-500" />
-        Required (included in protected cash)
-      </label>
+      <RequiredControl checked={isRequired} onChange={setIsRequired} />
       {error && <p className="text-xs text-red-300">{error}</p>}
       <div className="flex gap-3 pt-1">
         <button type="submit" disabled={pending} className={btnPrimary}>

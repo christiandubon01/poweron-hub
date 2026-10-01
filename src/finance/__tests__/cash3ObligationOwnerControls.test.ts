@@ -307,29 +307,42 @@ describe('CASH-OS-2C Pre-setup Rendering Path', () => {
 
 describe('CASH-OS-2C Required Checkbox UI', () => {
 
-  // ─── 30: Both forms render a styled checkbox ─────────────────────────────
+  // ─── 30: RequiredControl renders a controlled sr-only checkbox + visual box
 
-  it('30: both obligation and commitment forms render a styled checkbox', () => {
-    // Each form must have a checkbox input
-    const checkboxCount = (obligationsSrc.match(/type="checkbox"/g) ?? []).length
-    expect(checkboxCount).toBe(2)
-    // Each checkbox carries the accent-orange-500 class matching the CashOsSetupPanel pattern
-    const accentCount = (obligationsSrc.match(/accent-orange-500/g) ?? []).length
-    expect(accentCount).toBe(2)
+  it('30: RequiredControl hides native checkbox with sr-only and renders an explicit visual box', () => {
+    // Native checkbox is sr-only (accessible, not visually rendered by browser)
+    expect(obligationsSrc).toContain('peer sr-only')
+    // Visual box is explicitly rendered — orange background when checked
+    expect(obligationsSrc).toContain('bg-orange-500')
+    // SVG checkmark is the explicit selected indicator
+    expect(obligationsSrc).toContain('<svg aria-hidden="true"')
+    // Both forms delegate to RequiredControl (appears exactly twice as a call site)
+    const callCount = (obligationsSrc.match(/<RequiredControl /g) ?? []).length
+    expect(callCount).toBe(2)
   })
 
-  // ─── 31: Both checkboxes carry explicit sizing ────────────────────────────
+  // ─── 31: Visual box carries explicit sizing ───────────────────────────────
 
-  it('31: both checkboxes have h-5 w-5 sizing class', () => {
-    const sizedCount = (obligationsSrc.match(/h-5 w-5/g) ?? []).length
-    expect(sizedCount).toBe(2)
+  it('31: RequiredControl visual box has h-5 w-5 sizing', () => {
+    expect(obligationsSrc).toContain('h-5 w-5')
   })
 
-  // ─── 32: Both labels are cursor-pointer ──────────────────────────────────
+  // ─── 32: Label is cursor-pointer for full-row click ───────────────────────
 
-  it('32: both checkbox labels carry cursor-pointer so clicking the label toggles the checkbox', () => {
-    const cursorCount = (obligationsSrc.match(/cursor-pointer/g) ?? []).length
-    expect(cursorCount).toBeGreaterThanOrEqual(2)
+  it('32: RequiredControl label carries cursor-pointer so clicking anywhere in the row toggles it', () => {
+    expect(obligationsSrc).toContain('cursor-pointer')
+  })
+
+  // ─── 32b: Minimum touch target meets 44 px guideline ─────────────────────
+
+  it('32b: RequiredControl label has min-h-[44px] for iPad touch target', () => {
+    expect(obligationsSrc).toContain('min-h-[44px]')
+  })
+
+  // ─── 32c: Keyboard focus ring is wired through peer-focus-visible ─────────
+
+  it('32c: RequiredControl wires keyboard focus ring via peer-focus-visible', () => {
+    expect(obligationsSrc).toContain('peer-focus-visible:ring-2')
   })
 
   // ─── 33: Both forms default isRequired to true for new records ──────────
