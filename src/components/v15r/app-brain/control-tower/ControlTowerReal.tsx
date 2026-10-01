@@ -92,10 +92,10 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
       </TowerPanel>
     </section>}
 
-    {phase === 'run' && approvalStatus === 'Starting tasks' && <p className="ct-planning-line" aria-live="polite">Starting tasks</p>}
+    {phase === 'run' && approvalStatus === 'Starting tasks' && run?.runState === 'pending' && <p className="ct-planning-line" aria-live="polite">Starting tasks</p>}
 
     {(phase === 'run' || phase === 'idle' || phase === 'unavailable') && <>
-      {run ? <RunCommand run={run} scopeTitle={tower.scopePacks[0]?.title} scopePhase={tower.scopePacks[0] ? `${tower.scopePacks[0].currentPhaseTitle ?? tower.scopePacks[0].currentPhaseId ?? ''}`.trim() || null : null} actions={<>{newRun}{isActiveSession(run) && <button type="button" className="ct-secondary" disabled={busy} onClick={() => tower.cancelRun(run.runId).catch(error => setSubmitError(error instanceof Error ? error.message : String(error)))}>Cancel Run</button>}</>} /> : <section className="ct-idle-command"><div><span className="ct-eyebrow">Ready when you are</span><h2>Plan your next run</h2><p>{hostConnected ? 'Describe the work. Review the plan before execution.' : 'No local Host is connected for this repository.'}</p></div>{newRun}</section>}
+      {run ? <RunCommand run={run} actions={<>{newRun}{isActiveSession(run) && <button type="button" className="ct-secondary" disabled={busy} onClick={() => tower.cancelRun(run.runId).catch(error => setSubmitError(error instanceof Error ? error.message : String(error)))}>Cancel Run</button>}</>} /> : <section className="ct-idle-command"><div><span className="ct-eyebrow">Ready when you are</span><h2>Plan your next run</h2><p>{hostConnected ? 'Describe the work. Review the plan before execution.' : 'No local Host is connected for this repository.'}</p></div>{newRun}</section>}
       {tower.cancelStatus && <p className="ct-planning-line" aria-live="polite">{tower.cancelStatus}</p>}
       {run?.verification === 'rejected' && <VerifierRejectionBanner run={run} onInspect={inspectFailure} />}
       {run?.tasks.some((task) => task.canonicalModified) && <section className="ct-attention" role="alert">Your project was modified while checks were running — review before continuing.</section>}

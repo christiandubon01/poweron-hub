@@ -4,7 +4,14 @@ import { CT_ROLES, RunStatus, TowerPanel } from './ControlTowerPrimitives'
 import { conciseTime, executionRejectedByVerifier, isActiveSession, roleResult, sessionDuration, sessionTitle, type TowerSession } from './sessionPresentation'
 
 type Filter = 'active' | 'completed' | 'failed' | 'cancelled'
-const filterFor = (run?: TowerSession | null): Filter => run && !isActiveSession(run) ? run.runState as Filter : 'active'
+// A run the Verifier rejected has runState 'completed' but must count and list
+// under Failed Runs, never Completed Runs. filterFor selects the Failed filter
+// for such a run; matches routes it to 'failed' and excludes it from 'completed'.
+const filterFor = (run?: TowerSession | null): Filter => {
+  if (!run || isActiveSession(run)) return 'active'
+  if (executionRejectedByVerifier(run)) return 'failed'
+  return run.runState as Filter
+}
 const STOPPED_IMPLEMENTER_REASONS = [
   'Stopped — provider never started responding.',
   'Stopped — no provider activity for ',
@@ -29,7 +36,11 @@ export default function SessionHistory({ sessions, selected, onSelect, onTask }:
   const [filter, setFilter] = useState<Filter>(filterFor(selected))
   const [expanded, setExpanded] = useState<string | null>(null)
   useEffect(() => { setFilter(filterFor(selected)) }, [selected?.runId, selected?.runState])
-  const matches = (run: TowerSession, value: Filter) => value === 'active' ? isActiveSession(run) : run.runState === value
+  const matches = (run: TowerSession, value: Filter) => {
+    if (value === 'active') return isActiveSession(run)
+    if (executionRejectedByVerifier(run)) return value === 'failed'
+    return run.runState === value
+  }
   const visible = sessions.filter(run => matches(run, filter))
   return <TowerPanel title="Session History" className="ct-history" action={<History size={16} aria-hidden="true" />}>
     <nav className="ct-history-filters" aria-label="Session history filters">
