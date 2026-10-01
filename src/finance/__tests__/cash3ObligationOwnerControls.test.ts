@@ -301,6 +301,18 @@ describe('CASH-OS-2C Pre-setup Rendering Path', () => {
     // CashOsObligations is the single source of truth for the obligation form
     expect(obligationsSrc).toContain('CashOsObligations')
   })
+
+  // ─── 30: setup_required path passes reconciliation source collections ──────
+
+  it('30: preSetup Obligations render passes occurrences, transactions, accounts from cash.sources', () => {
+    const preSetupCallIdx = debtKillerSrc.indexOf("tab === 'Obligations' && <CashOsObligations")
+    const preSetupCallEnd = debtKillerSrc.indexOf('/>', preSetupCallIdx)
+    const callSite = debtKillerSrc.slice(preSetupCallIdx, preSetupCallEnd)
+    // All three collections required by ReconcilePanel must flow from the source bundle
+    expect(callSite).toContain("occurrences={cash.sources?.occurrences ?? []}")
+    expect(callSite).toContain("transactions={cash.sources?.transactions ?? []}")
+    expect(callSite).toContain("accounts={cash.sources?.accounts ?? []}")
+  })
 })
 
 // ─── CASH-OS-2C Required Checkbox UI ─────────────────────────────────────────
