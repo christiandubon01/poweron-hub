@@ -17,6 +17,7 @@ import { projectCandidateApply } from './applyCandidate.ts';
 import {
   SNAPSHOT_SCHEMA_VERSION,
   type RunSnapshot,
+  type RunSnapshotArchitect,
   type PlanRole,
   type SnapshotAttempt,
   type SnapshotCandidateChange,
@@ -33,6 +34,40 @@ interface TaskPlanMeta {
   permissionProfile: string;
   provider: string | null;
   reasoningEffort: EffortLevel | null;
+  /**
+   * The validated Architect identity copied from spec.plan.architect (the plan
+   * result). Null when the spec carries none or it fails validation. The plan
+   * prompt and any transcript content are never copied out — only these safe
+   * identity fields.
+   */
+  architect: RunSnapshotArchitect | null;
+}
+
+/**
+ * Validate the Architect identity a task spec carries on its plan. provider
+ * must be a non-empty string (≤200 chars); requestedModel and reportedModel are
+ * a string or null (each ≤200 chars, otherwise null); reasoningEffort must be
+ * one of EFFORT_LEVELS or null. requestedModel is NEVER copied into the
+ * reported slot — an Architect that did not report a model stays "Not reported".
+ */
+function readPlanArchitect(value: unknown): RunSnapshotArchitect | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const wire = value as Record<string, unknown>;
+  const cleanString = (input: unknown): string | null => {
+    if (typeof input !== 'string' || input.length === 0 || input.length > 200) return null;
+    return input;
+  };
+  const provider = cleanString(wire.provider);
+  if (!provider) return null;
+  const reasoningEffort = (EFFORT_LEVELS as readonly string[]).includes(wire.reasoningEffort as string)
+    ? (wire.reasoningEffort as EffortLevel)
+    : null;
+  return {
+    provider,
+    requestedModel: cleanString(wire.requestedModel),
+    reportedModel: cleanString(wire.reportedModel),
+    reasoningEffort,
+  };
 }
 
 /**
@@ -48,6 +83,7 @@ export function extractTaskPlanMeta(task: TaskRecord): TaskPlanMeta {
   let permissionProfile = 'task-implementer';
   let provider: string | null = null;
   let reasoningEffort: EffortLevel | null = null;
+  let architect: RunSnapshotArchitect | null = null;
 
   const spec = task.spec;
   if (typeof spec === 'object' && spec !== null && !Array.isArray(spec)) {
@@ -62,6 +98,7 @@ export function extractTaskPlanMeta(task: TaskRecord): TaskPlanMeta {
       if (Array.isArray(plan.plannedAreas) && plan.plannedAreas.every((area) => typeof area === 'string')) {
         plannedAreas = plan.plannedAreas as string[];
       }
+      architect = readPlanArchitect(plan.architect);
     }
     const control = (spec as Record<string, unknown>).control as Record<string, unknown> | undefined;
     if (control && typeof control === 'object') {
@@ -77,7 +114,7 @@ export function extractTaskPlanMeta(task: TaskRecord): TaskPlanMeta {
     }
   }
 
-  return { clientTaskKey, role, plannedAreas, permissionProfile, provider, reasoningEffort };
+  return { clientTaskKey, role, plannedAreas, permissionProfile, provider, reasoningEffort, architect };
 }
 
 export function buildRunSnapshot(options: {
@@ -95,10 +132,11 @@ export function buildRunSnapshot(options: {
 
   const tasks = store.listTasks(runId);
   const events = store.listEvents().filter((event) => event.runId === runId);
-  const clientTaskKeyByTaskId = new Map(tasks.map((task) => [task.taskId, extractTaskPlanMeta(task).clientTaskKey] as const));
+  const taskPlanMeta = new Map(tasks.map((task) => [task.taskId, extractTaskPlanMeta(task)] as const));
+  const clientTaskKeyByTaskId = new Map(tasks.map((task) => [task.taskId, taskPlanMeta.get(task.taskId)!.clientTaskKey] as const));
 
   const snapshotTasks = tasks.map((task) => {
-    const meta = extractTaskPlanMeta(task);
+    const meta = taskPlanMeta.get(task.taskId)!;
     return {
       taskId: task.taskId,
       clientTaskKey: meta.clientTaskKey,
@@ -116,6 +154,13 @@ export function buildRunSnapshot(options: {
       reasoningEffort: meta.reasoningEffort,
     };
   });
+
+  // The run-level Architect identity is the plan result's architect, carried on
+  // the FIRST task whose spec published one. A run whose specs carry none (a
+  // legacy run, or one whose plan produced no valid architect) publishes null.
+  const architect: RunSnapshotArchitect | null = tasks
+    .map((task) => taskPlanMeta.get(task.taskId)?.architect ?? null)
+    .find((value) => value != null) ?? null;
 
   const attempts: SnapshotAttempt[] = [];
   for (const task of tasks) {
@@ -193,6 +238,7 @@ export function buildRunSnapshot(options: {
       startedAt: run.startedAt,
       completedAt: run.completedAt,
     },
+    architect,
     tasks: snapshotTasks,
     attempts,
     gate,

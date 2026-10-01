@@ -426,6 +426,13 @@ export const TELEMETRY_MESSAGE_MAX_CHARS = 240;
 export const TELEMETRY_EVIDENCE_REF_MAX = 8;
 export const TELEMETRY_EVIDENCE_REF_MAX_CHARS = 256;
 
+export interface RunSnapshotArchitect {
+  provider: string;
+  requestedModel: string | null;
+  reportedModel: string | null;
+  reasoningEffort: EffortLevel | null;
+}
+
 export interface RunSnapshot {
   schemaVersion: number;
   run: {
@@ -438,6 +445,13 @@ export interface RunSnapshot {
     startedAt: string | null;
     completedAt: string | null;
   };
+  /**
+   * The Architect identity that produced the approved plan, carried on the run
+   * so an Architect role node can render its provider/model/effort truth even
+   * when the run has no Architect execution tasks. Absent on legacy snapshots;
+   * never carries the plan prompt or any transcript content.
+   */
+  architect?: RunSnapshotArchitect | null;
   tasks: SnapshotTask[];
   attempts: SnapshotAttempt[];
   gate: SnapshotGate | null;

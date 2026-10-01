@@ -430,11 +430,14 @@ test('CT-VERIFY-1 B: fake baseline/candidate checks persist small events and det
     assert.equal(modified.status, 'canonical-modified');
     assert.ok(modified.canonicalChangedPaths.includes('tracked.ts'));
     assert.ok(events.some((event) => event.type === 'verification.host_check.canonical_modified'));
-    const noDependencies = await runVerifierHostChecks({ ...common, attemptId: 'verify-node', verificationCommands: ['npm.cmd run agent-host:test'], runCommand: async (_argv, cwd) => {
-      assert.equal((await readdir(cwd)).includes('node_modules'), false);
+    // CT-VERIFY-1C: agent-host:test imports @supabase/supabase-js via the control
+    // test graph, so it uses the dependency snapshot pair (node_modules present),
+    // not the node_modules-less 'node' pair.
+    const agentHostTest = await runVerifierHostChecks({ ...common, attemptId: 'verify-node', verificationCommands: ['npm.cmd run agent-host:test'], runCommand: async (_argv, cwd) => {
+      assert.equal((await readdir(cwd)).includes('node_modules'), true);
       return { status: 'executed', classification: 'VALIDATION', decision: null, launches: 1, signalCategory: null, ownerActionRequired: false, exitCode: 0, timedOut: false, durationMs: 1, boundedOutput: '' };
     } });
-    assert.equal(noDependencies.status, 'full');
+    assert.equal(agentHostTest.status, 'full');
     await mkdir(path.join(canonical, 'node_modules', '.bin'), { recursive: true });
     // An outside-pointing junction makes the dependency snapshot refuse while
     // the tiered fingerprint still succeeds (the link is recorded as a marker).

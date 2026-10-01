@@ -896,6 +896,46 @@ test('extractTaskPlanMeta falls back to safe defaults on missing plan metadata',
     assert.equal(meta.role, 'implementer');
     assert.equal(meta.provider, null);
     assert.equal(meta.reasoningEffort, null);
+    assert.equal(meta.architect, null, 'no plan.architect wire → null, never fabricated');
+  });
+});
+
+test('buildRunSnapshot publishes the run-level architect identity and never the prompt', async () => {
+  await withStore(async (store) => {
+    store.createRun({ runId: 'run-1', title: 'run' });
+    store.createTask({
+      taskId: 'task-1', runId: 'run-1', title: 'task', goal: 'goal',
+      spec: taskControlSpec({
+        control: { provider: 'claude', requestedModel: null, permissionProfile: 'task-implementer', prompt: 'SECRET ARCHITECT PROMPT', timeoutMs: 600_000 },
+        policy: { authorizedWritePaths: [] },
+        plan: {
+          clientTaskKey: 'create-file', role: 'implementer', plannedAreas: [],
+          architect: { provider: 'claude', requestedModel: 'claude-opus-4-8', reportedModel: null, reasoningEffort: 'high' },
+        },
+      }) as never,
+    });
+    const snapshot = buildRunSnapshot({ store, runId: 'run-1', verification: null });
+    assert.ok(snapshot);
+    assert.ok(snapshot.architect, 'architect identity is published at the run level');
+    assert.equal(snapshot.architect!.provider, 'claude');
+    assert.equal(snapshot.architect!.requestedModel, 'claude-opus-4-8');
+    assert.equal(snapshot.architect!.reportedModel, null, 'requested is never copied into the reported slot');
+    assert.equal(snapshot.architect!.reasoningEffort, 'high');
+    const serialized = JSON.stringify(snapshot);
+    assert.ok(!serialized.includes('SECRET ARCHITECT PROMPT'), 'the plan prompt must never appear in the snapshot');
+  });
+});
+
+test('buildRunSnapshot publishes architect null when no task spec carries one', async () => {
+  await withStore(async (store) => {
+    store.createRun({ runId: 'run-1', title: 'run' });
+    store.createTask({
+      taskId: 'task-1', runId: 'run-1', title: 'task', goal: 'goal',
+      spec: taskControlSpec() as never,
+    });
+    const snapshot = buildRunSnapshot({ store, runId: 'run-1', verification: null });
+    assert.ok(snapshot);
+    assert.equal(snapshot.architect, null, 'a run whose specs carry no architect publishes null, never a fabricated identity');
   });
 });
 
@@ -1893,6 +1933,58 @@ test('CT-LIVE-0B0: explicit Opus 4.8 survives plan approval and the Claude launc
       const modelIndex = launch.argv.indexOf('--model');
       assert.equal(launch.argv[modelIndex + 1], 'claude-opus-4-8');
       assert.equal(launch.argv.includes('claude-opus-5-5'), false);
+    }
+  });
+});
+
+test('approve_plan carries the plan architect on every task spec.plan and never copies requested into reported', async () => {
+  const drafted = architectPlanObject();
+  await withStore(async (store) => {
+    const controlPlane = new FakeControlPlane();
+    await handleCreatePlan({
+      store,
+      registry: new Map([['claude', { execute: async (request: ExecutionRequest) => ({
+        ...buildExecutionResult({
+          finalText: `\`\`\`json\n${JSON.stringify(drafted)}\n\`\`\``,
+          reportedModel: 'claude-architect-model',
+        }),
+        model: {
+          requestedModel: request.requestedModel ?? null,
+          reportedModel: 'claude-architect-model',
+          reportedModelSource: 'protocol-message',
+        },
+      }) } as never]]) as never,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({
+        scope: 'Create a smoke file.',
+        constraints: [],
+        roleRouting: {
+          architect: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+          implementer: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+          verifier: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+        },
+      }),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    const created = controlPlane.completions[0].result as Record<string, unknown>;
+    const outcome = await handleApprovePlan({
+      store,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({ planId: created.planId, planHash: created.planHash }, 'approve_plan'),
+      canonicalRepoPath: 'C:\\repo',
+      roleEffort: { architect: 'high', implementer: 'medium', verifier: 'medium' },
+    });
+    assert.equal(outcome.ok, true);
+    const tasks = store.listTasks(outcome.runId!);
+    assert.ok(tasks.length > 0);
+    for (const task of tasks) {
+      const plan = (task.spec as { plan?: { architect?: Record<string, unknown> } }).plan;
+      assert.ok(plan?.architect, 'every task spec carries the plan architect');
+      assert.equal(plan!.architect!.provider, 'claude');
+      assert.equal(plan!.architect!.requestedModel, 'claude-opus-4-8');
+      assert.equal(plan!.architect!.reportedModel, 'claude-architect-model');
+      assert.equal(plan!.architect!.reasoningEffort, 'high', 'architect effort comes from roleEffort.architect');
+      assert.notEqual(plan!.architect!.requestedModel, plan!.architect!.reportedModel, 'requested is never copied into reported');
     }
   });
 });

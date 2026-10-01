@@ -303,3 +303,70 @@ it('disables traveling-edge animation under prefers-reduced-motion', () => {
   expect(reduced).toContain('.ct-team-edge--traveling')
   expect(reduced).toMatch(/\.ct-team-edge--traveling\s*\{\s*animation:\s*none/)
 })
+
+/* Part 2 — a CONTINUE verdict never revives a settled node on a finished run. */
+it('keeps the Guard IDLE on a finished run with only a CONTINUE verdict and no signals', () => {
+  const run = session('completed', {
+    interimVerdicts: [
+      { verdictId: 'f-continue', role: 'implementer', taskId: 't-validate', attemptId: 'a-validate', state: 'CONTINUE', summary: 'Still going.', evidenceRefs: [], evidenceCount: 1, severity: 'info', recommendedAction: 'none', mayContinue: true, timestamp: '2026-09-22T11:31:00Z' },
+    ],
+    signals: [],
+  })
+  const topology = buildAgentTeamTopology(run)
+  expect(topology.runActive).toBe(false)
+  expect(teamNodeByRole(topology, 'guard')!.state).toBe('IDLE')
+  // The CONTINUE verdict does not revive the finished Implementer node to ACTIVE.
+  expect(teamNodeByRole(topology, 'implementer')!.state).toBe('PASS')
+})
+
+/* Part 2 — an open warning signal drives the Guard to WARNING. */
+it('sets the Guard to WARNING when an unresolved warning signal is open', () => {
+  const run = session('completed', {
+    signals: [{
+      signalId: 's-warn', category: 'unplanned-area', severity: 'warning', source: 'guard',
+      taskId: 't-validate', attemptId: 'a-validate', message: 'One touched file outside planned areas.',
+      evidenceCount: 1, evidenceRefs: [], firstSeen: '2026-09-22T11:30:00Z', lastSeen: '2026-09-22T11:31:00Z',
+      resolvedAt: null, ownerActionRequired: false,
+    }],
+  })
+  const topology = buildAgentTeamTopology(run)
+  expect(teamNodeByRole(topology, 'guard')!.state).toBe('WARNING')
+})
+
+/* Part 2 — a CONTINUE verdict keeps a node ACTIVE on an in-flight run. */
+it('keeps the Implementer ACTIVE on an in-flight run with a CONTINUE verdict', () => {
+  // Implementer tasks are still pending (base state IDLE); a CONTINUE verdict
+  // on an in-flight run lifts the node to ACTIVE. (PASS and ACTIVE share the
+  // same state rank, so the isolation requires a non-PASS base state.)
+  const run = session('completed', {
+    runState: 'running',
+    signals: [],
+    tasks: session('completed').tasks.map(task => task.role === 'Implementer' ? { ...task, state: 'pending-ready' as const } : task),
+    interimVerdicts: [
+      { verdictId: 'r-continue', role: 'implementer', taskId: 't-validate', attemptId: 'a-validate', state: 'CONTINUE', summary: 'Validation wiring in progress.', evidenceRefs: [], evidenceCount: 1, severity: 'info', recommendedAction: 'none', mayContinue: true, timestamp: '2026-09-22T11:31:00Z' },
+    ],
+  })
+  const topology = buildAgentTeamTopology(run)
+  expect(topology.runActive).toBe(true)
+  const implementer = teamNodeByRole(topology, 'implementer')!
+  expect(implementer.state).toBe('ACTIVE')
+  expect(implementer.engaged).toBe(true)
+})
+
+/* Part 5e — the Architect node carries run.architect identity when there are no
+   Architect execution tasks; state logic is unchanged (empty task set → IDLE). */
+it('fills the Architect node from run.architect when there are no Architect tasks', () => {
+  const run = session('completed', {
+    tasks: session('completed').tasks.filter(task => task.role !== 'Architect'),
+    interimVerdicts: [],
+    signals: [],
+    architect: { provider: 'claude', requestedModel: 'claude-opus-4-8', reportedModel: null, effort: 'high' },
+  })
+  const topology = buildAgentTeamTopology(run)
+  const architect = teamNodeByRole(topology, 'architect')!
+  expect(architect.provider).toBe('claude')
+  expect(architect.requestedModel).toBe('claude-opus-4-8')
+  expect(architect.reportedModel).toBeNull()
+  expect(architect.effort).toBe('high')
+  expect(architect.state).toBe('IDLE') // no Architect tasks and no Architect verdict → settled; state logic unchanged
+})

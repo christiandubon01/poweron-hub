@@ -110,8 +110,16 @@ export default function SystemIntelligence({ run, presence, task, nodeId, team, 
         <dl className="ct-facts ct-model-facts"><div><dt>Configured identity</dt><dd>Not reported</dd></div><div><dt>Provider</dt><dd>{relevant?.reported.provider || relevant?.requested.provider || 'Not reported'}</dd></div><div><dt>Reported model</dt><dd>{relevant?.reported.state === 'reported' && relevant.reported.model ? relevant.reported.model : 'Model unavailable'}</dd></div></dl>
         <section className="ct-intelligence-section"><h4>Role / model routing</h4><div className="ct-routing">{CT_ROLES.map(role => {
           const roleTasks = run?.tasks.filter(item => item.role === role) ?? []
-          const models = [...new Set(roleTasks.map(item => item.requested.state === 'requested' ? item.requested.model : null).filter(Boolean))]
-          return <div key={role}><span><b>{role}</b>{models.length > 0 && <small>Requested · {models.join(', ')}</small>}</span><span className={`ct-result-${run ? roleResult(run, role).toLowerCase() : ''}`}>{run ? roleResult(run, role) : '—'}</span></div>
+          // The Architect often has no execution task — its plan is the run's
+          // architect truth. Fall back to run.architect ONLY when there are no
+          // Architect tasks: show "Requested · <model>" for its requested model
+          // and "Plan approved" instead of "Not reported". Legacy runs (no
+          // run.architect) keep "Not reported".
+          const architectFallback = role === 'Architect' && roleTasks.length === 0 && run?.architect ? run.architect : null
+          const models = [...new Set([...roleTasks.map(item => item.requested.state === 'requested' ? item.requested.model : null), architectFallback?.requestedModel ?? null].filter(Boolean))] as string[]
+          const result = architectFallback ? 'Plan approved' : run ? roleResult(run, role) : '—'
+          const resultClass = architectFallback ? 'plan-approved' : run ? roleResult(run, role).toLowerCase() : ''
+          return <div key={role}><span><b>{role}</b>{models.length > 0 && <small>Requested · {models.join(', ')}</small>}</span><span className={`ct-result-${resultClass}`}>{result}</span></div>
         })}</div></section>
         <section className="ct-intelligence-section"><h4><Gauge size={15} aria-hidden="true" />Model Usage</h4><p className="ct-unreported-value">This Host does not publish quota telemetry yet.</p></section>
         {run && <section className="ct-intelligence-section"><h4>Session stats</h4><dl className="ct-stats"><div><dt>Passed / tasks</dt><dd>{run.tasks.filter(item => item.state === 'passed').length}<small> / {run.tasks.length}</small></dd></div><div><dt>Attempts</dt><dd>{run.attemptCount ?? '—'}</dd></div><div><dt>Elapsed</dt><dd>{sessionDuration(run) ?? '—'}</dd></div><div><dt>Candidate files</dt><dd>{run.candidateCount ?? '—'}</dd></div></dl></section>}
