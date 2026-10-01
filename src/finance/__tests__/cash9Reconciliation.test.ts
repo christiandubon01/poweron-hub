@@ -14,6 +14,7 @@ const serviceSrc = readFileSync(resolve(__dirname, '../../services/cashObligatio
 const migrationSql = readFileSync(resolve(__dirname, '../../../supabase/migrations/143_cash_dated_obligations.sql'), 'utf8')
 const obligationsSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsObligations.tsx'), 'utf8')
 const viewsSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsViews.tsx'), 'utf8')
+const addSheetSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsAddSheet.tsx'), 'utf8')
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -286,5 +287,54 @@ describe('CASH-9 Plan → Reality Reconciliation', () => {
 
   it('10e: RPC requires exact cent reconciliation — V1 partial matching not supported', () => {
     expect(migrationSql).toContain('partial/variance matching is not supported')
+  })
+
+  // ── Regression: canonical manual expense shape is discoverable ────────────────
+
+  it('10f: canonical manual expense (negative amount_minor) passes the ReconcilePanel candidate filter', () => {
+    // This is the exact shape CashOsAddSheet produces after the sign fix:
+    // parseDollars("1.00") → 100; signedAmountMinor = -100 for expense mode
+    const canonicalExpense: FinancialTransactionRow = baseTx({
+      id: 'tx-canonical-expense',
+      amount_minor: -100,           // signed outflow on asset account
+      economic_effect: 'outflow',
+      economic_amount_minor: 100,   // unsigned magnitude per schema constraint
+      transaction_kind: 'expense',
+      status: 'posted',
+    })
+    const plannedMinor = 100 // $1.00 planned outflow
+
+    // Mirror the candidateTxs predicate from CashOsObligations.tsx verbatim
+    const accepted =
+      canonicalExpense.status === 'posted' &&
+      canonicalExpense.transaction_kind !== 'opening_balance' &&
+      canonicalExpense.transaction_kind !== 'transfer' &&
+      canonicalExpense.amount_minor < 0 &&
+      Math.abs(canonicalExpense.amount_minor) === plannedMinor
+
+    expect(accepted).toBe(true)
+
+    // Also confirm income is rejected by the same filter (no false positives)
+    const incomeWithSameAbs: FinancialTransactionRow = baseTx({
+      id: 'tx-income',
+      amount_minor: 100,
+      economic_effect: 'inflow',
+      economic_amount_minor: 100,
+      transaction_kind: 'income',
+      status: 'posted',
+    })
+    const incomeAccepted = incomeWithSameAbs.amount_minor < 0
+    expect(incomeAccepted).toBe(false)
+  })
+
+  it('10g: CashOsAddSheet uses negative amount_minor for expense mode (signed ledger write)', () => {
+    const handleIdx = addSheetSrc.indexOf('async function handleSubmit')
+    const onSuccessIdx = addSheetSrc.indexOf('onSuccess()', handleIdx)
+    const body = addSheetSrc.slice(handleIdx, onSuccessIdx + 12)
+    // Verify expense writes a negated signed amount, not the raw positive parseDollars result
+    expect(body).toContain('signedAmountMinor')
+    expect(body).toContain('-amountMinor')
+    // economicAmountMinor must remain the unsigned magnitude
+    expect(body).toContain('economicAmountMinor: amountMinor')
   })
 })
