@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useDemoMode } from '@/store/demoStore'
 import { useCashOsSnapshot } from '@/hooks/useCashOsSnapshot'
 import type { CashOsSourceBundle } from '@/services/cashOsReadService'
+import CashOsObligations from '@/components/v15r/cash-os/CashOsObligations'
 import CashOsOutlook from '@/components/v15r/cash-os/CashOsOutlook'
 import CashOsSetupPanel from '@/components/v15r/cash-os/CashOsSetupPanel'
 import {
@@ -130,47 +131,6 @@ function PreSetupTransactions({ sources, onAdd }: { sources: CashOsSourceBundle 
   )
 }
 
-function PreSetupObligations({ sources }: { sources: CashOsSourceBundle | null }) {
-  if (!sources) {
-    return <CashCard><p className="text-sm text-[var(--text-secondary)]">Obligations loading…</p></CashCard>
-  }
-  return (
-    <div className="grid gap-5 xl:grid-cols-2">
-      <CashCard title="Recurring obligations">
-        {sources.obligations.length ? (
-          <div className="space-y-3">
-            {sources.obligations.map(row => (
-              <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
-                <div className="flex justify-between gap-3">
-                  <strong>{row.name}</strong><span className="font-mono">{money(row.amount.minor)}</span>
-                </div>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  {row.recurrence.kind.replace(/_/g, ' ')} from {cashDate(row.recurrence.startDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}
-                </p>
-              </div>
-            ))}
-          </div>
-        ) : <CashEmpty>No recurring obligations were loaded.</CashEmpty>}
-      </CashCard>
-      <CashCard title="Cash commitments">
-        {sources.commitments.length ? (
-          <div className="space-y-3">
-            {sources.commitments.map(row => (
-              <div key={row.id} className="rounded-xl border border-[var(--border-primary)] p-3 text-sm">
-                <div className="flex justify-between gap-3">
-                  <strong>{row.title}</strong><span className="font-mono">{money(row.amount.minor)}</span>
-                </div>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  {cashDate(row.expectedDate)} · {row.requirement} · {row.confidence} · {row.status} · {row.category ?? 'Uncategorized'}
-                </p>
-              </div>
-            ))}
-          </div>
-        ) : <CashEmpty>No cash commitments were loaded.</CashEmpty>}
-      </CashCard>
-    </div>
-  )
-}
 
 export default function DebtKiller() {
   const { isDemoMode, hasHydrated } = useDemoMode()
@@ -395,7 +355,7 @@ export default function DebtKiller() {
             </CashCard>
           )}
           {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} />}
-          {tab === 'Obligations' && <PreSetupObligations sources={cash.sources} />}
+          {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} onRefresh={cash.refresh} />}
         </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
         <CashCard title="Partial / Needs attention">
@@ -450,7 +410,7 @@ export default function DebtKiller() {
           {tab === 'Projects' && <CashProjectsView snapshot={cash.snapshot} />}
           {tab === 'Payroll' && <CashPayrollView snapshot={cash.snapshot} partial={cash.status === 'partial'} />}
           {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} onAdd={openAddSheet} />}
-          {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} />}
+          {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} onRefresh={cash.refresh} />}
         </>
       ) : (
         <CashCard>

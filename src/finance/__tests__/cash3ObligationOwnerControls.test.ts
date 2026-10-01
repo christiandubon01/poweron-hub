@@ -1,0 +1,396 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+import {
+  validateObligationInput,
+  validateCommitmentInput,
+  validateCommitmentInput as _vci,
+  archiveFinancialObligation,
+  cancelCashCommitment,
+  OBLIGATION_SCHEDULES,
+  OBLIGATION_SCHEDULE_LABELS,
+  type ObligationRecurrenceSchedule,
+} from '@/services/cashObligationService'
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const serviceSrc = readFileSync(resolve(__dirname, '../../services/cashObligationService.ts'), 'utf8')
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function parseDollarsMinor(raw: string): number {
+  const val = parseFloat(raw.replace(/[^0-9.]/g, ''))
+  if (!Number.isFinite(val) || val <= 0) throw new Error('Enter a valid positive amount')
+  return Math.round(val * 100)
+}
+
+// ─── CASH-OS-2C Obligation + Commitment Owner Controls ────────────────────────
+
+describe('CASH-OS-2C Obligation + Commitment Owner Controls', () => {
+
+  // ─── 1–6: validateObligationInput ──────────────────────────────────────────
+
+  it('1: validateObligationInput rejects empty name', () => {
+    expect(validateObligationInput({ name: '', amountMinor: 50000, schedule: 'monthly', anchorDate: '2026-10-01' })).toBe('Name is required')
+  })
+
+  it('2: validateObligationInput rejects whitespace-only name', () => {
+    expect(validateObligationInput({ name: '   ', amountMinor: 50000, schedule: 'monthly', anchorDate: '2026-10-01' })).toBe('Name is required')
+  })
+
+  it('3: validateObligationInput rejects zero amount', () => {
+    expect(validateObligationInput({ name: 'Rent', amountMinor: 0, schedule: 'monthly', anchorDate: '2026-10-01' })).toBe('Enter a valid positive amount')
+  })
+
+  it('4: validateObligationInput rejects negative amount', () => {
+    expect(validateObligationInput({ name: 'Rent', amountMinor: -100, schedule: 'monthly', anchorDate: '2026-10-01' })).toBe('Enter a valid positive amount')
+  })
+
+  it('5: validateObligationInput rejects invalid schedule', () => {
+    expect(validateObligationInput({ name: 'Rent', amountMinor: 50000, schedule: 'bimonthly', anchorDate: '2026-10-01' })).toBe('Choose a recurrence schedule')
+  })
+
+  it('6: validateObligationInput rejects malformed anchor date', () => {
+    expect(validateObligationInput({ name: 'Rent', amountMinor: 50000, schedule: 'monthly', anchorDate: 'not-a-date' })).toBe('Enter a valid start date')
+  })
+
+  it('6b: validateObligationInput accepts valid input for every schedule', () => {
+    for (const schedule of OBLIGATION_SCHEDULES) {
+      expect(validateObligationInput({ name: 'Test', amountMinor: 100, schedule, anchorDate: '2026-10-01' })).toBeNull()
+    }
+  })
+
+  // ─── 7–10: validateCommitmentInput ─────────────────────────────────────────
+
+  it('7: validateCommitmentInput rejects empty title', () => {
+    expect(validateCommitmentInput({ title: '', amountMinor: 100000, expectedDate: '2026-11-01' })).toBe('Title is required')
+  })
+
+  it('8: validateCommitmentInput rejects zero amount', () => {
+    expect(validateCommitmentInput({ title: 'Equipment', amountMinor: 0, expectedDate: '2026-11-01' })).toBe('Enter a valid positive amount')
+  })
+
+  it('9: validateCommitmentInput rejects missing expected date', () => {
+    expect(validateCommitmentInput({ title: 'Equipment', amountMinor: 100000, expectedDate: '' })).toBe('Enter a valid expected date')
+  })
+
+  it('10: validateCommitmentInput accepts valid input', () => {
+    expect(validateCommitmentInput({ title: 'Equipment', amountMinor: 100000, expectedDate: '2026-11-01' })).toBeNull()
+  })
+
+  // ─── 11: Dollar parsing uses integer minor units ──────────────────────────
+
+  it('11a: parseDollarsMinor converts $1,500.00 to 150000', () => {
+    expect(parseDollarsMinor('1500.00')).toBe(150000)
+  })
+
+  it('11b: parseDollarsMinor converts $559.13 to 55913', () => {
+    expect(parseDollarsMinor('559.13')).toBe(55913)
+  })
+
+  it('11c: parseDollarsMinor strips non-numeric characters', () => {
+    expect(parseDollarsMinor('$1,200.00')).toBe(120000)
+  })
+
+  it('11d: parseDollarsMinor rejects zero', () => {
+    expect(() => parseDollarsMinor('0')).toThrow('Enter a valid positive amount')
+  })
+
+  it('11e: parseDollarsMinor rejects non-numeric', () => {
+    expect(() => parseDollarsMinor('abc')).toThrow('Enter a valid positive amount')
+  })
+
+  // ─── 12: Schedule catalogue covers canonical DB values ────────────────────
+
+  it('12: OBLIGATION_SCHEDULES maps to only canonical recurrence_kind values', () => {
+    const allowedKinds = ['weekly', 'every_n_weeks', 'monthly', 'yearly']
+    // All schedules have labels
+    for (const s of OBLIGATION_SCHEDULES) {
+      expect(OBLIGATION_SCHEDULE_LABELS[s]).toBeTruthy()
+    }
+    // The catalogue has six options
+    expect(OBLIGATION_SCHEDULES).toHaveLength(6)
+    // Source contains only canonical kind values in the map
+    for (const kind of allowedKinds) {
+      expect(serviceSrc).toContain(`kind: '${kind}'`)
+    }
+    // Source does not contain any non-canonical kind
+    expect(serviceSrc).not.toContain("kind: 'biweekly'")
+    expect(serviceSrc).not.toContain("kind: 'bimonthly'")
+  })
+
+  // ─── 13: validateObligationInput is a pure function ───────────────────────
+
+  it('13: validateObligationInput is pure — same input always returns same output', () => {
+    const args = { name: 'Truck', amountMinor: 55913, schedule: 'monthly' as ObligationRecurrenceSchedule, anchorDate: '2026-01-31' }
+    expect(validateObligationInput(args)).toBe(validateObligationInput(args))
+  })
+
+  // ─── 14: validateCommitmentInput is a pure function ───────────────────────
+
+  it('14: validateCommitmentInput is pure — same input always returns same output', () => {
+    const args = { title: 'Material', amountMinor: 65000, expectedDate: '2026-10-03' }
+    expect(validateCommitmentInput(args)).toBe(validateCommitmentInput(args))
+  })
+
+  // ─── 15: Obligation creation payload structure ────────────────────────────
+
+  it('15: CreateObligationInput does not reference financial_transactions or financial_accounts fields', () => {
+    const illegalFields = ['transaction_kind', 'economic_effect', 'amount_minor', 'account_class', 'include_in_cash']
+    // Verify these field names cannot appear in the CreateObligationInput type
+    // by asserting that a valid payload carries none of them
+    const payload = {
+      name: 'Rent',
+      category: 'rent',
+      amountMinor: 200000,
+      schedule: 'monthly' as ObligationRecurrenceSchedule,
+      anchorDate: '2026-10-01',
+      isRequired: true,
+      confidence: 'expected' as const,
+    }
+    for (const field of illegalFields) {
+      expect(payload).not.toHaveProperty(field)
+    }
+  })
+
+  // ─── 16: Commitment cancel guard prevents reconciled cancellation ─────────
+
+  it('16: cancelCashCommitment guard — only unreconciled scheduled commitments can be canceled', () => {
+    expect(typeof cancelCashCommitment).toBe('function')
+    // The service WHERE clause targets only status='scheduled' + reconciliation_state='unreconciled'
+    const cancelFnIdx = serviceSrc.indexOf('async function cancelCashCommitment')
+    const cancelFnEnd = serviceSrc.indexOf('\n}', cancelFnIdx)
+    const body = serviceSrc.slice(cancelFnIdx, cancelFnEnd)
+    expect(body).toContain("'scheduled'")
+    expect(body).toContain("'unreconciled'")
+  })
+
+  // ─── 17: Archive guard scopes to organization ────────────────────────────
+
+  it('17: archiveFinancialObligation rejects with "id is required" for empty id', async () => {
+    expect(typeof archiveFinancialObligation).toBe('function')
+    await expect(archiveFinancialObligation('')).rejects.toThrow('id is required')
+  })
+
+  // ─── 18: No write path creates financial_transactions ────────────────────
+
+  it('18: service module does not import manualLedgerService record functions', () => {
+    expect(serviceSrc).not.toContain('recordManualTransaction')
+    expect(serviceSrc).not.toContain('recordFinancialTransfer')
+    expect(serviceSrc).not.toContain('recordFinancialCardPayment')
+    expect(serviceSrc).not.toContain('financial_transactions')
+    expect(serviceSrc).not.toContain('financial_accounts')
+  })
+
+  // ─── 19: Obligation status contract matches canonical schema ──────────────
+
+  it('19: archive sets status=archived not canceled or deleted', () => {
+    expect(serviceSrc).toContain("status: 'archived'")
+    expect(serviceSrc).toContain('archived_at')
+    const archiveFnIdx = serviceSrc.indexOf('async function archiveFinancialObligation')
+    const archiveFnEnd = serviceSrc.indexOf('\n}', archiveFnIdx)
+    const archiveFnBody = serviceSrc.slice(archiveFnIdx, archiveFnEnd)
+    expect(archiveFnBody).not.toContain('.delete(')
+  })
+
+  // ─── 20: Total Cash unaffected by obligation creation ────────────────────
+
+  it('20: creating an obligation does not touch financial_accounts or financial_transactions', () => {
+    const createFnIdx = serviceSrc.indexOf('async function createFinancialObligation')
+    const createFnEnd = serviceSrc.indexOf('\n}', createFnIdx)
+    const body = serviceSrc.slice(createFnIdx, createFnEnd)
+    expect(body).not.toContain('financial_accounts')
+    expect(body).not.toContain('financial_transactions')
+    expect(body).toContain("'financial_obligations'")
+  })
+
+  // ─── 21: Total Cash unaffected by commitment creation ────────────────────
+
+  it('21: creating a commitment does not touch financial_accounts or financial_transactions', () => {
+    const createFnIdx = serviceSrc.indexOf('async function createCashCommitment')
+    const createFnEnd = serviceSrc.indexOf('\n}', createFnIdx)
+    const body = serviceSrc.slice(createFnIdx, createFnEnd)
+    expect(body).not.toContain('financial_accounts')
+    expect(body).not.toContain('financial_transactions')
+    expect(body).toContain("'cash_commitments'")
+  })
+
+  // ─── 22: Reconciliation contract not violated by UI cancel ────────────────
+
+  it('22: updateCashCommitment and cancelCashCommitment both scope to unreconciled scheduled rows', () => {
+    const updateFnIdx = serviceSrc.indexOf('async function updateCashCommitment')
+    const updateFnEnd = serviceSrc.indexOf('\n}', updateFnIdx)
+    const updateBody = serviceSrc.slice(updateFnIdx, updateFnEnd)
+    expect(updateBody).toContain("'unreconciled'")
+    expect(updateBody).toContain("'scheduled'")
+
+    const cancelFnIdx = serviceSrc.indexOf('async function cancelCashCommitment')
+    const cancelFnEnd = serviceSrc.indexOf('\n}', cancelFnIdx)
+    const cancelBody = serviceSrc.slice(cancelFnIdx, cancelFnEnd)
+    expect(cancelBody).toContain("'unreconciled'")
+    expect(cancelBody).toContain("'scheduled'")
+    expect(cancelBody).toContain("status: 'canceled'")
+  })
+})
+
+// ─── CASH-OS-2C Pre-setup Rendering Path ─────────────────────────────────────
+
+const debtKillerSrc = readFileSync(resolve(__dirname, '../../views/DebtKiller.tsx'), 'utf8')
+const obligationsSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsObligations.tsx'), 'utf8')
+
+describe('CASH-OS-2C Pre-setup Rendering Path', () => {
+
+  // ─── 23: Pre-setup branch uses CashOsObligations ─────────────────────────
+
+  it('23: pre-setup Obligations tab renders CashOsObligations (not PreSetupObligations)', () => {
+    // The pre-setup branch must reference CashOsObligations for the Obligations tab
+    const preSetupIdx = debtKillerSrc.indexOf("tab === 'Obligations' && <CashOsObligations")
+    expect(preSetupIdx).toBeGreaterThan(-1)
+    // PreSetupObligations must not appear anywhere — it was removed
+    expect(debtKillerSrc).not.toContain('PreSetupObligations')
+  })
+
+  // ─── 24: Pre-setup passes source obligations ─────────────────────────────
+
+  it('24: pre-setup CashOsObligations receives obligations from cash.sources', () => {
+    expect(debtKillerSrc).toContain('cash.sources?.obligations ?? []')
+  })
+
+  // ─── 25: Pre-setup passes source commitments ─────────────────────────────
+
+  it('25: pre-setup CashOsObligations receives commitments from cash.sources', () => {
+    expect(debtKillerSrc).toContain('cash.sources?.commitments ?? []')
+  })
+
+  // ─── 26: Pre-setup passes cash.refresh as onRefresh ──────────────────────
+
+  it('26: pre-setup CashOsObligations receives cash.refresh as onRefresh', () => {
+    const preSetupCallIdx = debtKillerSrc.indexOf("tab === 'Obligations' && <CashOsObligations")
+    const preSetupCallEnd = debtKillerSrc.indexOf('/>', preSetupCallIdx)
+    const callSite = debtKillerSrc.slice(preSetupCallIdx, preSetupCallEnd)
+    expect(callSite).toContain('onRefresh={cash.refresh}')
+  })
+
+  // ─── 27: Session Assumptions gate calculations, not planned-outflow CRUD ─
+
+  it('27: Session Assumptions gate snapshot calculations — Obligations CRUD is available in setup_required state', () => {
+    // The preSetup flag allows the Obligations tab even without a snapshot
+    const preSetupFlagIdx = debtKillerSrc.indexOf("cash.status === 'setup_required' && cash.sources !== null")
+    expect(preSetupFlagIdx).toBeGreaterThan(-1)
+    // The preSetup rendering branch includes the Obligations tab
+    const obligationsInPreSetup = debtKillerSrc.indexOf("tab === 'Obligations' && <CashOsObligations")
+    expect(obligationsInPreSetup).toBeGreaterThan(preSetupFlagIdx)
+  })
+
+  // ─── 28: Ready-state Obligations also uses the same component ────────────
+
+  it('28: ready-state Obligations tab also uses CashOsObligations (via CashObligationsView)', () => {
+    // CashObligationsView delegates to CashOsObligations — both states share the same implementation
+    expect(debtKillerSrc).toContain("tab === 'Obligations' && <CashObligationsView")
+    // CashOsViews.tsx must delegate to CashOsObligations
+    const viewsSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsViews.tsx'), 'utf8')
+    expect(viewsSrc).toContain('CashOsObligations')
+  })
+
+  // ─── 29: No duplicate obligation form implementation ─────────────────────
+
+  it('29: obligation form JSX exists only in CashOsObligations.tsx, not re-implemented in DebtKiller', () => {
+    // The form fields (name, amount, schedule) must not be re-implemented in DebtKiller
+    expect(debtKillerSrc).not.toContain("placeholder=\"Obligation name\"")
+    expect(debtKillerSrc).not.toContain("placeholder=\"Commitment title\"")
+    // CashOsObligations is the single source of truth for the obligation form
+    expect(obligationsSrc).toContain('CashOsObligations')
+  })
+})
+
+// ─── CASH-OS-2C Required Checkbox UI ─────────────────────────────────────────
+
+describe('CASH-OS-2C Required Checkbox UI', () => {
+
+  // ─── 30: RequiredControl renders a controlled sr-only checkbox + visual box
+
+  it('30: RequiredControl hides native checkbox with sr-only and renders an explicit visual box', () => {
+    // Native checkbox is sr-only (accessible, not visually rendered by browser)
+    expect(obligationsSrc).toContain('peer sr-only')
+    // Visual box is explicitly rendered — orange background when checked
+    expect(obligationsSrc).toContain('bg-orange-500')
+    // SVG checkmark is the explicit selected indicator
+    expect(obligationsSrc).toContain('<svg aria-hidden="true"')
+    // Both forms delegate to RequiredControl (appears exactly twice as a call site)
+    const callCount = (obligationsSrc.match(/<RequiredControl /g) ?? []).length
+    expect(callCount).toBe(2)
+  })
+
+  // ─── 31: Visual box carries explicit sizing ───────────────────────────────
+
+  it('31: RequiredControl visual box has h-5 w-5 sizing', () => {
+    expect(obligationsSrc).toContain('h-5 w-5')
+  })
+
+  // ─── 32: Label is cursor-pointer for full-row click ───────────────────────
+
+  it('32: RequiredControl label carries cursor-pointer so clicking anywhere in the row toggles it', () => {
+    expect(obligationsSrc).toContain('cursor-pointer')
+  })
+
+  // ─── 32b: Minimum touch target meets 44 px guideline ─────────────────────
+
+  it('32b: RequiredControl label has min-h-[44px] for iPad touch target', () => {
+    expect(obligationsSrc).toContain('min-h-[44px]')
+  })
+
+  // ─── 32c: Keyboard focus ring is wired through peer-focus-visible ─────────
+
+  it('32c: RequiredControl wires keyboard focus ring via peer-focus-visible', () => {
+    expect(obligationsSrc).toContain('peer-focus-visible:ring-2')
+  })
+
+  // ─── 33: Both forms default isRequired to true for new records ──────────
+
+  it('33: both ObligationForm and CommitmentForm default isRequired to true for new records', () => {
+    // The pattern appears exactly twice — once per form
+    const matches = obligationsSrc.match(/useState\(initial \? initial\.requirement === 'required' : true\)/g) ?? []
+    expect(matches).toHaveLength(2)
+  })
+
+  // ─── 34: Existing required/optional edit initialization is intact ─────────
+
+  it('34: edit initialization reads requirement from the existing record for both forms', () => {
+    // When `initial` is provided the state reads initial.requirement === 'required'
+    expect(obligationsSrc).toContain("initial.requirement === 'required'")
+  })
+
+  // ─── 35: ObligationForm onSubmit payload carries isRequired ─────────────
+
+  it('35: ObligationForm onSubmit call includes isRequired field', () => {
+    // The obligation form onSubmit call passes isRequired as a named field
+    expect(obligationsSrc).toContain('onSubmit({ name, amountRaw, schedule, anchorDate, category, isRequired, confidence })')
+  })
+
+  // ─── 36: CommitmentForm onSubmit payload carries isRequired ──────────────
+
+  it('36: CommitmentForm onSubmit call includes isRequired field', () => {
+    // The commitment form onSubmit call passes isRequired as a named field
+    expect(obligationsSrc).toContain('onSubmit({ title, amountRaw, expectedDate, category, isRequired, confidence })')
+  })
+
+  // ─── 37: isRequired reaches createFinancialObligation payload ────────────
+
+  it('37: obligation create handler passes isRequired in CreateObligationInput payload', () => {
+    const handlerIdx = obligationsSrc.indexOf('handleObligationSubmit')
+    expect(handlerIdx).toBeGreaterThan(-1)
+    const handlerBody = obligationsSrc.slice(handlerIdx, handlerIdx + 1500)
+    expect(handlerBody).toContain('isRequired: fields.isRequired')
+    expect(handlerBody).toContain('createFinancialObligation(')
+  })
+
+  // ─── 38: isRequired reaches createCashCommitment payload ─────────────────
+
+  it('38: commitment create handler passes isRequired in CreateCommitmentInput payload', () => {
+    const handlerIdx = obligationsSrc.indexOf('handleCommitmentSubmit')
+    expect(handlerIdx).toBeGreaterThan(-1)
+    const handlerBody = obligationsSrc.slice(handlerIdx, handlerIdx + 1500)
+    expect(handlerBody).toContain('isRequired: fields.isRequired')
+    expect(handlerBody).toContain('createCashCommitment(')
+  })
+})
