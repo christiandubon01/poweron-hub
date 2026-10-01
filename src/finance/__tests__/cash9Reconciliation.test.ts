@@ -337,4 +337,79 @@ describe('CASH-9 Plan → Reality Reconciliation', () => {
     // economicAmountMinor must remain the unsigned magnitude
     expect(body).toContain('economicAmountMinor: amountMinor')
   })
+
+  // ── Defect #3 regression: success UX visibility ────────────────────────────
+
+  it('10h: success banner is rendered when successResult state is set (✓ Payment recorded)', () => {
+    // The component must render the success banner conditional on successResult
+    expect(obligationsSrc).toContain('successResult &&')
+    expect(obligationsSrc).toContain('✓ Payment recorded')
+    expect(obligationsSrc).toContain('successResult.name')
+    expect(obligationsSrc).toContain('successResult.dateLabel')
+    expect(obligationsSrc).toContain('successResult.txDescription')
+    expect(obligationsSrc).toContain('successResult.txAmountMinor')
+  })
+
+  it('10i: success banner shows recurring-obligation continuation note for occurrence reconciliation', () => {
+    // isRecurring=true path must show the "continues" copy so owner knows future payments still due
+    expect(obligationsSrc).toContain('successResult.isRecurring')
+    expect(obligationsSrc).toContain('This obligation continues')
+    expect(obligationsSrc).toContain('next scheduled payment will appear automatically')
+  })
+
+  it('10j: success banner has a Dismiss button that clears successResult', () => {
+    // Owner must be able to clear the banner; the handler must call setSuccessResult(null)
+    expect(obligationsSrc).toContain('setSuccessResult(null)')
+    expect(obligationsSrc).toContain('Dismiss')
+  })
+
+  it('10k: handleReconcileOccurrence captures outcome into successResult before mode reset', () => {
+    // Root cause of Defect #3: handlers discarded context before any state could render.
+    // Fix: setSuccessResult must be called BEFORE setMode('list') in the occurrence handler.
+    const occHandlerIdx = obligationsSrc.indexOf('async function handleReconcileOccurrence')
+    const occHandlerEnd = obligationsSrc.indexOf('async function handleReconcileCommitment', occHandlerIdx)
+    const occHandlerBody = obligationsSrc.slice(occHandlerIdx, occHandlerEnd)
+    const setSuccessIdx = occHandlerBody.indexOf('setSuccessResult(')
+    const setModeIdx = occHandlerBody.indexOf("setMode('list')")
+    // setSuccessResult must appear before setMode('list') in the handler body
+    expect(setSuccessIdx).toBeGreaterThan(-1)
+    expect(setModeIdx).toBeGreaterThan(-1)
+    expect(setSuccessIdx).toBeLessThan(setModeIdx)
+    // isRecurring must be true for occurrences (recurring obligations)
+    expect(occHandlerBody).toContain('isRecurring: true')
+  })
+
+  it('10l: handleReconcileCommitment captures outcome into successResult before mode reset', () => {
+    const commitHandlerIdx = obligationsSrc.indexOf('async function handleReconcileCommitment')
+    // Find the end of this handler — next async function or end of component
+    const nextFnIdx = obligationsSrc.indexOf('async function ', commitHandlerIdx + 10)
+    const commitHandlerBody = obligationsSrc.slice(commitHandlerIdx, nextFnIdx === -1 ? commitHandlerIdx + 2000 : nextFnIdx)
+    const setSuccessIdx = commitHandlerBody.indexOf('setSuccessResult(')
+    const setModeIdx = commitHandlerBody.indexOf("setMode('list')")
+    expect(setSuccessIdx).toBeGreaterThan(-1)
+    expect(setModeIdx).toBeGreaterThan(-1)
+    expect(setSuccessIdx).toBeLessThan(setModeIdx)
+    // isRecurring must be false for one-off commitments
+    expect(commitHandlerBody).toContain('isRecurring: false')
+  })
+
+  it('10m: reconciled occurrence history is shown inline per obligation row', () => {
+    // Owner must be able to see which past occurrences have been paid
+    expect(obligationsSrc).toContain('reconciledOccs')
+    expect(obligationsSrc).toContain("reconciliationState === 'reconciled'")
+    // History items show checkmark and "paid" label
+    expect(obligationsSrc).toContain('— paid')
+    // Limited to most-recent entries (slice(0, 3))
+    expect(obligationsSrc).toContain('.slice(0, 3)')
+    // Sorted newest-first
+    expect(obligationsSrc).toContain('b.scheduledDate.localeCompare(a.scheduledDate)')
+  })
+
+  it('10n: Mark Paid button clears any prior successResult before entering reconcile flow', () => {
+    // Prevents stale prior success banner persisting while owner starts a new reconciliation
+    const markPaidIdx = obligationsSrc.indexOf("setMode('reconcile-occurrence')")
+    const sectionStart = obligationsSrc.lastIndexOf('onClick', markPaidIdx)
+    const onClickBody = obligationsSrc.slice(sectionStart, markPaidIdx + 30)
+    expect(onClickBody).toContain('setSuccessResult(null)')
+  })
 })
