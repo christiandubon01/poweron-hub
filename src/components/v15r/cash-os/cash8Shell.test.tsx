@@ -44,8 +44,12 @@ vi.mock('@/hooks/useCashOsSnapshot', () => ({
   }),
 }))
 
-vi.mock('@/views/DebtKillerLegacy', () => ({
-  default: () => <div>Legacy Debt Plan</div>,
+vi.mock('@/components/v15r/cash-os/CashOsDebtPlan', () => ({
+  default: (props: { sources: unknown; snapshot: unknown }) => (
+    <div data-testid="canonical-debt-plan">
+      Canonical Debt Plan · sources={(props.sources ? 'yes' : 'no')} snapshot={(props.snapshot ? 'yes' : 'no')}
+    </div>
+  ),
 }))
 
 const stubSources = {
@@ -128,10 +132,14 @@ describe('CASH-8 Debt Killer workspace shell', () => {
     ])
   })
 
-  it('keeps the old Debt Killer tool reachable under Debt Plan', async () => {
+  it('CORE-CLOSE-2A: Debt Plan renders canonical component, not legacy mock data', async () => {
+    control.cashStatus = 'setup_required'
+    control.cashScope = stubScope
+    control.cashSources = stubSources
     await act(async () => { root.render(<DebtKiller />) })
     await click('Debt Plan')
-    expect(host.textContent).toContain('Legacy Debt Plan')
+    expect(host.textContent).not.toContain('Legacy Debt Plan')
+    expect(host.querySelector('[data-testid="canonical-debt-plan"]')).toBeTruthy()
   })
 
   it('does not put a Money or Performance tab inside Debt Killer', async () => {
@@ -141,12 +149,13 @@ describe('CASH-8 Debt Killer workspace shell', () => {
     expect(labels).not.toContain('Money')
   })
 
-  it('keeps Debt Plan available while Cash OS is unavailable in Demo Mode', async () => {
+  it('CORE-CLOSE-2A: Debt Plan shows unavailable message in Demo Mode — no legacy mock', async () => {
     control.demo = true
     await act(async () => { root.render(<DebtKiller />) })
-    expect(host.textContent).toContain('Cash OS unavailable in Demo Mode')
     await click('Debt Plan')
-    expect(host.textContent).toContain('Legacy Debt Plan')
+    expect(host.textContent).toContain('Cash OS unavailable in Demo Mode')
+    expect(host.textContent).not.toContain('Legacy Debt Plan')
+    expect(host.querySelector('[data-testid="canonical-debt-plan"]')).toBeFalsy()
   })
 
   // ─── CASH-OS-UI-1A: Non-blocking gate ──────────────────────────────────
@@ -241,14 +250,16 @@ describe('CASH-8 Debt Killer workspace shell', () => {
     expect(host.textContent).not.toContain('PROTECTED</span><strong')
   })
 
-  it('Debt Plan tab remains accessible with no setup and no sources', async () => {
+  it('CORE-CLOSE-2A: Debt Plan shows fallback when setup_required and sources not yet loaded — no legacy mock', async () => {
     control.cashStatus = 'setup_required'
     control.cashScope = stubScope
     control.cashSources = null
     control.cashReason = 'SESSION_SETUP_REQUIRED'
     await act(async () => { root.render(<DebtKiller />) })
     await click('Debt Plan')
-    expect(host.textContent).toContain('Legacy Debt Plan')
+    // preSetup requires sources !== null; without sources the fallback renders
+    // The critical contract: DebtKillerLegacy is never shown
+    expect(host.textContent).not.toContain('Legacy Debt Plan')
   })
 
   it('no calls to confirmSetup just from opening Cash OS or changing tabs', async () => {
@@ -260,6 +271,18 @@ describe('CASH-8 Debt Killer workspace shell', () => {
       await click(label)
     }
     expect(confirmSetupSpy).not.toHaveBeenCalled()
+  })
+
+  it('CORE-CLOSE-2A: Debt Plan passes sources to CashOsDebtPlan during setup_required (preSetup)', async () => {
+    control.cashStatus = 'setup_required'
+    control.cashScope = stubScope
+    control.cashSources = stubSources
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="canonical-debt-plan"]')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toContain('sources=yes')
+    expect(el!.textContent).toContain('snapshot=no')
   })
 
   it('ready-state renders Outlook when authoritative', async () => {
@@ -303,5 +326,84 @@ describe('CASH-8 Debt Killer workspace shell', () => {
     expect(host.textContent).toContain('TOTAL CASH')
     expect(host.textContent).toContain('$2,500.00')
     expect(host.textContent).not.toContain('Needs assumptions')
+  })
+
+  it('CORE-CLOSE-2A: Debt Plan passes snapshot to CashOsDebtPlan in ready state', async () => {
+    const readySnapshot = {
+      organizationId: 'org-1', asOfDate: '2026-09-30', asOfTimestamp: '2026-09-30T20:00:00Z',
+      setup: { version: 1, organizationId: 'org-1', payrollPaidThroughDate: '2026-09-28',
+        protectionHorizonDays: 7, operatingFloorMinor: 0, taxReserve: { kind: 'disabled' },
+        includeOptionalObligations: false, includeOpenShiftEstimates: false,
+        timezoneConfirmed: true, confirmedAt: '2026-09-29T20:00:00Z' },
+      allocation: { trulyFreeCashMinor: 100000 } as any,
+      payroll: { liabilities: [] }, payrollDiagnostics: [],
+      payrollAllocations: [], payrollExposureMinor: 0, accountBalancesMinor: { bank: 250000 },
+      collectionClock: { activeFunding: [], collectionFollowUp: [], unattributedPayrollMinor: 0, diagnostics: [] },
+      projection: { organizationId: 'org-1', asOfDate: '2026-09-30', horizonDays: 30,
+        confidenceMode: 'conservative',
+        anchor: { date: '2026-09-30', openingCashMinor: 250000, inflowMinor: 0, outflowMinor: 0,
+          closingCashMinor: 250000, totalProtectedRequirementMinor: 0, protectedCashMinor: 0,
+          trulyFreeCashMinor: 100000, protectionDeficitMinor: 0, operatingFloorMinor: 0,
+          events: [], markers: [], uncertainty: { highestIncludedConfidence: null,
+            includedExpectedEventCount: 0, includedPossibleEventCount: 0,
+            unresolvedMarkerCount: 0, unresolvedSourceKeys: [] } },
+        days: [],
+        summary: { lowestTotalCashMinor: 250000, lowestTotalCashDate: '2026-09-30',
+          lowestTrulyFreeCashMinor: 100000, lowestTrulyFreeCashDate: '2026-09-30',
+          firstProtectionDeficitDate: null, fourteenDayLowestTotalCashMinor: 250000,
+          fourteenDayLowestTotalCashDate: '2026-09-30', daysCovered: { days: 30, bounded: true } },
+        datedEvents: [], datedMarkers: [], undatedMarkers: [], diagnostics: [] },
+      accounts: [{ id: 'bank', display_name: 'Checking', status: 'active', include_in_cash: true,
+        account_type: 'checking', account_class: 'asset' } as any],
+      transactions: [{ id: 't1', transaction_date: '2026-09-28', description: 'Opening',
+        amount_minor: 250000, status: 'posted', account_id: 'bank' } as any],
+      obligations: [], occurrences: [], commitments: [], timeEntries: [],
+      sessions: [], bridges: [], employees: [], backup: {} as any, readinessDiagnostics: [],
+    }
+    control.cashStatus = 'ready'
+    control.cashScope = stubScope
+    control.cashSetup = readySnapshot.setup
+    control.cashSnapshot = readySnapshot
+    control.cashEditing = false
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="canonical-debt-plan"]')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toContain('sources=yes')
+    expect(el!.textContent).toContain('snapshot=yes')
+  })
+
+  // ─── CORE-CLOSE-2A: empty state gap ────────────────────────────────────────
+
+  it('CORE-CLOSE-2A: Debt Plan renders CashOsDebtPlan on LEDGER_EMPTY when sources exist', async () => {
+    const emptyWithLiability = {
+      ...stubSources,
+      accounts: [
+        { id: 'bank', display_name: 'Main Checking', status: 'active', account_class: 'asset',
+          account_type: 'checking', include_in_cash: true },
+        { id: 'cc1', display_name: 'Business Visa', status: 'active', account_class: 'liability',
+          account_type: 'credit_card', include_in_cash: false },
+      ],
+    }
+    control.cashStatus = 'empty'
+    control.cashScope = stubScope
+    control.cashSources = emptyWithLiability
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="canonical-debt-plan"]')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toContain('sources=yes')
+    // No authoritative snapshot — Truly Free Cash must not be shown
+    expect(el!.textContent).toContain('snapshot=no')
+  })
+
+  it('CORE-CLOSE-2A: non-Debt-Plan tabs retain Ledger empty card on LEDGER_EMPTY', async () => {
+    control.cashStatus = 'empty'
+    control.cashScope = stubScope
+    control.cashSources = stubSources
+    await act(async () => { root.render(<DebtKiller />) })
+    // Default tab is Outlook — must see the Ledger empty card
+    expect(host.textContent).toContain('Ledger empty')
+    expect(host.querySelector('[data-testid="canonical-debt-plan"]')).toBeFalsy()
   })
 })

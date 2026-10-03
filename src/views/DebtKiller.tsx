@@ -14,7 +14,7 @@ import {
 } from '@/components/v15r/cash-os/CashOsViews'
 import { CashCard, CashEmpty, cashDate, money } from '@/components/v15r/cash-os/cashOsUi'
 import CashOsAddSheet from '@/components/v15r/cash-os/CashOsAddSheet'
-import DebtKillerLegacy from './DebtKillerLegacy'
+import CashOsDebtPlan from '@/components/v15r/cash-os/CashOsDebtPlan'
 
 const tabs = ['Outlook', 'Calendar', 'Projects', 'Payroll', 'Transactions', 'Obligations', 'Debt Plan'] as const
 type DebtKillerTab = typeof tabs[number]
@@ -280,7 +280,7 @@ export default function DebtKiller() {
       </nav>
 
       {/* Non-blocking assumptions notice */}
-      {cash.status === 'setup_required' && !isDemoMode && tab !== 'Debt Plan' && (
+      {cash.status === 'setup_required' && !isDemoMode && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
           <span className="text-amber-200">Some calculations need Session Assumptions.</span>
           {scope && (
@@ -294,14 +294,12 @@ export default function DebtKiller() {
         </div>
       )}
 
-      {tab === 'Debt Plan' ? (
-        <DebtKillerLegacy />
-      ) : !hasHydrated ? (
+      {!hasHydrated ? (
         <CashCard><p>Loading workspace…</p></CashCard>
       ) : isDemoMode ? (
         <CashCard title="Cash OS unavailable in Demo Mode">
           <p className="text-sm text-[var(--text-secondary)]">
-            This demo has no isolated Cash OS ledger and payroll source bundle. Debt Plan remains available.
+            This demo has no isolated Cash OS ledger and payroll source bundle. All tabs require canonical sources.
           </p>
         </CashCard>
       ) : cash.status === 'loading' ? (
@@ -322,6 +320,8 @@ export default function DebtKiller() {
             Retry read
           </button>
         </CashCard>
+      ) : cash.status === 'empty' && tab === 'Debt Plan' && cash.sources ? (
+        <CashOsDebtPlan sources={cash.sources} snapshot={null} />
       ) : cash.status === 'empty' ? (
         <CashCard title="Ledger empty">
           <p className="text-sm text-[var(--text-secondary)]">
@@ -356,6 +356,7 @@ export default function DebtKiller() {
           )}
           {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} onRefresh={cash.refresh} />}
+          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.sources} snapshot={null} />}
         </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
         <CashCard title="Partial / Needs attention">
@@ -411,6 +412,7 @@ export default function DebtKiller() {
           {tab === 'Payroll' && <CashPayrollView snapshot={cash.snapshot} partial={cash.status === 'partial'} />}
           {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} onRefresh={cash.refresh} />}
+          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.snapshot} snapshot={cash.snapshot} />}
         </>
       ) : (
         <CashCard>
