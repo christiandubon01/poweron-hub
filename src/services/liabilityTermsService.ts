@@ -32,6 +32,22 @@ export async function upsertLiabilityTerms(
 ): Promise<LiabilityTermsRow> {
   if (!accountId) throw new Error('accountId required')
   const ctx = await resolveFinanceContext()
+
+  // Verify the target account belongs to caller's org and is a liability-class account.
+  // asset accounts (checking, savings, cash, other_asset) must be rejected before upsert.
+  const { data: acct, error: acctErr } = await db()
+    .from('financial_accounts')
+    .select('id, organization_id, account_class')
+    .eq('id', accountId)
+    .eq('organization_id', ctx.organizationId)
+    .single()
+  if (acctErr || !acct) throw new Error(`Account not found in organization: ${accountId}`)
+  if (acct.account_class !== 'liability') {
+    throw new Error(
+      `Account ${accountId} has account_class '${acct.account_class}', must be 'liability'`,
+    )
+  }
+
   const { data, error } = await db()
     .from('financial_liability_terms')
     .upsert(

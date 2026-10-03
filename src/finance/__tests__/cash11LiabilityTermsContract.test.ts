@@ -173,3 +173,31 @@ describe('CORE-CLOSE-2B migration contract (145_cash_liability_terms)', () => {
     expect(sql).toContain('Multi-tranche')
   })
 })
+
+// ── DB liability-class guard ──────────────────────────────────────────────────
+
+describe('CORE-CLOSE-2B liability-class guard (migration 145)', () => {
+
+  it('guard function checks financial_accounts.account_class before insert/update', () => {
+    expect(sql).toContain('check_financial_liability_terms_account_class')
+    expect(sql).toContain('SELECT account_class INTO v_class')
+    expect(sql).toContain('FROM public.financial_accounts')
+  })
+
+  it('guard rejects non-liability via IS DISTINCT FROM and RAISE EXCEPTION', () => {
+    expect(sql).toContain("IS DISTINCT FROM 'liability'")
+    expect(sql).toContain('RAISE EXCEPTION')
+  })
+
+  it('guard trigger fires BEFORE INSERT OR UPDATE', () => {
+    expect(sql).toContain('trg_financial_liability_terms_liability_class')
+    expect(sql).toContain('BEFORE INSERT OR UPDATE ON public.financial_liability_terms')
+  })
+
+  it('guard filters account lookup by NEW.account_id AND NEW.organization_id — no cross-org leak', () => {
+    const guardIdx = sql.indexOf('check_financial_liability_terms_account_class')
+    const guardBlock = sql.slice(guardIdx, guardIdx + 700)
+    expect(guardBlock).toContain('NEW.account_id')
+    expect(guardBlock).toContain('NEW.organization_id')
+  })
+})

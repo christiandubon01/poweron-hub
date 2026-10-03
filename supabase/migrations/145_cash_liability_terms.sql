@@ -140,6 +140,33 @@ COMMENT ON COLUMN public.financial_liability_terms.minimum_payment_minor IS
   'Required minimum payment in minor currency units. Informational only; '
   'actual payments are recorded as financial_transactions.';
 
+-- Guard: terms may only reference a liability-class account.
+-- Rejects INSERT or UPDATE when the referenced financial_accounts row has
+-- account_class <> 'liability' (covers checking, savings, cash, other_asset, etc.).
+CREATE OR REPLACE FUNCTION public.check_financial_liability_terms_account_class()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_class TEXT;
+BEGIN
+  SELECT account_class INTO v_class
+  FROM public.financial_accounts
+  WHERE id = NEW.account_id
+    AND organization_id = NEW.organization_id;
+
+  IF v_class IS DISTINCT FROM 'liability' THEN
+    RAISE EXCEPTION
+      'financial_liability_terms: account_class must be ''liability''; got % for account %',
+      COALESCE(v_class, '(not found)'), NEW.account_id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_financial_liability_terms_liability_class
+  BEFORE INSERT OR UPDATE ON public.financial_liability_terms
+  FOR EACH ROW EXECUTE FUNCTION public.check_financial_liability_terms_account_class();
+
 -- Reuse the existing ledger updated_at trigger function
 CREATE TRIGGER trg_financial_liability_terms_updated_at
   BEFORE UPDATE ON public.financial_liability_terms

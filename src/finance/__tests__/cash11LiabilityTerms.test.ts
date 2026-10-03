@@ -381,3 +381,43 @@ describe('CORE-CLOSE-2B promotional financing truth correction', () => {
     expect(debtPlanSrc).not.toContain('payoffAmount')
   })
 })
+
+// ── Liability-class integrity guard regressions ───────────────────────────────
+
+describe('CORE-CLOSE-2B liability-class integrity guard', () => {
+
+  it('44: upsertLiabilityTerms queries financial_accounts before upserting terms', () => {
+    // Within the upsert function block, the accounts lookup must precede the terms upsert
+    const upsertBlock = serviceSrc.slice(serviceSrc.indexOf('upsertLiabilityTerms'))
+    const accountsIdx = upsertBlock.indexOf("'financial_accounts'")
+    const termsIdx = upsertBlock.indexOf("'financial_liability_terms'")
+    expect(accountsIdx).toBeGreaterThan(-1)
+    expect(termsIdx).toBeGreaterThan(-1)
+    expect(accountsIdx).toBeLessThan(termsIdx)
+  })
+
+  it('45: upsertLiabilityTerms filters account lookup by ctx.organizationId — not caller-supplied', () => {
+    const upsertBlock = serviceSrc.slice(serviceSrc.indexOf('upsertLiabilityTerms'))
+    expect(upsertBlock).toContain('.eq(\'organization_id\', ctx.organizationId)')
+    // No raw organizationId variable (only ctx.organizationId is acceptable)
+    expect(upsertBlock).not.toMatch(/\.eq\('organization_id',\s*organizationId\)/)
+  })
+
+  it('46: upsertLiabilityTerms throws when account_class is not liability', () => {
+    expect(serviceSrc).toContain("account_class !== 'liability'")
+    expect(serviceSrc).toContain("must be 'liability'")
+  })
+
+  it('47: upsertLiabilityTerms throws when account is not found in org', () => {
+    expect(serviceSrc).toContain('Account not found in organization')
+  })
+
+  it('48: service guard uses single() lookup — ensures at-most-one account row checked', () => {
+    const upsertBlock = serviceSrc.slice(serviceSrc.indexOf('upsertLiabilityTerms'))
+    const accountsBlock = upsertBlock.slice(
+      upsertBlock.indexOf("'financial_accounts'"),
+      upsertBlock.indexOf("'financial_liability_terms'"),
+    )
+    expect(accountsBlock).toContain('.single()')
+  })
+})
