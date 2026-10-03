@@ -45,9 +45,9 @@ vi.mock('@/hooks/useCashOsSnapshot', () => ({
 }))
 
 vi.mock('@/components/v15r/cash-os/CashOsDebtPlan', () => ({
-  default: (props: { sources: unknown; snapshot: unknown }) => (
+  default: (props: { sources: unknown; snapshot: unknown; showTrulyFreeCash: boolean }) => (
     <div data-testid="canonical-debt-plan">
-      Canonical Debt Plan · sources={(props.sources ? 'yes' : 'no')} snapshot={(props.snapshot ? 'yes' : 'no')}
+      Canonical Debt Plan · sources={(props.sources ? 'yes' : 'no')} snapshot={(props.snapshot ? 'yes' : 'no')} showTrulyFree={String(props.showTrulyFreeCash)}
     </div>
   ),
 }))
@@ -405,5 +405,116 @@ describe('CASH-8 Debt Killer workspace shell', () => {
     // Default tab is Outlook — must see the Ledger empty card
     expect(host.textContent).toContain('Ledger empty')
     expect(host.querySelector('[data-testid="canonical-debt-plan"]')).toBeFalsy()
+  })
+
+  // ─── As-of date + Truly Free Cash gate ─────────────────────────────────────
+
+  it('CORE-CLOSE-2A: LEDGER_EMPTY Debt Plan passes showTrulyFreeCash=false (no snapshot)', async () => {
+    control.cashStatus = 'empty'
+    control.cashScope = stubScope
+    control.cashSources = stubSources
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="canonical-debt-plan"]')
+    expect(el!.textContent).toContain('showTrulyFree=false')
+  })
+
+  it('CORE-CLOSE-2A: setup_required Debt Plan passes showTrulyFreeCash=false', async () => {
+    control.cashStatus = 'setup_required'
+    control.cashScope = stubScope
+    control.cashSources = stubSources
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="canonical-debt-plan"]')
+    expect(el!.textContent).toContain('showTrulyFree=false')
+  })
+
+  it('CORE-CLOSE-2A: ready state Debt Plan passes showTrulyFreeCash=true', async () => {
+    const readySnapshot = {
+      organizationId: 'org-1', asOfDate: '2026-09-30', asOfTimestamp: '2026-09-30T20:00:00Z',
+      setup: { version: 1, organizationId: 'org-1', payrollPaidThroughDate: '2026-09-28',
+        protectionHorizonDays: 7, operatingFloorMinor: 0, taxReserve: { kind: 'disabled' },
+        includeOptionalObligations: false, includeOpenShiftEstimates: false,
+        timezoneConfirmed: true, confirmedAt: '2026-09-29T20:00:00Z' },
+      allocation: { trulyFreeCashMinor: 100000 } as any,
+      payroll: { liabilities: [] }, payrollDiagnostics: [], payrollAllocations: [],
+      payrollExposureMinor: 0, accountBalancesMinor: { bank: 250000 },
+      collectionClock: { activeFunding: [], collectionFollowUp: [], unattributedPayrollMinor: 0, diagnostics: [] },
+      projection: { organizationId: 'org-1', asOfDate: '2026-09-30', horizonDays: 30,
+        confidenceMode: 'conservative',
+        anchor: { date: '2026-09-30', openingCashMinor: 250000, inflowMinor: 0, outflowMinor: 0,
+          closingCashMinor: 250000, totalProtectedRequirementMinor: 0, protectedCashMinor: 0,
+          trulyFreeCashMinor: 100000, protectionDeficitMinor: 0, operatingFloorMinor: 0,
+          events: [], markers: [], uncertainty: { highestIncludedConfidence: null,
+            includedExpectedEventCount: 0, includedPossibleEventCount: 0,
+            unresolvedMarkerCount: 0, unresolvedSourceKeys: [] } },
+        days: [],
+        summary: { lowestTotalCashMinor: 250000, lowestTotalCashDate: '2026-09-30',
+          lowestTrulyFreeCashMinor: 100000, lowestTrulyFreeCashDate: '2026-09-30',
+          firstProtectionDeficitDate: null, fourteenDayLowestTotalCashMinor: 250000,
+          fourteenDayLowestTotalCashDate: '2026-09-30', daysCovered: { days: 30, bounded: true } },
+        datedEvents: [], datedMarkers: [], undatedMarkers: [], diagnostics: [] },
+      accounts: [{ id: 'bank', display_name: 'Checking', status: 'active', include_in_cash: true,
+        account_type: 'checking', account_class: 'asset' } as any],
+      transactions: [{ id: 't1', transaction_date: '2026-09-28', description: 'Opening',
+        amount_minor: 250000, status: 'posted', account_id: 'bank' } as any],
+      obligations: [], occurrences: [], commitments: [], timeEntries: [],
+      sessions: [], bridges: [], employees: [], backup: {} as any, readinessDiagnostics: [],
+    }
+    control.cashStatus = 'ready'
+    control.cashScope = stubScope
+    control.cashSetup = readySnapshot.setup
+    control.cashSnapshot = readySnapshot
+    control.cashEditing = false
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="canonical-debt-plan"]')
+    expect(el!.textContent).toContain('showTrulyFree=true')
+  })
+
+  it('CORE-CLOSE-2A: partial state Debt Plan passes showTrulyFreeCash=false', async () => {
+    const partialSnapshot = {
+      organizationId: 'org-1', asOfDate: '2026-09-30', asOfTimestamp: '2026-09-30T20:00:00Z',
+      setup: { version: 1, organizationId: 'org-1', payrollPaidThroughDate: '2026-09-28',
+        protectionHorizonDays: 7, operatingFloorMinor: 0, taxReserve: { kind: 'disabled' },
+        includeOptionalObligations: false, includeOpenShiftEstimates: false,
+        timezoneConfirmed: true, confirmedAt: '2026-09-29T20:00:00Z' },
+      allocation: { trulyFreeCashMinor: 75000 } as any,
+      payroll: { liabilities: [] }, payrollDiagnostics: [{ kind: 'OVERLAPPING_PERIODS', note: 'overlap', sourceId: 's1' }],
+      payrollAllocations: [], payrollExposureMinor: 0, accountBalancesMinor: { bank: 250000 },
+      collectionClock: { activeFunding: [], collectionFollowUp: [], unattributedPayrollMinor: 0, diagnostics: [] },
+      projection: { organizationId: 'org-1', asOfDate: '2026-09-30', horizonDays: 30,
+        confidenceMode: 'conservative',
+        anchor: { date: '2026-09-30', openingCashMinor: 250000, inflowMinor: 0, outflowMinor: 0,
+          closingCashMinor: 250000, totalProtectedRequirementMinor: 0, protectedCashMinor: 0,
+          trulyFreeCashMinor: 75000, protectionDeficitMinor: 0, operatingFloorMinor: 0,
+          events: [], markers: [], uncertainty: { highestIncludedConfidence: null,
+            includedExpectedEventCount: 0, includedPossibleEventCount: 0,
+            unresolvedMarkerCount: 0, unresolvedSourceKeys: [] } },
+        days: [],
+        summary: { lowestTotalCashMinor: 250000, lowestTotalCashDate: '2026-09-30',
+          lowestTrulyFreeCashMinor: 75000, lowestTrulyFreeCashDate: '2026-09-30',
+          firstProtectionDeficitDate: null, fourteenDayLowestTotalCashMinor: 250000,
+          fourteenDayLowestTotalCashDate: '2026-09-30', daysCovered: { days: 30, bounded: true } },
+        datedEvents: [], datedMarkers: [], undatedMarkers: [], diagnostics: [] },
+      accounts: [{ id: 'bank', display_name: 'Checking', status: 'active', include_in_cash: true,
+        account_type: 'checking', account_class: 'asset' } as any],
+      transactions: [{ id: 't1', transaction_date: '2026-09-28', description: 'Opening',
+        amount_minor: 250000, status: 'posted', account_id: 'bank' } as any],
+      obligations: [], occurrences: [], commitments: [], timeEntries: [],
+      sessions: [], bridges: [], employees: [], backup: {} as any, readinessDiagnostics: ['OVERLAPPING_PERIODS:s1'],
+    }
+    control.cashStatus = 'partial'
+    control.cashScope = stubScope
+    control.cashSetup = partialSnapshot.setup
+    control.cashSnapshot = partialSnapshot
+    control.cashEditing = false
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="canonical-debt-plan"]')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toContain('showTrulyFree=false')
+    // Snapshot is passed so canonical balances are available
+    expect(el!.textContent).toContain('snapshot=yes')
   })
 })

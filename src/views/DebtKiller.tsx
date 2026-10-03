@@ -321,7 +321,7 @@ export default function DebtKiller() {
           </button>
         </CashCard>
       ) : cash.status === 'empty' && tab === 'Debt Plan' && cash.sources ? (
-        <CashOsDebtPlan sources={cash.sources} snapshot={null} />
+        <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />
       ) : cash.status === 'empty' ? (
         <CashCard title="Ledger empty">
           <p className="text-sm text-[var(--text-secondary)]">
@@ -356,7 +356,7 @@ export default function DebtKiller() {
           )}
           {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} onRefresh={cash.refresh} />}
-          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.sources} snapshot={null} />}
+          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />}
         </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
         <CashCard title="Partial / Needs attention">
@@ -412,7 +412,7 @@ export default function DebtKiller() {
           {tab === 'Payroll' && <CashPayrollView snapshot={cash.snapshot} partial={cash.status === 'partial'} />}
           {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} onRefresh={cash.refresh} />}
-          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.snapshot} snapshot={cash.snapshot} />}
+          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.snapshot} snapshot={cash.snapshot} showTrulyFreeCash={cash.status === 'ready'} />}
         </>
       ) : (
         <CashCard>

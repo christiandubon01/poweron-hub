@@ -6,6 +6,7 @@ import { CashCard, CashEmpty, money } from './cashOsUi'
 interface CashOsDebtPlanProps {
   sources: CashOsSourceBundle | null
   snapshot: CashOsSnapshot | null
+  showTrulyFreeCash: boolean
 }
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
@@ -20,10 +21,10 @@ function balanceForAccount(
   snapshot: CashOsSnapshot | null,
 ): number {
   if (snapshot) return snapshot.accountBalancesMinor[accountId] ?? 0
-  return accountBalanceMinor(accountId, sources.transactions)
+  return accountBalanceMinor(accountId, sources.transactions, sources.asOfDate)
 }
 
-export default function CashOsDebtPlan({ sources, snapshot }: CashOsDebtPlanProps) {
+export default function CashOsDebtPlan({ sources, snapshot, showTrulyFreeCash }: CashOsDebtPlanProps) {
   if (!sources) {
     return (
       <CashCard>
@@ -36,7 +37,7 @@ export default function CashOsDebtPlan({ sources, snapshot }: CashOsDebtPlanProp
     a => a.account_class === 'liability' && a.status === 'active',
   )
 
-  const trulyFree = snapshot?.allocation.trulyFreeCashMinor ?? null
+  const trulyFree = showTrulyFreeCash ? (snapshot?.allocation.trulyFreeCashMinor ?? null) : null
 
   return (
     <div className="space-y-5">

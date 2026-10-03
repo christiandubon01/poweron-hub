@@ -191,4 +191,56 @@ describe('CORE-CLOSE-2A Debt Plan canonical truth', () => {
     expect(debtKillerSrc).not.toContain('mockExpenses')
     expect(debtKillerSrc).not.toContain('mockDebts')
   })
+
+  // ── Final Truth Guard: as-of boundary ─────────────────────────────────────
+
+  it('19: balanceForAccount passes sources.asOfDate to accountBalanceMinor (no-snapshot path)', () => {
+    // The no-snapshot fallback must honour the canonical as-of boundary
+    expect(debtPlanSrc).toContain('sources.asOfDate')
+    // It must not call accountBalanceMinor with only two arguments (missing asOfDate)
+    // The only call must include the third argument
+    const callIdx = debtPlanSrc.indexOf('accountBalanceMinor(accountId')
+    expect(callIdx).toBeGreaterThan(-1)
+    const callSnippet = debtPlanSrc.slice(callIdx, callIdx + 80)
+    expect(callSnippet).toContain('sources.asOfDate')
+  })
+
+  it('20: future-dated liability transaction after asOfDate is excluded from canonical balance', () => {
+    const asOf = '2026-09-30'
+    const txs: FinancialTransactionRow[] = [
+      baseTx({ id: 'posted', account_id: 'cc-1', amount_minor: 200000, status: 'posted', transaction_date: '2026-09-15' }),
+      // This transaction is after the as-of date — must not be included
+      baseTx({ id: 'future', account_id: 'cc-1', amount_minor: 99999, status: 'posted', transaction_date: '2026-10-01' }),
+    ]
+    const balance = accountBalanceMinor('cc-1', txs, asOf)
+    expect(balance).toBe(200000)
+  })
+
+  // ── Final Truth Guard: showTrulyFreeCash gate ──────────────────────────────
+
+  it('21: CashOsDebtPlan accepts showTrulyFreeCash prop and gates trulyFree on it (source inspection)', () => {
+    expect(debtPlanSrc).toContain('showTrulyFreeCash')
+    // trulyFree must be conditional on showTrulyFreeCash, not always reading snapshot
+    expect(debtPlanSrc).toContain('showTrulyFreeCash ?')
+  })
+
+  it('22: DebtKiller.tsx passes showTrulyFreeCash={cash.status === \'ready\'} in snapshot branch', () => {
+    const snapshotIdx = debtKillerSrc.indexOf('cash.snapshot ?')
+    const snapshotBlock = debtKillerSrc.slice(snapshotIdx, snapshotIdx + 2000)
+    expect(snapshotBlock).toContain("showTrulyFreeCash={cash.status === 'ready'}")
+  })
+
+  it('23: DebtKiller.tsx passes showTrulyFreeCash={false} in LEDGER_EMPTY Debt Plan branch', () => {
+    const emptyIdx = debtKillerSrc.indexOf("cash.status === 'empty' && tab === 'Debt Plan'")
+    expect(emptyIdx).toBeGreaterThan(-1)
+    const emptyBlock = debtKillerSrc.slice(emptyIdx, emptyIdx + 300)
+    expect(emptyBlock).toContain('showTrulyFreeCash={false}')
+  })
+
+  it('24: DebtKiller.tsx passes showTrulyFreeCash={false} in preSetup Debt Plan branch', () => {
+    const preSetupIdx = debtKillerSrc.indexOf('preSetup ?')
+    const preSetupEnd = debtKillerSrc.indexOf("cash.status === 'partial'", preSetupIdx)
+    const preSetupBlock = debtKillerSrc.slice(preSetupIdx, preSetupEnd)
+    expect(preSetupBlock).toContain('showTrulyFreeCash={false}')
+  })
 })
