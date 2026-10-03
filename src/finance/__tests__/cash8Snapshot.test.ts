@@ -31,7 +31,7 @@ const transaction: FinancialTransactionRow = { id: 'opening', organization_id: O
 function sources(overrides: Partial<CashOsSourceBundle> = {}): CashOsSourceBundle {
   return { organizationId: ORG, asOfDate: DAY, asOfTimestamp: '2026-09-29T20:00:00Z',
     accounts: [account], transactions: [transaction], obligations: [], occurrences: [], commitments: [],
-    timeEntries: [], sessions: [], bridges: [], employees: [],
+    timeEntries: [], sessions: [], bridges: [], employees: [], liabilityTerms: [],
     backup: { projects: [], logs: [], settings: {}, employees: [] } as unknown as BackupData,
     ...overrides }
 }

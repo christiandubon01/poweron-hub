@@ -6,6 +6,7 @@ import { readCashPages } from './cashReadPagination'
 import type { FinancialAccountRow, FinancialTransactionRow } from '@/finance/ledgerTypes'
 import type { CashCommitment, ObligationOccurrence, RecurringObligation } from '@/finance/obligationsTypes'
 import type { ClosedTimeEntryInput, EmployeeRateInput, OpenSessionInput, ProfileIdentityBridge } from '@/finance/adapters/employeeFinanceAdapter'
+import type { LiabilityTermsRow } from '@/finance/liabilityTermsTypes'
 
 export const CASH_OS_TIMEZONE = 'America/Los_Angeles'
 
@@ -30,6 +31,7 @@ export interface CashOsSourceBundle {
   employees: EmployeeRateInput[]
   payrollMultiplier?: number
   backup: BackupData
+  liabilityTerms: LiabilityTermsRow[]
 }
 
 function from(table: string): any { return (supabase.from as any)(table) }
@@ -70,7 +72,7 @@ export async function readCashOsSources(
   if (!backup) throw new Error('BACKUP_NOT_HYDRATED')
   const asOfDate = cashOsDateAt(now, CASH_OS_TIMEZONE)
   const asOfTimestamp = now.toISOString()
-  const [ledger, obligations, entries, sessions, profiles] = await Promise.all([
+  const [ledger, obligations, entries, sessions, profiles, liabilityTerms] = await Promise.all([
     readFinancialLedgerState().catch(error => { throw new Error(`LEDGER_READ_FAILED: ${String(error)}`) }),
     readCashObligationState().catch(error => { throw new Error(`OBLIGATION_READ_FAILED: ${String(error)}`) }),
     payrollPaidThroughDate !== null
@@ -88,12 +90,16 @@ export async function readCashOsSources(
           .eq('org_id', organizationId), from)
           .catch(error => { throw new Error(`PAYROLL_READ_FAILED: ${String(error)}`) })
       : Promise.resolve([]),
+    readCashPages<LiabilityTermsRow>('financial_liability_terms', q =>
+      q.select('*').eq('organization_id', organizationId), from)
+      .catch(error => { throw new Error(`LIABILITY_TERMS_READ_FAILED: ${String(error)}`) }),
   ])
   if (ledger.context.organizationId !== organizationId || ledger.context.userId !== userId
     || obligations.obligations.some(row => row.organizationId !== organizationId)
     || obligations.occurrences.some(row => row.organizationId !== organizationId)
     || obligations.commitments.some(row => row.organizationId !== organizationId)
     || [...entries, ...sessions, ...profiles].some(row => row.org_id !== organizationId)
+    || liabilityTerms.some(row => row.organization_id !== organizationId)
     || getActiveTenantUserId() !== userId || !isTenantDataReady()) throw new Error('CASH_OS_SCOPE_CHANGED')
   const employeeRows = Array.isArray(backup.employees) ? backup.employees : []
   const multiplier = backup.settings?.payrollMult
@@ -115,5 +121,6 @@ export async function readCashOsSources(
       isOwner: (row as any).isOwner })),
     ...(typeof multiplier === 'number' && Number.isFinite(multiplier) && multiplier >= 1
       ? { payrollMultiplier: multiplier } : {}),
+    liabilityTerms,
   }
 }

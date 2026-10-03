@@ -47,7 +47,7 @@ function snapshot(): CashOsSnapshot {
     occurrences: [], commitments: [{ id: 'c1', title: 'Materials', amount: { minor: 300 },
       expectedDate: '2026-09-30', requirement: 'required', confidence: 'confirmed', status: 'scheduled' } as any],
     timeEntries: [], sessions: [], bridges: [], employees: [],
-    backup: {} as any, readinessDiagnostics: [],
+    backup: {} as any, readinessDiagnostics: [], liabilityTerms: [],
   }
 }
 
