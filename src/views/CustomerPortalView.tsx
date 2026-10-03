@@ -32,7 +32,7 @@ function fireAdsConversion() {
   } catch { /* tracking failure must never break the form */ }
 }
 
-const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
+const LOGO_URL = '/assets/poweron-logo-c3.png'
 
 type Tab = 'homeowner' | 'gc'
 

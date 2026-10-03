@@ -15,7 +15,7 @@ import { useParams } from 'react-router-dom'
 import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 import { fetchAttachmentSignedUrls, isImagePath, getAttachmentDisplayName, type AttachmentEntry } from '@/services/portal/portalStorageService'
 
-const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
+const LOGO_URL = '/assets/poweron-logo-c3.png'
 
 const CV_CITIES = [
   'desert hot springs', 'palm springs', 'cathedral city', 'rancho mirage',
