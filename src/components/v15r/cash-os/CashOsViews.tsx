@@ -55,6 +55,7 @@ function kindLabel(kind: string | null | undefined): string {
     opening_balance: 'Opening Balance', income: 'Income', expense: 'Expense',
     transfer: 'Transfer', card_debt_payment: 'Card / Loan Payment',
     refund_reversal: 'Refund / Reversal', adjustment: 'Adjustment',
+    balance_reconciliation: 'Balance Reconciliation',
   }
   return labels[kind] ?? kind.replace(/_/g, ' ')
 }

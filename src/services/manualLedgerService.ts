@@ -149,6 +149,41 @@ export async function recordManualTransaction(
   return data
 }
 
+export function computeReconciliationDeltaMinor(
+  targetOwnerMinor: number,
+  currentCanonicalMinor: number,
+): number {
+  // Owner always enters a positive natural balance (dollars owed or dollars held).
+  // Both asset and liability accounts use the same positive-means-balance-present
+  // canonical sign convention, so the delta is a straight subtraction.
+  return targetOwnerMinor - currentCanonicalMinor
+}
+
+export async function recordBalanceReconciliation(input: {
+  accountId: string
+  targetOwnerMinor: number
+  currentCanonicalMinor: number
+  asOfDate: string
+  idempotencyKey: string
+}): Promise<any | null> {
+  const deltaMinor = computeReconciliationDeltaMinor(
+    input.targetOwnerMinor,
+    input.currentCanonicalMinor,
+  )
+  if (deltaMinor === 0) return null
+  return recordManualTransaction({
+    accountId: input.accountId,
+    amountMinor: deltaMinor,
+    transactionDate: input.asOfDate,
+    kind: 'balance_reconciliation',
+    economicEffect: 'none',
+    economicAmountMinor: 0,
+    description: 'Balance reconciliation',
+    sourceType: 'manual',
+    idempotencyKey: input.idempotencyKey,
+  })
+}
+
 export async function recordOpeningBalance(input: {
   accountId: string
   amountMinor: number

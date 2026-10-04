@@ -39,6 +39,7 @@ export type FinancialTransactionKind =
   | 'card_debt_payment'
   | 'refund_reversal'
   | 'adjustment'
+  | 'balance_reconciliation'
 
 export type EconomicEffect = 'none' | 'inflow' | 'outflow'
 

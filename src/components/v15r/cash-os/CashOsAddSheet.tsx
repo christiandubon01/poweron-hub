@@ -7,10 +7,12 @@ import {
   recordManualTransaction,
   recordFinancialTransfer,
   recordFinancialCardPayment,
+  recordBalanceReconciliation,
 } from '@/services/manualLedgerService'
-import { CashCard } from './cashOsUi'
+import { accountBalanceMinor } from '@/finance/ledgerCalculations'
+import { CashCard, money } from './cashOsUi'
 
-type AddMode = 'account' | 'income' | 'expense' | 'transfer' | 'card-payment'
+type AddMode = 'account' | 'income' | 'expense' | 'transfer' | 'card-payment' | 'reconcile'
 
 const MODE_LABELS: Record<AddMode, string> = {
   account: 'Account',
@@ -18,6 +20,7 @@ const MODE_LABELS: Record<AddMode, string> = {
   expense: 'Expense',
   transfer: 'Transfer',
   'card-payment': 'Card / Loan Payment',
+  reconcile: 'Opening Balance / Reconcile',
 }
 
 const ACCOUNT_TYPE_OPTIONS: { value: FinancialAccountType; label: string; cls: FinancialAccountClass }[] = [
@@ -483,6 +486,126 @@ function CardPaymentForm({ sources, onSuccess }: { sources: CashOsSourceBundle |
   )
 }
 
+// ─── Opening Balance / Reconcile form ─────────────────────────────────────────
+
+function ReconcileForm({ sources, onSuccess }: { sources: CashOsSourceBundle | null; onSuccess: () => void }) {
+  const allAccounts = (sources?.accounts ?? []).filter(a => a.status === 'active')
+  const [accountId, setAccountId] = useState(() => allAccounts[0]?.id ?? '')
+  const [targetAmount, setTargetAmount] = useState('')
+  const [date, setDate] = useState(todayInLA())
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (!allAccounts.length) {
+    return <CashCard><p className="text-sm text-[var(--text-secondary)]">No accounts found. Create an account first.</p></CashCard>
+  }
+
+  const selectedAccount = allAccounts.find(a => a.id === accountId)
+  const isLiability = selectedAccount?.account_class === 'liability'
+  const currentCanonicalMinor = accountId && sources && date
+    ? accountBalanceMinor(accountId, sources.transactions, date)
+    : 0
+
+  let targetMinor: number | null = null
+  let deltaMinor: number | null = null
+  const rawVal = parseFloat(targetAmount.replace(/[^0-9.]/g, ''))
+  if (Number.isFinite(rawVal) && rawVal >= 0) {
+    targetMinor = Math.round(rawVal * 100)
+    deltaMinor = targetMinor - currentCanonicalMinor
+  }
+
+  const isNoop = deltaMinor === 0
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (targetMinor === null) return
+    if (isNoop) { onSuccess(); return }
+    setPending(true)
+    setError(null)
+    try {
+      await recordBalanceReconciliation({
+        accountId,
+        targetOwnerMinor: targetMinor,
+        currentCanonicalMinor,
+        asOfDate: date,
+        idempotencyKey: crypto.randomUUID(),
+      })
+      setTargetAmount('')
+      onSuccess()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <CashCard>
+        <p className="mb-4 text-xs text-[var(--text-muted)]">
+          Updates the account's ledger balance without recording income or expense.
+        </p>
+        <div className="space-y-4">
+          <label className="block">
+            <span className={labelCls}>Account</span>
+            <select value={accountId} onChange={e => setAccountId(e.target.value)} className={inputCls}>
+              {allAccounts.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.display_name} ({a.account_class === 'liability' ? 'Liability' : 'Asset'})
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-sm">
+            <span className="text-xs text-[var(--text-muted)]">Current canonical balance</span>
+            <p className="font-mono font-semibold">
+              {money(currentCanonicalMinor)}
+              {isLiability ? ' owed' : ''}
+            </p>
+          </div>
+          <label className="block">
+            <span className={labelCls}>
+              {isLiability ? 'Real-world balance owed' : 'Real-world balance'}
+            </span>
+            <input type="text" inputMode="decimal" placeholder="0.00" required
+              value={targetAmount} onChange={e => setTargetAmount(e.target.value)} className={inputCls} />
+            <span className="mt-1 block text-xs text-[var(--text-muted)]">
+              Enter the actual balance as a positive number.
+              {isLiability ? ' For a credit card or loan, enter the amount you owe.' : ' For a checking account, enter the available balance.'}
+            </span>
+          </label>
+          {deltaMinor !== null && (
+            <div className={`rounded-lg border px-3 py-2 text-sm ${
+              isNoop
+                ? 'border-green-500/40 bg-green-500/10'
+                : 'border-[var(--border-primary)] bg-[var(--bg-secondary)]'
+            }`}>
+              <span className="text-xs text-[var(--text-muted)]">Adjustment to record</span>
+              <p className="font-mono font-semibold">
+                {isNoop
+                  ? 'None — canonical balance already matches'
+                  : `${deltaMinor > 0 ? '+' : ''}${money(deltaMinor)}`}
+              </p>
+            </div>
+          )}
+          <label className="block">
+            <span className={labelCls}>As of date</span>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+          </label>
+        </div>
+        {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
+        <button
+          type="submit"
+          disabled={pending || targetMinor === null}
+          className={submitCls}
+        >
+          {pending ? 'Saving…' : isNoop ? 'Already reconciled' : 'Reconcile balance'}
+        </button>
+      </CashCard>
+    </form>
+  )
+}
+
 // ─── Sheet shell ───────────────────────────────────────────────────────────────
 
 export interface CashOsAddSheetProps {
@@ -529,6 +652,7 @@ export default function CashOsAddSheet({ sources, onClose, onSuccess }: CashOsAd
           {mode === 'expense'       && <TransactionForm mode="expense" sources={sources} onSuccess={onSuccess} />}
           {mode === 'transfer'      && <TransferForm sources={sources} onSuccess={onSuccess} />}
           {mode === 'card-payment'  && <CardPaymentForm sources={sources} onSuccess={onSuccess} />}
+          {mode === 'reconcile'     && <ReconcileForm sources={sources} onSuccess={onSuccess} />}
         </div>
       </div>
     </div>

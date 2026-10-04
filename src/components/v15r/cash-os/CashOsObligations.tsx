@@ -109,6 +109,7 @@ function candidateTxs(
       tx.status === 'posted' &&
       tx.transaction_kind !== 'opening_balance' &&
       tx.transaction_kind !== 'transfer' &&
+      tx.transaction_kind !== 'balance_reconciliation' &&
       tx.amount_minor < 0 &&
       Math.abs(tx.amount_minor) === plannedMinor,
     )

@@ -180,6 +180,7 @@ export function computeCashProjection(input: CashProjectionInput): CashProjectio
       direction: tx.amount_minor > 0 ? 'inflow' : 'outflow' })
     if (tx.transaction_date <= policy.asOfDate) continue
     if (tx.transaction_date > internalEnd) continue
+    if (tx.transaction_kind === 'balance_reconciliation') continue
     addEvent({ id: key, organizationId: org, date: tx.transaction_date,
       direction: tx.amount_minor > 0 ? 'inflow' : 'outflow', amountMinor: Math.abs(tx.amount_minor),
       confidence: 'confirmed', requirement: 'required', sourceKey: key, sourceType: 'financial_transaction',
