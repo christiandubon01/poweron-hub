@@ -18,7 +18,7 @@ function buildDebtInputs(sources: CashOsSourceBundle): DebtInputRaw[] {
     a => a.status === 'active' && a.account_class === 'liability',
   )
   return liabilityAccounts.map(account => {
-    const balance = accountBalanceMinor(account.id, sources.transactions)
+    const balance = accountBalanceMinor(account.id, sources.transactions, sources.asOfDate)
     const terms = (sources.liabilityTerms ?? []).find(t => t.account_id === account.id)
     return {
       accountId: account.id,
