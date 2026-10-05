@@ -10,6 +10,8 @@ interface CashOsDebtPlanProps {
   sources: CashOsSourceBundle | null
   snapshot: CashOsSnapshot | null
   showTrulyFreeCash: boolean
+  /** Shared Cash OS refresh; awaited after terms are saved so the plan reads refreshed sources. */
+  onRefresh?: () => void | Promise<void>
 }
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
@@ -118,7 +120,7 @@ function PromoBlock({ terms }: { terms: LiabilityTermsRow }) {
   )
 }
 
-export default function CashOsDebtPlan({ sources, snapshot, showTrulyFreeCash }: CashOsDebtPlanProps) {
+export default function CashOsDebtPlan({ sources, snapshot, showTrulyFreeCash, onRefresh }: CashOsDebtPlanProps) {
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null)
   const [savedTermsById, setSavedTermsById] = useState<Record<string, LiabilityTermsRow>>({})
 
@@ -242,8 +244,17 @@ export default function CashOsDebtPlan({ sources, snapshot, showTrulyFreeCash }:
                       accountId={account.id}
                       accountDisplayName={account.display_name}
                       initialTerms={terms}
-                      onSave={saved => {
+                      onSave={async saved => {
+                        // `saved` is the row the database accepted. With the shared refresh wired,
+                        // the refreshed sources become the single truth and the overlay is dropped.
                         setSavedTermsById(prev => ({ ...prev, [account.id]: saved }))
+                        if (onRefresh) {
+                          await onRefresh()
+                          setSavedTermsById(prev => {
+                            const { [account.id]: _saved, ...rest } = prev
+                            return rest
+                          })
+                        }
                         setEditingAccountId(null)
                       }}
                       onCancel={() => setEditingAccountId(null)}

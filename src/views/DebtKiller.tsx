@@ -72,7 +72,7 @@ function PreSetupOutlook({ sources }: { sources: CashOsSourceBundle | null }) {
   )
 }
 
-function PreSetupTransactions({ sources, onAdd, onRefresh }: { sources: CashOsSourceBundle | null; onAdd?: () => void; onRefresh?: () => void }) {
+function PreSetupTransactions({ sources, onAdd, onRefresh }: { sources: CashOsSourceBundle | null; onAdd?: () => void; onRefresh?: () => void | Promise<void> }) {
   if (!sources) {
     return <CashCard><p className="text-sm text-[var(--text-secondary)]">Transactions loading…</p></CashCard>
   }
@@ -92,7 +92,7 @@ function PreSetupTransactions({ sources, onAdd, onRefresh }: { sources: CashOsSo
               <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
                 <div className="flex items-start justify-between gap-1">
                   <strong className="leading-snug">{account.display_name}</strong>
-                  <CashOsAccountMenu account={account} onMutated={() => onRefresh?.()} />
+                  <CashOsAccountMenu account={account} onMutated={async () => { await onRefresh?.() }} />
                 </div>
                 <span className="block text-xs text-[var(--text-muted)]">
                   {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
@@ -158,8 +158,9 @@ export default function DebtKiller() {
 
   function openAddSheet() { setAddSheetOpen(true) }
   function closeAddSheet() { setAddSheetOpen(false) }
-  function handleAddSuccess() {
-    cash.refresh()
+  // The sheet closes only after the mutation's authoritative refresh has been committed.
+  async function handleAddSuccess() {
+    await cash.refresh()
     setAddSheetOpen(false)
     setTab('Transactions')
   }
@@ -181,6 +182,7 @@ export default function DebtKiller() {
           sources={cash.sources}
           onClose={closeAddSheet}
           onSuccess={handleAddSuccess}
+          onMutated={cash.refresh}
         />
       )}
 
@@ -256,7 +258,9 @@ export default function DebtKiller() {
               Refresh
             </button>
           )}
-          {cash.lastRefreshedAt && (
+          {cash.refreshing ? (
+            <span className="text-[var(--text-muted)]">Refreshing…</span>
+          ) : cash.lastRefreshedAt && (
             <span className="text-[var(--text-muted)]">
               Last refreshed {new Date(cash.lastRefreshedAt).toLocaleTimeString()}
             </span>
@@ -327,7 +331,7 @@ export default function DebtKiller() {
         </CashCard>
       ) : cash.status === 'empty' && tab === 'Debt Plan' && cash.sources ? (
         <div className="space-y-5">
-          <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />
+          <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} onRefresh={cash.refresh} />
           <CashOsPayoffPlanner sources={cash.sources} snapshot={null} />
         </div>
       ) : cash.status === 'empty' ? (
@@ -366,7 +370,7 @@ export default function DebtKiller() {
           {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} onRefresh={cash.refresh} />}
           {tab === 'Debt Plan' && (
             <div className="space-y-5">
-              <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />
+              <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} onRefresh={cash.refresh} />
               <CashOsPayoffPlanner sources={cash.sources} snapshot={null} />
             </div>
           )}
@@ -427,7 +431,7 @@ export default function DebtKiller() {
           {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} onRefresh={cash.refresh} />}
           {tab === 'Debt Plan' && (
             <div className="space-y-5">
-              <CashOsDebtPlan sources={cash.snapshot} snapshot={cash.snapshot} showTrulyFreeCash={cash.status === 'ready'} />
+              <CashOsDebtPlan sources={cash.snapshot} snapshot={cash.snapshot} showTrulyFreeCash={cash.status === 'ready'} onRefresh={cash.refresh} />
               <CashOsPayoffPlanner sources={cash.snapshot} snapshot={cash.snapshot} />
             </div>
           )}

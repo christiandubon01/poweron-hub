@@ -25,10 +25,12 @@ export interface CashOsState {
   sources: CashOsSourceBundle | null
   snapshot: CashOsSnapshot | null
   lastRefreshedAt: string | null
+  /** True while a mutation-triggered refresh is reading; the previous state stays mounted. */
+  refreshing: boolean
 }
 
 const INITIAL: CashOsState = { status: 'loading', reason: null, error: null,
-  scope: null, setup: null, sources: null, snapshot: null, lastRefreshedAt: null }
+  scope: null, setup: null, sources: null, snapshot: null, lastRefreshedAt: null, refreshing: false }
 
 function initialHorizon(): CashProjectionHorizon {
   return typeof window !== 'undefined' && window.innerWidth < 768 ? 14 : 30
@@ -48,16 +50,38 @@ export function useCashOsSnapshot(demoUnavailable: boolean) {
   const [editing, setEditing] = useState(false)
   const generation = useRef(0)
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const refresh = useCallback(() => setRefreshSerial(n => n + 1), [])
+  const waiters = useRef<Array<() => void>>([])
+  const softRefresh = useRef(false)
+  const bump = useCallback(() => setRefreshSerial(n => n + 1), [])
+  const settle = useCallback(() => {
+    const pending = waiters.current
+    waiters.current = []
+    for (const resolve of pending) resolve()
+  }, [])
+  /**
+   * Shared mutation-success refresh contract. Resolves once the refreshed Cash OS data (or its
+   * terminal error state) has been committed to state, so a mutation surface can `await` it before
+   * closing its UI. A refresh superseded by a newer read stays pending until that read lands. The
+   * previous workspace stays mounted while reading; it is replaced only by the authoritative result.
+   */
+  const refresh = useCallback((): Promise<void> => new Promise<void>(resolve => {
+    waiters.current.push(resolve)
+    softRefresh.current = true
+    setRefreshSerial(n => n + 1)
+  }), [])
 
   useEffect(() => {
     if (demoUnavailable) {
       generation.current++
       setState({ ...INITIAL, status: 'setup_required', reason: 'DEMO_UNAVAILABLE' })
+      settle()
       return
     }
     const token = ++generation.current
-    setState({ ...INITIAL, status: 'loading' })
+    if (softRefresh.current) setState(prev => ({ ...prev, refreshing: true }))
+    else setState({ ...INITIAL, status: 'loading' })
+    softRefresh.current = false
+    const commit = (next: CashOsState) => { setState(next); settle() }
     const run = async () => {
       let scope: CashOsScope | null = null
       let setup: CashOsSessionSetup | null = null
@@ -72,7 +96,7 @@ export function useCashOsSnapshot(demoUnavailable: boolean) {
         // TIMEZONE_CONFIRMATION_REQUIRED is an assumption gap — sources still load,
         // but snapshot is blocked below alongside the missing-setup check.
         if (timezoneReason === 'TIMEZONE_MISMATCH') {
-          setState({ ...INITIAL, status: 'setup_required', reason: 'TIMEZONE_MISMATCH', scope, setup })
+          commit({ ...INITIAL, status: 'setup_required', reason: 'TIMEZONE_MISMATCH', scope, setup })
           return
         }
         // Pass null when payrollPaidThroughDate is unknown — the read service skips
@@ -81,19 +105,19 @@ export function useCashOsSnapshot(demoUnavailable: boolean) {
         sources = await readCashOsSources(scope, payrollCutoff, now)
         if (token !== generation.current) return
         if (!setup || timezoneReason) {
-          setState({ ...INITIAL, status: 'setup_required',
+          commit({ ...INITIAL, status: 'setup_required',
             reason: timezoneReason ?? missingCashOsSessionReason(scope.context.organizationId),
             scope, sources })
           return
         }
         if (!sources.accounts.some(a => a.status === 'active' && a.account_class === 'asset' && a.include_in_cash)) {
-          setState({ ...INITIAL, status: 'setup_required', reason: 'ACCOUNT_SETUP_REQUIRED', scope, setup, sources })
+          commit({ ...INITIAL, status: 'setup_required', reason: 'ACCOUNT_SETUP_REQUIRED', scope, setup, sources })
           return
         }
         const included = new Set(sources.accounts.filter(a => a.status === 'active'
           && a.account_class === 'asset' && a.include_in_cash).map(a => a.id))
         if (!sources.transactions.some(tx => tx.status === 'posted' && included.has(tx.account_id))) {
-          setState({ ...INITIAL, status: 'empty', reason: 'LEDGER_EMPTY', scope, setup, sources })
+          commit({ ...INITIAL, status: 'empty', reason: 'LEDGER_EMPTY', scope, setup, sources })
           return
         }
         const snapshot = buildCashOsSnapshot({ ...sources, setup, horizonDays, confidenceMode })
@@ -101,19 +125,22 @@ export function useCashOsSnapshot(demoUnavailable: boolean) {
           ['missing_employee_bridge', 'missing_employee_record', 'missing_cash_wage',
             'invalid_time_quantity', 'invalid_work_date', 'invalid_open_session_time',
             'potential_manual_payroll_overlap', 'incomplete_time_entry'].includes(d.kind))
-        setState({ status: payrollPartial ? 'partial' : 'ready',
+        commit({ status: payrollPartial ? 'partial' : 'ready', refreshing: false,
           reason: payrollPartial ? 'PAYROLL_DATA_PARTIAL' : null, error: null,
           scope, setup, sources, snapshot, lastRefreshedAt: new Date().toISOString() })
       } catch (error) {
         if (token !== generation.current) return
         const message = error instanceof Error ? error.message : String(error)
-        setState({ ...INITIAL, status: 'error', reason: errorReason(message),
+        commit({ ...INITIAL, status: 'error', reason: errorReason(message),
           error: message, scope, setup, sources })
       }
     }
     void run()
     return () => { generation.current++ }
-  }, [demoUnavailable, refreshSerial, horizonDays, confidenceMode])
+  }, [demoUnavailable, refreshSerial, horizonDays, confidenceMode, settle])
+
+  // Never leave a mutation surface awaiting a refresh that can no longer land.
+  useEffect(() => settle, [settle])
 
   useEffect(() => {
     if (demoUnavailable) return
@@ -121,7 +148,7 @@ export function useCashOsSnapshot(demoUnavailable: boolean) {
       generation.current++
       setState({ ...INITIAL, status: 'loading' })
       if (debounce.current) clearTimeout(debounce.current)
-      debounce.current = setTimeout(refresh, 120)
+      debounce.current = setTimeout(bump, 120)
     }
     window.addEventListener('poweron-data-saved', schedule)
     window.addEventListener('poweron-remote-data-refreshed', schedule)
@@ -132,21 +159,21 @@ export function useCashOsSnapshot(demoUnavailable: boolean) {
       data.subscription.unsubscribe()
       if (debounce.current) clearTimeout(debounce.current)
     }
-  }, [demoUnavailable, refresh])
+  }, [demoUnavailable, bump])
 
   const confirmSetup = useCallback((setup: CashOsSessionSetup) => {
     if (setup.organizationId !== state.scope?.context.organizationId) throw new Error('Cash OS scope changed')
     saveCashOsSessionSetup(setup)
     setEditing(false)
-    refresh()
-  }, [refresh, state.scope?.context.organizationId])
+    bump()
+  }, [bump, state.scope?.context.organizationId])
 
   const resetSetup = useCallback(() => {
     if (!state.scope) return
     clearCashOsSessionSetup(state.scope.context.organizationId)
     setEditing(false)
-    refresh()
-  }, [refresh, state.scope])
+    bump()
+  }, [bump, state.scope])
 
   return { ...state, horizonDays, setHorizonDays, confidenceMode, setConfidenceMode,
     refresh, editing, setEditing, confirmSetup, resetSetup }

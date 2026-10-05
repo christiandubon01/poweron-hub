@@ -73,13 +73,13 @@ export function CashTransactionsView({
 }: {
   snapshot: CashOsSnapshot
   onAdd?: () => void
-  onRefresh?: () => void
+  onRefresh?: () => void | Promise<void>
 }) {
   const [showArchived, setShowArchived] = useState(false)
   const accounts = snapshot.accounts.filter(a => a.status === 'active')
   const archivedAccounts = snapshot.accounts.filter(a => a.status === 'archived')
   const transactions = [...snapshot.transactions].sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id)).slice(0, 40)
-  const handleMutated = () => { onRefresh?.() }
+  const handleMutated = async () => { await onRefresh?.() }
   return <div className="space-y-5">
     <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
       {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
@@ -131,7 +131,7 @@ export function CashTransactionsView({
   </div>
 }
 
-export function CashObligationsView({ snapshot, onRefresh }: { snapshot: CashOsSnapshot; onRefresh?: () => void }) {
+export function CashObligationsView({ snapshot, onRefresh }: { snapshot: CashOsSnapshot; onRefresh?: () => void | Promise<void> }) {
   return (
     <CashOsObligations
       obligations={snapshot.obligations}

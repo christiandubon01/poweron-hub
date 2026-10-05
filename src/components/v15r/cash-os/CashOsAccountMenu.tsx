@@ -6,6 +6,9 @@ import {
   restoreFinancialAccount,
 } from '@/services/manualLedgerService'
 
+/** Mutation-success callback; may return the authoritative refresh so the UI closes on fresh data. */
+type Done = () => void | Promise<void>
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const inputCls = 'w-full rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500'
@@ -21,7 +24,7 @@ function EditForm({
   onCancel,
 }: {
   account: FinancialAccountRow
-  onSave: () => void
+  onSave: Done
   onCancel: () => void
 }) {
   const [name, setName] = useState(account.display_name)
@@ -41,11 +44,13 @@ function EditForm({
         ownershipContext: ownership as 'business' | 'personal',
         includeInCash: account.account_class === 'asset' ? includeInCash : false,
       })
-      onSave()
     } catch (e: any) {
       setErr(e?.message ?? 'Save failed')
       setSaving(false)
+      return
     }
+    // The write is accepted; stay in "Saving…" until the refreshed data has been committed.
+    await onSave()
   }
 
   return (
@@ -109,7 +114,7 @@ function ArchiveConfirm({
   onCancel,
 }: {
   account: FinancialAccountRow
-  onConfirm: () => void
+  onConfirm: Done
   onCancel: () => void
 }) {
   const [working, setWorking] = useState(false)
@@ -120,11 +125,12 @@ function ArchiveConfirm({
     setErr(null)
     try {
       await archiveFinancialAccount(account.id)
-      onConfirm()
     } catch (e: any) {
       setErr(e?.message ?? 'Archive failed')
       setWorking(false)
+      return
     }
+    await onConfirm()
   }
 
   return (
@@ -157,7 +163,7 @@ export function CashOsAccountMenu({
   onMutated,
 }: {
   account: FinancialAccountRow
-  onMutated: () => void
+  onMutated: Done
 }) {
   const [mode, setMode] = useState<Mode>('idle')
   const menuRef = useRef<HTMLDivElement>(null)
@@ -177,7 +183,7 @@ export function CashOsAccountMenu({
     return (
       <EditForm
         account={account}
-        onSave={() => { setMode('idle'); onMutated() }}
+        onSave={async () => { await onMutated(); setMode('idle') }}
         onCancel={() => setMode('idle')}
       />
     )
@@ -187,7 +193,7 @@ export function CashOsAccountMenu({
     return (
       <ArchiveConfirm
         account={account}
-        onConfirm={() => { setMode('idle'); onMutated() }}
+        onConfirm={async () => { await onMutated(); setMode('idle') }}
         onCancel={() => setMode('idle')}
       />
     )
@@ -232,7 +238,7 @@ export function CashOsAccountRestore({
   onMutated,
 }: {
   account: FinancialAccountRow
-  onMutated: () => void
+  onMutated: Done
 }) {
   const [working, setWorking] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -242,11 +248,12 @@ export function CashOsAccountRestore({
     setErr(null)
     try {
       await restoreFinancialAccount(account.id)
-      onMutated()
     } catch (e: any) {
       setErr(e?.message ?? 'Restore failed')
       setWorking(false)
+      return
     }
+    await onMutated()
   }
 
   return (

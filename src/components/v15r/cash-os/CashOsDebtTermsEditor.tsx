@@ -6,7 +6,7 @@ interface Props {
   accountId: string
   accountDisplayName: string
   initialTerms: LiabilityTermsRow | null
-  onSave: (terms: LiabilityTermsRow) => void
+  onSave: (terms: LiabilityTermsRow) => void | Promise<void>
   onCancel: () => void
 }
 
@@ -111,7 +111,7 @@ export default function CashOsDebtTermsEditor({ accountId, accountDisplayName, i
         owner_notes: emptyNull(form.owner_notes),
       }
       const saved = await upsertLiabilityTerms(accountId, input)
-      onSave(saved)
+      await onSave(saved)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
     } finally {

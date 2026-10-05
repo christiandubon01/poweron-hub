@@ -153,9 +153,10 @@ export function computeReconciliationDeltaMinor(
   targetOwnerMinor: number,
   currentCanonicalMinor: number,
 ): number {
-  // Owner always enters a positive natural balance (dollars owed or dollars held).
-  // Both asset and liability accounts use the same positive-means-balance-present
-  // canonical sign convention, so the delta is a straight subtraction.
+  // Target and current are both CANONICAL balances. Asset targets are signed (an overdrawn
+  // checking account is a legitimate negative balance); liability targets are the positive
+  // amount owed. Sign handling of owner input lives in finance/balanceReconciliation.ts, so
+  // the delta here is a straight subtraction with no absolute-value conversion.
   return targetOwnerMinor - currentCanonicalMinor
 }
 
@@ -166,6 +167,9 @@ export async function recordBalanceReconciliation(input: {
   asOfDate: string
   idempotencyKey: string
 }): Promise<any | null> {
+  if (!Number.isSafeInteger(input.targetOwnerMinor) || !Number.isSafeInteger(input.currentCanonicalMinor)) {
+    throw new Error('Reconciliation balances must be integer cents')
+  }
   const deltaMinor = computeReconciliationDeltaMinor(
     input.targetOwnerMinor,
     input.currentCanonicalMinor,

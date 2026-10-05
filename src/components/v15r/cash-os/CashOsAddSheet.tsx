@@ -10,7 +10,13 @@ import {
   recordBalanceReconciliation,
 } from '@/services/manualLedgerService'
 import { accountBalanceMinor } from '@/finance/ledgerCalculations'
+import {
+  resolveReconciliationEntry, reconciliationEntryHelp, reconciliationEntryError,
+} from '@/finance/balanceReconciliation'
 import { CashCard, money } from './cashOsUi'
+
+/** Mutation-success callback: may return the authoritative refresh so the form can await it. */
+type Done = () => void | Promise<void>
 
 type AddMode = 'account' | 'income' | 'expense' | 'transfer' | 'card-payment' | 'reconcile'
 
@@ -61,7 +67,7 @@ const submitCls = 'mt-4 rounded-lg bg-orange-500 px-5 py-2 text-sm font-semibold
 
 // ─── Account form ──────────────────────────────────────────────────────────────
 
-function AccountForm({ onSuccess }: { onSuccess: () => void }) {
+function AccountForm({ onSuccess, onMutated }: { onSuccess: Done; onMutated?: Done }) {
   const [name, setName] = useState('')
   const [type, setType] = useState<FinancialAccountType>('checking')
   const [ownership, setOwnership] = useState<FinancialOwnershipContext>('business')
@@ -109,6 +115,7 @@ function AccountForm({ onSuccess }: { onSuccess: () => void }) {
         includeInCash: isLiability ? false : include,
       })
       setCreated({ id: row.id, display_name: row.display_name, account_class: row.account_class })
+      await onMutated?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -130,7 +137,7 @@ function AccountForm({ onSuccess }: { onSuccess: () => void }) {
         idempotencyKey: crypto.randomUUID(),
       })
       resetAccountForm()
-      onSuccess()
+      await onSuccess()
     } catch (err) {
       setObError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -224,7 +231,7 @@ function AccountForm({ onSuccess }: { onSuccess: () => void }) {
 function TransactionForm({ mode, sources, onSuccess }: {
   mode: 'income' | 'expense'
   sources: CashOsSourceBundle | null
-  onSuccess: () => void
+  onSuccess: Done
 }) {
   const assetAccounts = (sources?.accounts ?? []).filter(a => a.status === 'active' && a.account_class === 'asset')
   const [accountId, setAccountId] = useState(() => assetAccounts[0]?.id ?? '')
@@ -261,7 +268,7 @@ function TransactionForm({ mode, sources, onSuccess }: {
       setAmount('')
       setDescription('')
       setCategory('')
-      onSuccess()
+      await onSuccess()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -311,7 +318,7 @@ function TransactionForm({ mode, sources, onSuccess }: {
 
 // ─── Transfer form ─────────────────────────────────────────────────────────────
 
-function TransferForm({ sources, onSuccess }: { sources: CashOsSourceBundle | null; onSuccess: () => void }) {
+function TransferForm({ sources, onSuccess }: { sources: CashOsSourceBundle | null; onSuccess: Done }) {
   const assetAccounts = (sources?.accounts ?? []).filter(a => a.status === 'active' && a.account_class === 'asset')
   const [sourceId, setSourceId] = useState(() => assetAccounts[0]?.id ?? '')
   const [targetId, setTargetId] = useState(() => assetAccounts[1]?.id ?? assetAccounts[0]?.id ?? '')
@@ -397,7 +404,7 @@ function TransferForm({ sources, onSuccess }: { sources: CashOsSourceBundle | nu
 
 // ─── Card / Loan Payment form ──────────────────────────────────────────────────
 
-function CardPaymentForm({ sources, onSuccess }: { sources: CashOsSourceBundle | null; onSuccess: () => void }) {
+function CardPaymentForm({ sources, onSuccess }: { sources: CashOsSourceBundle | null; onSuccess: Done }) {
   const assetAccounts = (sources?.accounts ?? []).filter(a => a.status === 'active' && a.account_class === 'asset')
   const liabilityAccounts = (sources?.accounts ?? []).filter(a => a.status === 'active' && a.account_class === 'liability')
   const [cashAccountId, setCashAccountId] = useState(() => assetAccounts[0]?.id ?? '')
@@ -488,7 +495,7 @@ function CardPaymentForm({ sources, onSuccess }: { sources: CashOsSourceBundle |
 
 // ─── Opening Balance / Reconcile form ─────────────────────────────────────────
 
-function ReconcileForm({ sources, onSuccess }: { sources: CashOsSourceBundle | null; onSuccess: () => void }) {
+function ReconcileForm({ sources, onSuccess }: { sources: CashOsSourceBundle | null; onSuccess: Done }) {
   const allAccounts = (sources?.accounts ?? []).filter(a => a.status === 'active')
   const [accountId, setAccountId] = useState(() => allAccounts[0]?.id ?? '')
   const [targetAmount, setTargetAmount] = useState('')
@@ -506,20 +513,25 @@ function ReconcileForm({ sources, onSuccess }: { sources: CashOsSourceBundle | n
     ? accountBalanceMinor(accountId, sources.transactions, date)
     : 0
 
-  let targetMinor: number | null = null
-  let deltaMinor: number | null = null
-  const rawVal = parseFloat(targetAmount.replace(/[^0-9.]/g, ''))
-  if (Number.isFinite(rawVal) && rawVal >= 0) {
-    targetMinor = Math.round(rawVal * 100)
-    deltaMinor = targetMinor - currentCanonicalMinor
-  }
+  // Asset targets are signed ledger balances (an overdrawn checking account is negative);
+  // liability targets are the positive amount owed. No blanket absolute-value conversion.
+  const entry = resolveReconciliationEntry({
+    accountClass: selectedAccount?.account_class,
+    rawAmount: targetAmount,
+    currentCanonicalMinor,
+  })
+  const targetMinor = entry.ok ? entry.targetMinor : null
+  const deltaMinor = entry.ok ? entry.deltaMinor : null
+  const isPartialSign = /^[-−(]?\$?\.?$/.test(targetAmount.trim())
+  const entryError = !entry.ok && entry.reason !== 'empty' && !isPartialSign
+    ? reconciliationEntryError(entry.reason) : null
 
   const isNoop = deltaMinor === 0
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (targetMinor === null) return
-    if (isNoop) { onSuccess(); return }
+    if (isNoop) { await onSuccess(); return }
     setPending(true)
     setError(null)
     try {
@@ -531,7 +543,7 @@ function ReconcileForm({ sources, onSuccess }: { sources: CashOsSourceBundle | n
         idempotencyKey: crypto.randomUUID(),
       })
       setTargetAmount('')
-      onSuccess()
+      await onSuccess()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -567,12 +579,13 @@ function ReconcileForm({ sources, onSuccess }: { sources: CashOsSourceBundle | n
             <span className={labelCls}>
               {isLiability ? 'Real-world balance owed' : 'Real-world balance'}
             </span>
-            <input type="text" inputMode="decimal" placeholder="0.00" required
+            {/* Numeric soft keyboards have no minus key, so asset accounts use a text keypad. */}
+            <input type="text" inputMode={isLiability ? 'decimal' : 'text'} placeholder="0.00" required
               value={targetAmount} onChange={e => setTargetAmount(e.target.value)} className={inputCls} />
             <span className="mt-1 block text-xs text-[var(--text-muted)]">
-              Enter the actual balance as a positive number.
-              {isLiability ? ' For a credit card or loan, enter the amount you owe.' : ' For a checking account, enter the available balance.'}
+              {reconciliationEntryHelp(selectedAccount?.account_class)}
             </span>
+            {entryError && <span className="mt-1 block text-xs text-red-300">{entryError}</span>}
           </label>
           {deltaMinor !== null && (
             <div className={`rounded-lg border px-3 py-2 text-sm ${
@@ -612,10 +625,13 @@ export interface CashOsAddSheetProps {
   organizationId: string
   sources: CashOsSourceBundle | null
   onClose: () => void
-  onSuccess: () => void
+  /** Called after a mutation succeeds; awaited so the sheet only closes on refreshed data. */
+  onSuccess: Done
+  /** Refresh without closing the sheet (e.g. a newly created account before its opening balance). */
+  onMutated?: Done
 }
 
-export default function CashOsAddSheet({ sources, onClose, onSuccess }: CashOsAddSheetProps) {
+export default function CashOsAddSheet({ sources, onClose, onSuccess, onMutated }: CashOsAddSheetProps) {
   const [mode, setMode] = useState<AddMode>('account')
 
   return (
@@ -647,7 +663,7 @@ export default function CashOsAddSheet({ sources, onClose, onSuccess }: CashOsAd
         </nav>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-          {mode === 'account'       && <AccountForm onSuccess={onSuccess} />}
+          {mode === 'account'       && <AccountForm onSuccess={onSuccess} onMutated={onMutated} />}
           {mode === 'income'        && <TransactionForm mode="income"  sources={sources} onSuccess={onSuccess} />}
           {mode === 'expense'       && <TransactionForm mode="expense" sources={sources} onSuccess={onSuccess} />}
           {mode === 'transfer'      && <TransferForm sources={sources} onSuccess={onSuccess} />}

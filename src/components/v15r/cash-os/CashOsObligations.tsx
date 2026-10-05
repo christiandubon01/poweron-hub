@@ -404,7 +404,7 @@ export default function CashOsObligations({
   occurrences?: ObligationOccurrence[]
   transactions?: FinancialTransactionRow[]
   accounts?: FinancialAccountRow[]
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>
 }) {
   const [mode, setMode] = useState<Mode>('list')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -451,7 +451,7 @@ export default function CashOsObligations({
         }
         await updateFinancialObligation(selectedId, patch)
       }
-      onRefresh(); reset()
+      await onRefresh(); reset()
     } catch (err) {
       setPending(false); setError(err instanceof Error ? err.message : 'Save failed')
     }
@@ -462,7 +462,7 @@ export default function CashOsObligations({
     setPending(true); setError(null)
     try {
       await archiveFinancialObligation(selectedId)
-      onRefresh(); reset()
+      await onRefresh(); reset()
     } catch (err) {
       setPending(false); setError(err instanceof Error ? err.message : 'Archive failed')
     }
@@ -499,7 +499,7 @@ export default function CashOsObligations({
           debtAccountId: fields.debtAccountId,
         })
       }
-      onRefresh(); reset()
+      await onRefresh(); reset()
     } catch (err) {
       setPending(false); setError(err instanceof Error ? err.message : 'Save failed')
     }
@@ -510,7 +510,7 @@ export default function CashOsObligations({
     setPending(true); setError(null)
     try {
       await cancelCashCommitment(selectedId)
-      onRefresh(); reset()
+      await onRefresh(); reset()
     } catch (err) {
       setPending(false); setError(err instanceof Error ? err.message : 'Cancel failed')
     }
@@ -535,7 +535,7 @@ export default function CashOsObligations({
         isRecurring: false,
       })
       setMode('list'); setSelectedId(null); setReconcileDate(null); setPending(false); setError(null)
-      onRefresh()
+      await onRefresh()
     } catch (err) {
       setPending(false); setError(err instanceof Error ? err.message : 'Reconciliation failed')
     }
@@ -559,7 +559,7 @@ export default function CashOsObligations({
         isRecurring: true,
       })
       setMode('list'); setSelectedId(null); setReconcileDate(null); setPending(false); setError(null)
-      onRefresh()
+      await onRefresh()
     } catch (err) {
       setPending(false); setError(err instanceof Error ? err.message : 'Reconciliation failed')
     }

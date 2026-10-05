@@ -254,7 +254,7 @@ describe('CORE-CLOSE-2A Debt Plan canonical truth', () => {
 
   it('26: CashOsPayoffPlanner is wired into the snapshot (ready/partial) Debt Plan path', () => {
     const snapshotIdx = debtKillerSrc.indexOf('cash.snapshot ?')
-    const snapshotBlock = debtKillerSrc.slice(snapshotIdx, snapshotIdx + 2000)
+    const snapshotBlock = debtKillerSrc.slice(snapshotIdx, snapshotIdx + 2600)
     expect(snapshotBlock).toContain("tab === 'Debt Plan'")
     expect(snapshotBlock).toContain('CashOsPayoffPlanner')
     expect(snapshotBlock).toContain('sources={cash.snapshot}')
