@@ -15,6 +15,7 @@ import {
 import { CashCard, CashEmpty, cashDate, money } from '@/components/v15r/cash-os/cashOsUi'
 import CashOsAddSheet from '@/components/v15r/cash-os/CashOsAddSheet'
 import CashOsDebtPlan from '@/components/v15r/cash-os/CashOsDebtPlan'
+import CashOsPayoffPlanner from '@/components/v15r/cash-os/CashOsPayoffPlanner'
 
 const tabs = ['Outlook', 'Calendar', 'Projects', 'Payroll', 'Transactions', 'Obligations', 'Debt Plan'] as const
 type DebtKillerTab = typeof tabs[number]
@@ -321,7 +322,10 @@ export default function DebtKiller() {
           </button>
         </CashCard>
       ) : cash.status === 'empty' && tab === 'Debt Plan' && cash.sources ? (
-        <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />
+        <div className="space-y-5">
+          <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />
+          <CashOsPayoffPlanner sources={cash.sources} snapshot={null} />
+        </div>
       ) : cash.status === 'empty' ? (
         <CashCard title="Ledger empty">
           <p className="text-sm text-[var(--text-secondary)]">
@@ -356,7 +360,12 @@ export default function DebtKiller() {
           )}
           {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} onRefresh={cash.refresh} />}
-          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />}
+          {tab === 'Debt Plan' && (
+            <div className="space-y-5">
+              <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} />
+              <CashOsPayoffPlanner sources={cash.sources} snapshot={null} />
+            </div>
+          )}
         </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
         <CashCard title="Partial / Needs attention">
@@ -412,7 +421,12 @@ export default function DebtKiller() {
           {tab === 'Payroll' && <CashPayrollView snapshot={cash.snapshot} partial={cash.status === 'partial'} />}
           {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} onAdd={openAddSheet} />}
           {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} onRefresh={cash.refresh} />}
-          {tab === 'Debt Plan' && <CashOsDebtPlan sources={cash.snapshot} snapshot={cash.snapshot} showTrulyFreeCash={cash.status === 'ready'} />}
+          {tab === 'Debt Plan' && (
+            <div className="space-y-5">
+              <CashOsDebtPlan sources={cash.snapshot} snapshot={cash.snapshot} showTrulyFreeCash={cash.status === 'ready'} />
+              <CashOsPayoffPlanner sources={cash.snapshot} snapshot={cash.snapshot} />
+            </div>
+          )}
         </>
       ) : (
         <CashCard>

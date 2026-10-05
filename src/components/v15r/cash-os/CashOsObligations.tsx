@@ -216,6 +216,7 @@ function ObligationForm({
   initial,
   pending,
   error,
+  accounts,
   onSubmit,
   onCancel,
   submitLabel,
@@ -223,7 +224,8 @@ function ObligationForm({
   initial?: RecurringObligation | null
   pending: boolean
   error: string | null
-  onSubmit: (fields: { name: string; amountRaw: string; schedule: ObligationRecurrenceSchedule; anchorDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible' }) => void
+  accounts?: FinancialAccountRow[]
+  onSubmit: (fields: { name: string; amountRaw: string; schedule: ObligationRecurrenceSchedule; anchorDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null }) => void
   onCancel: () => void
   submitLabel: string
 }) {
@@ -234,9 +236,12 @@ function ObligationForm({
   const [category, setCategory] = useState(initial?.category ?? '')
   const [isRequired, setIsRequired] = useState(initial ? initial.requirement === 'required' : true)
   const [confidence, setConfidence] = useState<'confirmed' | 'expected' | 'possible'>(initial?.confidence ?? 'expected')
+  const [debtAccountId, setDebtAccountId] = useState<string | null>(initial?.debtAccountId ?? null)
+
+  const liabilityAccounts = (accounts ?? []).filter(a => a.account_class === 'liability' && a.status === 'active')
 
   return (
-    <form onSubmit={e => { e.preventDefault(); onSubmit({ name, amountRaw, schedule, anchorDate, category, isRequired, confidence }) }} className="space-y-4">
+    <form onSubmit={e => { e.preventDefault(); onSubmit({ name, amountRaw, schedule, anchorDate, category, isRequired, confidence, debtAccountId }) }} className="space-y-4">
       <label className="block">
         <span className={labelCls}>Name</span>
         <input type="text" required placeholder="e.g. Vehicle loan" value={name}
@@ -272,6 +277,21 @@ function ObligationForm({
         </select>
       </label>
       <RequiredControl checked={isRequired} onChange={setIsRequired} />
+      {liabilityAccounts.length > 0 && (
+        <label className="block">
+          <span className={labelCls}>Linked debt account (optional)</span>
+          <select
+            value={debtAccountId ?? ''}
+            onChange={e => setDebtAccountId(e.target.value || null)}
+            className={inputCls}
+          >
+            <option value="">— None —</option>
+            {liabilityAccounts.map(a => (
+              <option key={a.id} value={a.id}>{a.display_name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       {error && <p className="text-xs text-red-300">{error}</p>}
       <div className="flex gap-3 pt-1">
         <button type="submit" disabled={pending} className={btnPrimary}>
@@ -289,6 +309,7 @@ function CommitmentForm({
   initial,
   pending,
   error,
+  accounts,
   onSubmit,
   onCancel,
   submitLabel,
@@ -296,7 +317,8 @@ function CommitmentForm({
   initial?: CashCommitment | null
   pending: boolean
   error: string | null
-  onSubmit: (fields: { title: string; amountRaw: string; expectedDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible' }) => void
+  accounts?: FinancialAccountRow[]
+  onSubmit: (fields: { title: string; amountRaw: string; expectedDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null }) => void
   onCancel: () => void
   submitLabel: string
 }) {
@@ -306,9 +328,12 @@ function CommitmentForm({
   const [category, setCategory] = useState(initial?.category ?? '')
   const [isRequired, setIsRequired] = useState(initial ? initial.requirement === 'required' : true)
   const [confidence, setConfidence] = useState<'confirmed' | 'expected' | 'possible'>(initial?.confidence ?? 'expected')
+  const [debtAccountId, setDebtAccountId] = useState<string | null>(initial?.debtAccountId ?? null)
+
+  const liabilityAccounts = (accounts ?? []).filter(a => a.account_class === 'liability' && a.status === 'active')
 
   return (
-    <form onSubmit={e => { e.preventDefault(); onSubmit({ title, amountRaw, expectedDate, category, isRequired, confidence }) }} className="space-y-4">
+    <form onSubmit={e => { e.preventDefault(); onSubmit({ title, amountRaw, expectedDate, category, isRequired, confidence, debtAccountId }) }} className="space-y-4">
       <label className="block">
         <span className={labelCls}>Title</span>
         <input type="text" required placeholder="e.g. Equipment purchase" value={title}
@@ -338,6 +363,21 @@ function CommitmentForm({
         </select>
       </label>
       <RequiredControl checked={isRequired} onChange={setIsRequired} />
+      {liabilityAccounts.length > 0 && (
+        <label className="block">
+          <span className={labelCls}>Linked debt account (optional)</span>
+          <select
+            value={debtAccountId ?? ''}
+            onChange={e => setDebtAccountId(e.target.value || null)}
+            className={inputCls}
+          >
+            <option value="">— None —</option>
+            {liabilityAccounts.map(a => (
+              <option key={a.id} value={a.id}>{a.display_name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       {error && <p className="text-xs text-red-300">{error}</p>}
       <div className="flex gap-3 pt-1">
         <button type="submit" disabled={pending} className={btnPrimary}>
@@ -383,7 +423,7 @@ export default function CashOsObligations({
   async function handleObligationSubmit(fields: {
     name: string; amountRaw: string; schedule: ObligationRecurrenceSchedule
     anchorDate: string; category: string; isRequired: boolean
-    confidence: 'confirmed' | 'expected' | 'possible'
+    confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null
   }) {
     let amountMinor: number
     try { amountMinor = parseDollarsMinor(fields.amountRaw) }
@@ -399,6 +439,7 @@ export default function CashOsObligations({
           name: fields.name, category: fields.category || null,
           amountMinor, schedule: fields.schedule, anchorDate: fields.anchorDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
+          debtAccountId: fields.debtAccountId,
         }
         await createFinancialObligation(payload)
       } else if (mode === 'edit-obligation' && selectedId) {
@@ -406,6 +447,7 @@ export default function CashOsObligations({
           name: fields.name, category: fields.category || null,
           amountMinor, schedule: fields.schedule, anchorDate: fields.anchorDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
+          debtAccountId: fields.debtAccountId,
         }
         await updateFinancialObligation(selectedId, patch)
       }
@@ -430,7 +472,7 @@ export default function CashOsObligations({
 
   async function handleCommitmentSubmit(fields: {
     title: string; amountRaw: string; expectedDate: string; category: string
-    isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'
+    isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null
   }) {
     let amountMinor: number
     try { amountMinor = parseDollarsMinor(fields.amountRaw) }
@@ -446,6 +488,7 @@ export default function CashOsObligations({
           title: fields.title, category: fields.category || null,
           amountMinor, expectedDate: fields.expectedDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
+          debtAccountId: fields.debtAccountId,
         }
         await createCashCommitment(payload)
       } else if (mode === 'edit-commitment' && selectedId) {
@@ -453,6 +496,7 @@ export default function CashOsObligations({
           title: fields.title, category: fields.category || null,
           amountMinor, expectedDate: fields.expectedDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
+          debtAccountId: fields.debtAccountId,
         })
       }
       onRefresh(); reset()
@@ -528,7 +572,7 @@ export default function CashOsObligations({
       <CashCard title={mode === 'add-obligation' ? 'New recurring obligation' : 'Edit obligation'}>
         <ObligationForm
           initial={mode === 'edit-obligation' ? selectedObligation : null}
-          pending={pending} error={error}
+          pending={pending} error={error} accounts={accounts}
           onSubmit={handleObligationSubmit} onCancel={reset}
           submitLabel={mode === 'add-obligation' ? 'Add obligation' : 'Save changes'}
         />
@@ -559,7 +603,7 @@ export default function CashOsObligations({
       <CashCard title={mode === 'add-commitment' ? 'New one-time commitment' : 'Edit commitment'}>
         <CommitmentForm
           initial={mode === 'edit-commitment' ? selectedCommitment : null}
-          pending={pending} error={error}
+          pending={pending} error={error} accounts={accounts}
           onSubmit={handleCommitmentSubmit} onCancel={reset}
           submitLabel={mode === 'add-commitment' ? 'Add commitment' : 'Save changes'}
         />

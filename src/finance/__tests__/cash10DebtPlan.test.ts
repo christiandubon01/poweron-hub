@@ -8,6 +8,7 @@ import type { FinancialTransactionRow, FinancialAccountRow } from '../ledgerType
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const debtKillerSrc = readFileSync(resolve(__dirname, '../../views/DebtKiller.tsx'), 'utf8')
 const debtPlanSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsDebtPlan.tsx'), 'utf8')
+const payoffPlannerSrc = readFileSync(resolve(__dirname, '../../components/v15r/cash-os/CashOsPayoffPlanner.tsx'), 'utf8')
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -242,5 +243,41 @@ describe('CORE-CLOSE-2A Debt Plan canonical truth', () => {
     const preSetupEnd = debtKillerSrc.indexOf("cash.status === 'partial'", preSetupIdx)
     const preSetupBlock = debtKillerSrc.slice(preSetupIdx, preSetupEnd)
     expect(preSetupBlock).toContain('showTrulyFreeCash={false}')
+  })
+
+  // ── CORE-CLOSE-2C: Payoff Planner wiring ─────────────────────────────────────
+
+  it('25: DebtKiller.tsx imports CashOsPayoffPlanner', () => {
+    expect(debtKillerSrc).toContain('CashOsPayoffPlanner')
+    expect(debtKillerSrc).toContain("from '@/components/v15r/cash-os/CashOsPayoffPlanner'")
+  })
+
+  it('26: CashOsPayoffPlanner is wired into the snapshot (ready/partial) Debt Plan path', () => {
+    const snapshotIdx = debtKillerSrc.indexOf('cash.snapshot ?')
+    const snapshotBlock = debtKillerSrc.slice(snapshotIdx, snapshotIdx + 2000)
+    expect(snapshotBlock).toContain("tab === 'Debt Plan'")
+    expect(snapshotBlock).toContain('CashOsPayoffPlanner')
+    expect(snapshotBlock).toContain('sources={cash.snapshot}')
+  })
+
+  it('27: CashOsPayoffPlanner is wired into the preSetup Debt Plan path', () => {
+    const preSetupIdx = debtKillerSrc.indexOf('preSetup ?')
+    const preSetupEnd = debtKillerSrc.indexOf("cash.status === 'partial'", preSetupIdx)
+    const preSetupBlock = debtKillerSrc.slice(preSetupIdx, preSetupEnd)
+    expect(preSetupBlock).toContain("tab === 'Debt Plan'")
+    expect(preSetupBlock).toContain('CashOsPayoffPlanner')
+    expect(preSetupBlock).toContain('sources={cash.sources}')
+  })
+
+  it('28: CashOsPayoffPlanner is wired into the LEDGER_EMPTY Debt Plan path', () => {
+    const emptyIdx = debtKillerSrc.indexOf("cash.status === 'empty' && tab === 'Debt Plan'")
+    expect(emptyIdx).toBeGreaterThan(-1)
+    const emptyBlock = debtKillerSrc.slice(emptyIdx, emptyIdx + 300)
+    expect(emptyBlock).toContain('CashOsPayoffPlanner')
+    expect(emptyBlock).toContain('cash.sources')
+  })
+
+  it('29: CashOsPayoffPlanner guards against missing liabilityTerms with null coalesce', () => {
+    expect(payoffPlannerSrc).toContain('liabilityTerms ?? []')
   })
 })

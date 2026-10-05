@@ -92,9 +92,29 @@ export default function CashOsSetupPanel({ organizationId, storedTimezone, exist
           <option value="">Choose explicitly</option><option value="true">Yes</option><option value="false">No</option>
         </select>
       </label>
-      <label className="flex cursor-pointer items-start gap-3 text-sm text-[var(--text-secondary)] sm:col-span-2">
-        <input type="checkbox" checked={timezoneConfirmed} onChange={e => setTimezoneConfirmed(e.target.checked)}
-          className="mt-0.5 h-5 w-5 flex-shrink-0 cursor-pointer accent-orange-500" />
+      <label className="flex min-h-[44px] cursor-pointer items-start gap-3 text-sm text-[var(--text-secondary)] sm:col-span-2">
+        <input
+          type="checkbox"
+          className="peer sr-only"
+          checked={timezoneConfirmed}
+          onChange={e => setTimezoneConfirmed(e.target.checked)}
+        />
+        <span
+          aria-hidden="true"
+          className={[
+            'mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border-2 transition-colors',
+            'peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500 peer-focus-visible:ring-offset-1',
+            timezoneConfirmed
+              ? 'border-orange-500 bg-orange-500'
+              : 'border-[var(--border-primary)] bg-transparent',
+          ].join(' ')}
+        >
+          {timezoneConfirmed && (
+            <svg aria-hidden="true" width="11" height="9" viewBox="0 0 11 9" fill="none">
+              <path d="M1 4.5l3 3L10 1" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </span>
         <span>I confirm {CASH_OS_TIMEZONE} is the timekeeping and Cash OS work-date basis{storedTimezone ? ' stored for this organization.' : ' for this session.'}</span>
       </label>
       {error && <p role="alert" className="text-sm text-amber-300 sm:col-span-2">{error}</p>}

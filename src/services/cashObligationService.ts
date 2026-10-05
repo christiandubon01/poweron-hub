@@ -229,6 +229,7 @@ export interface CreateObligationInput {
   anchorDate: string
   isRequired: boolean
   confidence: 'confirmed' | 'expected' | 'possible'
+  debtAccountId?: string | null
 }
 
 export interface UpdateObligationInput {
@@ -239,6 +240,7 @@ export interface UpdateObligationInput {
   anchorDate?: string
   isRequired?: boolean
   confidence?: 'confirmed' | 'expected' | 'possible'
+  debtAccountId?: string | null
 }
 
 export interface CreateCommitmentInput {
@@ -248,6 +250,7 @@ export interface CreateCommitmentInput {
   expectedDate: string
   isRequired: boolean
   confidence: 'confirmed' | 'expected' | 'possible'
+  debtAccountId?: string | null
 }
 
 export interface UpdateCommitmentInput {
@@ -257,6 +260,7 @@ export interface UpdateCommitmentInput {
   expectedDate?: string
   isRequired?: boolean
   confidence?: 'confirmed' | 'expected' | 'possible'
+  debtAccountId?: string | null
 }
 
 // ─── Validation helpers (pure, no side effects) ───────────────────────────────
@@ -306,6 +310,7 @@ export async function createFinancialObligation(input: CreateObligationInput): P
       start_date: input.anchorDate,
       is_required: input.isRequired,
       confidence: input.confidence,
+      debt_account_id: input.debtAccountId ?? null,
     })
     .select('id')
     .single()
@@ -342,6 +347,7 @@ export async function updateFinancialObligation(id: string, input: UpdateObligat
   }
   if (input.isRequired !== undefined) patch.is_required = input.isRequired
   if (input.confidence !== undefined) patch.confidence = input.confidence
+  if ('debtAccountId' in input) patch.debt_account_id = input.debtAccountId ?? null
   if (Object.keys(patch).length === 0) return
   const { error } = await db()
     .from('financial_obligations')
@@ -378,6 +384,7 @@ export async function createCashCommitment(input: CreateCommitmentInput): Promis
       expected_date: input.expectedDate,
       is_required: input.isRequired,
       confidence: input.confidence,
+      debt_account_id: input.debtAccountId ?? null,
     })
     .select('id')
     .single()
@@ -405,6 +412,7 @@ export async function updateCashCommitment(id: string, input: UpdateCommitmentIn
   }
   if (input.isRequired !== undefined) patch.is_required = input.isRequired
   if (input.confidence !== undefined) patch.confidence = input.confidence
+  if ('debtAccountId' in input) patch.debt_account_id = input.debtAccountId ?? null
   if (Object.keys(patch).length === 0) return
   const { error } = await db()
     .from('cash_commitments')

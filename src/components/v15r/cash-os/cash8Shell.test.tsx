@@ -52,6 +52,14 @@ vi.mock('@/components/v15r/cash-os/CashOsDebtPlan', () => ({
   ),
 }))
 
+vi.mock('@/components/v15r/cash-os/CashOsPayoffPlanner', () => ({
+  default: (props: { sources: unknown; snapshot: unknown }) => (
+    <div data-testid="payoff-planner">
+      Payoff Planner · sources={(props.sources ? 'yes' : 'no')} snapshot={(props.snapshot ? 'yes' : 'no')}
+    </div>
+  ),
+}))
+
 const stubSources = {
   organizationId: 'org-1',
   asOfDate: '2026-09-30',
@@ -76,6 +84,7 @@ const stubSources = {
       status: 'scheduled', category: null },
   ],
   occurrences: [], timeEntries: [], sessions: [], bridges: [], employees: [],
+  liabilityTerms: [],
   backup: {} as any,
   obligations_meta: undefined,
 }
@@ -470,6 +479,72 @@ describe('CASH-8 Debt Killer workspace shell', () => {
     await click('Debt Plan')
     const el = host.querySelector('[data-testid="canonical-debt-plan"]')
     expect(el!.textContent).toContain('showTrulyFree=true')
+  })
+
+  // ─── CORE-CLOSE-2C: Payoff Planner mounted in all 3 Debt Plan paths ──────────
+
+  it('CORE-CLOSE-2C: Payoff Planner is mounted in LEDGER_EMPTY Debt Plan path', async () => {
+    control.cashStatus = 'empty'
+    control.cashScope = stubScope
+    control.cashSources = stubSources
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="payoff-planner"]')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toContain('sources=yes')
+    expect(el!.textContent).toContain('snapshot=no')
+  })
+
+  it('CORE-CLOSE-2C: Payoff Planner is mounted in preSetup (setup_required) Debt Plan path', async () => {
+    control.cashStatus = 'setup_required'
+    control.cashScope = stubScope
+    control.cashSources = stubSources
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="payoff-planner"]')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toContain('sources=yes')
+    expect(el!.textContent).toContain('snapshot=no')
+  })
+
+  it('CORE-CLOSE-2C: Payoff Planner is mounted in ready-state Debt Plan path with snapshot', async () => {
+    const readySnapshot = {
+      ...stubSources,
+      setup: { version: 1, organizationId: 'org-1', payrollPaidThroughDate: '2026-09-28',
+        protectionHorizonDays: 7, operatingFloorMinor: 0, taxReserve: { kind: 'disabled' },
+        includeOptionalObligations: false, includeOpenShiftEstimates: false,
+        timezoneConfirmed: true, confirmedAt: '2026-09-29T20:00:00Z' },
+      allocation: { trulyFreeCashMinor: 100 } as any,
+      payroll: { liabilities: [] }, payrollDiagnostics: [], payrollAllocations: [],
+      payrollExposureMinor: 0, accountBalancesMinor: { bank: 250000 },
+      collectionClock: { activeFunding: [], collectionFollowUp: [], unattributedPayrollMinor: 0, diagnostics: [] },
+      projection: { organizationId: 'org-1', asOfDate: '2026-09-30', horizonDays: 30,
+        confidenceMode: 'conservative',
+        anchor: { date: '2026-09-30', openingCashMinor: 250000, inflowMinor: 0, outflowMinor: 0,
+          closingCashMinor: 250000, totalProtectedRequirementMinor: 0, protectedCashMinor: 0,
+          trulyFreeCashMinor: 100, protectionDeficitMinor: 0, operatingFloorMinor: 0,
+          events: [], markers: [], uncertainty: { highestIncludedConfidence: null,
+            includedExpectedEventCount: 0, includedPossibleEventCount: 0,
+            unresolvedMarkerCount: 0, unresolvedSourceKeys: [] } },
+        days: [],
+        summary: { lowestTotalCashMinor: 250000, lowestTotalCashDate: '2026-09-30',
+          lowestTrulyFreeCashMinor: 100, lowestTrulyFreeCashDate: '2026-09-30',
+          firstProtectionDeficitDate: null, fourteenDayLowestTotalCashMinor: 250000,
+          fourteenDayLowestTotalCashDate: '2026-09-30', daysCovered: { days: 30, bounded: true } },
+        datedEvents: [], datedMarkers: [], undatedMarkers: [], diagnostics: [] },
+      readinessDiagnostics: [],
+    }
+    control.cashStatus = 'ready'
+    control.cashScope = stubScope
+    control.cashSetup = readySnapshot.setup
+    control.cashSnapshot = readySnapshot
+    control.cashEditing = false
+    await act(async () => { root.render(<DebtKiller />) })
+    await click('Debt Plan')
+    const el = host.querySelector('[data-testid="payoff-planner"]')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toContain('sources=yes')
+    expect(el!.textContent).toContain('snapshot=yes')
   })
 
   it('CORE-CLOSE-2A: partial state Debt Plan passes showTrulyFreeCash=false', async () => {

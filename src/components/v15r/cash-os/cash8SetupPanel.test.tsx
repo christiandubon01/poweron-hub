@@ -115,14 +115,35 @@ describe('CashOsSetupPanel timezone checkbox', () => {
     expect(cb.checked).toBe(true)
   })
 
-  // 5. Label has cursor-pointer and checkbox has explicit size classes
-  it('label has cursor-pointer and checkbox has h-5 w-5 for touch target', async () => {
+  // 5. Label has cursor-pointer; visual indicator span carries h-5 w-5 (not the sr-only input)
+  it('label has cursor-pointer and visual indicator has h-5 w-5 for touch target', async () => {
+    await act(async () => { root.render(<CashOsSetupPanel {...baseProps} />) })
+    const label = host.querySelector('label:has(input[type="checkbox"])') as HTMLLabelElement
+    const indicator = label.querySelector('span[aria-hidden="true"]') as HTMLElement
+    expect(label.className).toContain('cursor-pointer')
+    expect(indicator).not.toBeNull()
+    expect(indicator.className).toContain('h-5')
+    expect(indicator.className).toContain('w-5')
+  })
+
+  // 5b. Visual indicator renders with visible border when unchecked
+  it('visual indicator has explicit border class when unchecked (visible on dark bg)', async () => {
+    await act(async () => { root.render(<CashOsSetupPanel {...baseProps} />) })
+    const label = host.querySelector('label:has(input[type="checkbox"])') as HTMLLabelElement
+    const indicator = label.querySelector('span[aria-hidden="true"]') as HTMLElement
+    expect(indicator.className).toContain('border-[var(--border-primary)]')
+    expect(indicator.className).not.toContain('bg-orange-500')
+  })
+
+  // 5c. Visual indicator transitions to orange fill when checked
+  it('visual indicator shows orange background after checkbox is checked', async () => {
     await act(async () => { root.render(<CashOsSetupPanel {...baseProps} />) })
     const label = host.querySelector('label:has(input[type="checkbox"])') as HTMLLabelElement
     const cb = label.querySelector('input[type="checkbox"]') as HTMLInputElement
-    expect(label.className).toContain('cursor-pointer')
-    expect(cb.className).toContain('h-5')
-    expect(cb.className).toContain('w-5')
+    await act(async () => { cb.click() })
+    const indicator = label.querySelector('span[aria-hidden="true"]') as HTMLElement
+    expect(indicator.className).toContain('bg-orange-500')
+    expect(indicator.className).toContain('border-orange-500')
   })
 
   // 6. Confirm is blocked while timezoneConfirmed is false
