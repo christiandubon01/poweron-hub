@@ -12,6 +12,7 @@ import {
   CashTransactionsView,
   CashObligationsView,
 } from '@/components/v15r/cash-os/CashOsViews'
+import { CashOsAccountMenu } from '@/components/v15r/cash-os/CashOsAccountMenu'
 import { CashCard, CashEmpty, cashDate, money } from '@/components/v15r/cash-os/cashOsUi'
 import CashOsAddSheet from '@/components/v15r/cash-os/CashOsAddSheet'
 import CashOsDebtPlan from '@/components/v15r/cash-os/CashOsDebtPlan'
@@ -71,7 +72,7 @@ function PreSetupOutlook({ sources }: { sources: CashOsSourceBundle | null }) {
   )
 }
 
-function PreSetupTransactions({ sources, onAdd }: { sources: CashOsSourceBundle | null; onAdd?: () => void }) {
+function PreSetupTransactions({ sources, onAdd, onRefresh }: { sources: CashOsSourceBundle | null; onAdd?: () => void; onRefresh?: () => void }) {
   if (!sources) {
     return <CashCard><p className="text-sm text-[var(--text-secondary)]">Transactions loading…</p></CashCard>
   }
@@ -89,7 +90,10 @@ function PreSetupTransactions({ sources, onAdd }: { sources: CashOsSourceBundle 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {accounts.map(account => (
               <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
-                <strong>{account.display_name}</strong>
+                <div className="flex items-start justify-between gap-1">
+                  <strong className="leading-snug">{account.display_name}</strong>
+                  <CashOsAccountMenu account={account} onMutated={() => onRefresh?.()} />
+                </div>
                 <span className="block text-xs text-[var(--text-muted)]">
                   {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
                 </span>
@@ -358,7 +362,7 @@ export default function DebtKiller() {
               </p>
             </CashCard>
           )}
-          {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} />}
+          {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} onRefresh={cash.refresh} />}
           {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} onRefresh={cash.refresh} />}
           {tab === 'Debt Plan' && (
             <div className="space-y-5">
