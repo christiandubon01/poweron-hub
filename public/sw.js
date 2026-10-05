@@ -4,7 +4,7 @@
 //   - Static assets (JS/CSS/fonts/icons): cache-first
 //   - Field log POSTs when offline: queue to IndexedDB → auto-sync on reconnect
 //   - API/AI calls: network-first, graceful offline error
-//   - Supabase data GETs: stale-while-revalidate
+//   - Supabase data GETs: network-first (cache is an OFFLINE fallback only — never serves stale rows online)
 
 const CACHE_NAME = 'poweron-v5'
 const APP_SHELL_CACHE = 'poweron-shell-v5'
@@ -16,7 +16,7 @@ const API_PATTERNS = [/\/api\//, /claude\.ai/, /anthropic\.com/, /netlify\/funct
 // Patterns for cache-first (static assets)
 const STATIC_PATTERNS = [/\/assets\//, /\/icons\//, /\.woff2?$/, /\.ttf$/, /\.otf$/]
 
-// Supabase patterns (data sync — stale-while-revalidate)
+// Supabase patterns (data reads — network-first, offline fallback)
 const SUPABASE_PATTERNS = [/supabase\.co/]
 
 // App shell: critical files for offline load
@@ -391,32 +391,27 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // ── Supabase GETs — stale-while-revalidate ────────────────────────────────
+  // ── Supabase GETs — network-first, cache is an offline fallback only ──────
+  // These reads are authoritative ledger/state reads (Cash OS refreshes them right after a write).
+  // Serving the cached copy first would hand back the PRE-write rows — e.g. a reconciled balance
+  // still showing $0.00 — and only the NEXT read of the same URL would see the update.
   if (SUPABASE_PATTERNS.some((p) => p.test(url))) {
     event.respondWith(
       caches.open(DATA_CACHE).then(async (cache) => {
-        const cached = await cache.match(event.request)
-
-        // Always try to update cache from network
-        const networkFetch = fetch(event.request).then((response) => {
+        try {
+          const response = await fetch(event.request)
           if (response && response.status === 200) {
             cache.put(event.request, response.clone())
           }
           return response
-        }).catch(() => null)
-
-        // Return cached immediately if available, otherwise wait for network
-        if (cached) {
-          // Background refresh — don't wait
-          networkFetch.catch(() => {})
-          return cached
+        } catch (_) {
+          // Network unreachable (offline) — fall back to the last cached copy if there is one
+          const cached = await cache.match(event.request)
+          return cached || new Response(
+            JSON.stringify({ error: 'Offline — no cached data available' }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } }
+          )
         }
-
-        const fresh = await networkFetch
-        return fresh || new Response(
-          JSON.stringify({ error: 'Offline — no cached data available' }),
-          { status: 503, headers: { 'Content-Type': 'application/json' } }
-        )
       })
     )
     return
