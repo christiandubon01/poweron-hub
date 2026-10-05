@@ -247,6 +247,61 @@ export async function recordFinancialCardPayment(input: {
   return Array.isArray(data) ? data[0] : data
 }
 
+export interface UpdateFinancialAccountInput {
+  displayName?: string
+  ownershipContext?: FinancialOwnershipContext
+  includeInCash?: boolean
+}
+
+export async function updateFinancialAccount(
+  id: string,
+  input: UpdateFinancialAccountInput,
+): Promise<void> {
+  if (!id) throw new Error('id is required')
+  const patch: Record<string, unknown> = {}
+  if (input.displayName !== undefined) {
+    const trimmed = input.displayName.trim()
+    if (!trimmed) throw new Error('Account name cannot be blank')
+    patch.display_name = trimmed
+  }
+  if (input.ownershipContext !== undefined) patch.ownership_context = input.ownershipContext
+  if (input.includeInCash !== undefined) patch.include_in_cash = input.includeInCash
+  if (Object.keys(patch).length === 0) return
+
+  const ctx = await resolveFinanceContext()
+  const { error } = await untypedSupabase()
+    .from('financial_accounts')
+    .update(patch)
+    .eq('id', id)
+    .eq('organization_id', ctx.organizationId)
+    .eq('status', 'active')
+  if (error) throw new Error(error.message)
+}
+
+export async function archiveFinancialAccount(id: string): Promise<void> {
+  if (!id) throw new Error('id is required')
+  const ctx = await resolveFinanceContext()
+  const { error } = await untypedSupabase()
+    .from('financial_accounts')
+    .update({ status: 'archived', archived_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('organization_id', ctx.organizationId)
+    .eq('status', 'active')
+  if (error) throw new Error(error.message)
+}
+
+export async function restoreFinancialAccount(id: string): Promise<void> {
+  if (!id) throw new Error('id is required')
+  const ctx = await resolveFinanceContext()
+  const { error } = await untypedSupabase()
+    .from('financial_accounts')
+    .update({ status: 'active', archived_at: null })
+    .eq('id', id)
+    .eq('organization_id', ctx.organizationId)
+    .eq('status', 'archived')
+  if (error) throw new Error(error.message)
+}
+
 export async function voidStandaloneFinancialTransaction(
   transactionId: string,
   reason: string,

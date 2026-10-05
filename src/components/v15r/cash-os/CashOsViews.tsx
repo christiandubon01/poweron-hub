@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import type { CashOsSnapshot } from '@/finance/cashOsSnapshot'
 import { CashCollectionClock } from './CashOsOutlook'
 import { CashCard, CashEmpty, cashDate, money } from './cashOsUi'
 import CashOsObligations from './CashOsObligations'
+import { CashOsAccountMenu, CashOsAccountRestore } from './CashOsAccountMenu'
 
 export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
   const { projection } = snapshot
@@ -64,13 +66,27 @@ const addBtn = (onAdd: () => void) => (
   <button onClick={onAdd} className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">+ Add</button>
 )
 
-export function CashTransactionsView({ snapshot, onAdd }: { snapshot: CashOsSnapshot; onAdd?: () => void }) {
+export function CashTransactionsView({
+  snapshot,
+  onAdd,
+  onRefresh,
+}: {
+  snapshot: CashOsSnapshot
+  onAdd?: () => void
+  onRefresh?: () => void
+}) {
+  const [showArchived, setShowArchived] = useState(false)
   const accounts = snapshot.accounts.filter(a => a.status === 'active')
+  const archivedAccounts = snapshot.accounts.filter(a => a.status === 'archived')
   const transactions = [...snapshot.transactions].sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id)).slice(0, 40)
+  const handleMutated = () => { onRefresh?.() }
   return <div className="space-y-5">
     <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
       {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
-        <strong>{account.display_name}</strong>
+        <div className="flex items-start justify-between gap-1">
+          <strong className="leading-snug">{account.display_name}</strong>
+          <CashOsAccountMenu account={account} onMutated={handleMutated} />
+        </div>
         <span className="block text-xs text-[var(--text-muted)]">
           {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
         </span>
@@ -80,6 +96,32 @@ export function CashTransactionsView({ snapshot, onAdd }: { snapshot: CashOsSnap
         <p className="mt-1 text-[var(--text-secondary)]">Track where your money lives — checking, savings, cash on hand, credit cards, and loans.</p>
         {onAdd && <button onClick={onAdd} className="mt-3 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600">Add account</button>}
       </div>}
+      {archivedAccounts.length > 0 && (
+        <div className="mt-4 border-t border-[var(--border-primary)] pt-3">
+          <button
+            type="button"
+            onClick={() => setShowArchived(v => !v)}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+          >
+            {showArchived ? '▲ Hide archived' : `▼ Show ${archivedAccounts.length} archived account${archivedAccounts.length !== 1 ? 's' : ''}`}
+          </button>
+          {showArchived && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {archivedAccounts.map(account => (
+                <div key={account.id} className="rounded-xl border border-dashed border-[var(--border-primary)] p-3 opacity-60">
+                  <div className="flex items-start justify-between gap-1">
+                    <strong className="leading-snug text-[var(--text-secondary)]">{account.display_name}</strong>
+                    <CashOsAccountRestore account={account} onMutated={handleMutated} />
+                  </div>
+                  <span className="block text-xs text-[var(--text-muted)]">
+                    Archived · {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </CashCard>
     <CashCard title="Recent ledger transactions">
       {transactions.length ? <div className="overflow-x-auto"><table className="w-full min-w-[550px] text-left text-sm"><thead className="text-xs uppercase text-[var(--text-muted)]"><tr><th className="py-2">Date</th><th>Description</th><th>Kind / Category</th><th className="text-right">Movement</th></tr></thead><tbody>

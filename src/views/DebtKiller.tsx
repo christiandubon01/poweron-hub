@@ -419,7 +419,7 @@ export default function DebtKiller() {
           )}
           {tab === 'Projects' && <CashProjectsView snapshot={cash.snapshot} />}
           {tab === 'Payroll' && <CashPayrollView snapshot={cash.snapshot} partial={cash.status === 'partial'} />}
-          {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} onAdd={openAddSheet} />}
+          {tab === 'Transactions' && <CashTransactionsView snapshot={cash.snapshot} onAdd={openAddSheet} onRefresh={cash.refresh} />}
           {tab === 'Obligations' && <CashObligationsView snapshot={cash.snapshot} onRefresh={cash.refresh} />}
           {tab === 'Debt Plan' && (
             <div className="space-y-5">
