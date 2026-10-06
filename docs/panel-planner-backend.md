@@ -228,3 +228,9 @@ Note: the pre-existing-failure counts quoted above are the Phase 4C figures; the
 ## Site-integration routing (migrations 149–150)
 
 Planner organization resolution no longer uses the global singleton. `create` and `recover` envelopes carry a required public `site_key`; the database resolves it to an enabled integration and organization, owner recipients/origins/tracking host come from that integration, and `PANEL_PLANNER_OWNER_EMAIL` is a temporary fallback for the legacy Power On integration only. Migration order is 148 → 149 → 150. See `docs/portal-multitenant-routing.md`.
+
+### Photo retry and reconciliation
+
+Uploads remain create-only (`upsert:false`). If upload delivery is ambiguous, finalize the current authorization: the server verifies actual Storage bytes and metadata. A duplicate upload response alone does not mean the saved object is invalid. If validation fails, obtain a **new authorization key** for the remaining unregistered photo IDs; it allocates fresh paths within the original 30-minute deadline. Replaying the same key returns its original allocation, even if a newer key has superseded it. Superseded paths cannot register or close the request. Registered IDs cannot be reauthorized.
+
+Retry only remaining photos after partial registration. Historical authorization files retain superseded allocations for orphan cleanup after each object's 24-hour retention, excluding every registered path. Maintenance remains manually controlled; this change does not activate a scheduler.

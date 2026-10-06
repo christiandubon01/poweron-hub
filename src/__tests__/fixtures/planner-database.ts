@@ -19,6 +19,7 @@ export async function database() {
   await db.exec(readFileSync('supabase/migrations/149_portal_site_integrations.sql','utf8'))
   await db.exec(readFileSync('supabase/migrations/150_panel_planner_site_routing.sql','utf8'))
   await db.exec(readFileSync('supabase/migrations/151_portal_routing_security_boundary.sql','utf8'))
+  await db.exec(readFileSync('supabase/migrations/152_panel_planner_photo_retry.sql','utf8'))
   await db.exec("INSERT INTO public.test_profiles VALUES('30000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-000000000001','admin'),('30000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000002','admin')")
   await db.exec(SITES)
   // Local fixture-only substitution; production helper has no clock override.
