@@ -4,7 +4,7 @@ import {createRequire} from 'node:module'
 import {randomUUID} from 'node:crypto'
 import fixture from './fixtures/planner-payload-v1.json'
 import variants from './fixtures/planner-payload-variants-v1.json'
-import {database,reset,role,rpc,ORG,TENANT,OWNER,EMPLOYEE,OTHER_OWNER} from './fixtures/planner-database'
+import {database,reset,role,rpc,SITE_A,ORG,TENANT,OWNER,EMPLOYEE,OTHER_OWNER} from './fixtures/planner-database'
 const require=createRequire(import.meta.url)
 const {validateEnvelope,validatePayload,allowedOrigins,PlannerError,STATUS}=require('../../netlify/functions/lib/planner-contract.cjs')
 const {makeHandler}=require('../../netlify/functions/lib/planner-handler.cjs')
@@ -16,12 +16,12 @@ function envelope(photos=0) {
   const p=clone(fixture); const key=randomUUID();p.submission.idempotency_key=key
   p.photos=Array.from({length:photos},()=>({category:'panel_label',caption:'Customer label',file_name:'label.png',
     mime_type:'image/png',size_bytes:32,upload_state:'not_started',review_state:'not_reviewed'}))
-  return {contract_version:1,action:'create',idempotency_key:key,recovery_token:SECRET,planner_payload:p,
+  return {contract_version:1,action:'create',site_key:SITE_A,idempotency_key:key,recovery_token:SECRET,planner_payload:p,
     customer_note:'Please call after work',consent_version:'panel_planner_contact_v1',
     photo_manifest:p.photos.map((_,i)=>({client_photo_id:randomUUID(),payload_photo_index:i}))}
 }
 const createArgs=b=>({p_payload:b.planner_payload,p_idempotency_key:b.idempotency_key,p_recovery_token:b.recovery_token,
-  p_customer_note:b.customer_note,p_consent_version:b.consent_version,p_photo_manifest:b.photo_manifest})
+  p_customer_note:b.customer_note,p_consent_version:b.consent_version,p_photo_manifest:b.photo_manifest,p_site_key:b.site_key})
 describe('planner strict transport contract',()=>{
 
   it.each(variants)('accepts frozen observation/null payload variant %#',payload=>{
@@ -86,7 +86,7 @@ describe('planner PostgreSQL transactions, security and recovery',()=>{
   async function authorize(request,b,ids=b.photo_manifest.map(m=>m.client_photo_id),key=randomUUID()){
     return rpc(db,'authorize_panel_planner_photos',{p_request_id:request.request_id,p_recovery_token:SECRET,p_authorization_key:key,p_photo_ids:ids})
   }
-  async function recover(b){return rpc(db,'recover_panel_planner_request',{p_idempotency_key:b.idempotency_key,p_recovery_token:SECRET})}
+  async function recover(b){return rpc(db,'recover_panel_planner_request',{p_idempotency_key:b.idempotency_key,p_recovery_token:SECRET,p_site_key:SITE_A})}
   async function storeFile(file,override={}){
     await db.query("INSERT INTO storage.objects(bucket_id,name,metadata,created_at) VALUES('portal-uploads',$1,$2::jsonb,planner_private.now()) ON CONFLICT(bucket_id,name) DO UPDATE SET metadata=excluded.metadata",
       [file.object_path,JSON.stringify({size:file.size_bytes,mimetype:file.mime_type,...override})])
@@ -345,7 +345,7 @@ describe('planner notification foundation',()=>{
     }}
   }
   const event=()=>({id:randomUUID(),claim_token:randomUUID(),request_id:randomUUID(),
-    event_type:'owner_new_request',name:'Trusted saved name',email:'customer@example.com',phone:'7605550100',description:'Panel request'})
+    event_type:'owner_new_request',owner_email_fallback_allowed:true,name:'Trusted saved name',email:'customer@example.com',phone:'7605550100',description:'Panel request'})
   it('owner recipient comes only from backend config',async()=>{
     const e=event();e.recipient='attacker@example.com';const b=backend([e]);let sent
     const result=await runMaintenance({env,backend:b,fetcher:async(_url,opt)=>{sent=JSON.parse(opt.body);return new Response('{"id":"provider-id"}')}})
@@ -394,7 +394,7 @@ describe('planner HTTP action orchestration',()=>{
   it('create then recover through actual HTTP dispatch and SQL',async()=>{
     const b=envelope();const h=handler();const created=await h(request(b));expect(created.statusCode).toBe(201)
     const receipt=JSON.parse(created.body)
-    const recovered=await h(request({contract_version:1,action:'recover',idempotency_key:b.idempotency_key,recovery_token:SECRET}))
+    const recovered=await h(request({contract_version:1,action:'recover',site_key:SITE_A,idempotency_key:b.idempotency_key,recovery_token:SECRET}))
     expect(recovered.statusCode).toBe(200);expect(JSON.parse(recovered.body).request_id).toBe(receipt.request_id)
   })
   it('HTTP duplicate create does not create duplicate notification work',async()=>{
@@ -419,6 +419,6 @@ describe('planner HTTP action orchestration',()=>{
   })
   it('anonymous raw service RPC execution remains denied',async()=>{
     await db.exec('SET ROLE anon')
-    await expect(rpc(db,'recover_panel_planner_request',{p_idempotency_key:randomUUID(),p_recovery_token:SECRET})).rejects.toThrow('permission denied')
+    await expect(rpc(db,'recover_panel_planner_request',{p_idempotency_key:randomUUID(),p_recovery_token:SECRET,p_site_key:SITE_A})).rejects.toThrow('permission denied')
   })
 })

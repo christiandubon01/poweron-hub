@@ -19,6 +19,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { classifySource } from '@/services/portal/attributionSource'
 import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
+import { POWER_ON_PORTAL_SITE_KEY, resolvePortalSiteKey } from '@/services/portal/portalSite'
 
 declare global {
   interface Window { gtag?: (...args: unknown[]) => void }
@@ -654,6 +655,11 @@ export default function CustomerPortalView() {
         return value ? value : null
       }
 
+      const siteKey = resolvePortalSiteKey(typeof window !== 'undefined' ? window.location.search : '', import.meta.env.VITE_PORTAL_SITE_KEY as string | undefined)
+      // Legacy Power On notification functions (hard-coded Power On recipients/branding) must never
+      // fire for another organization's site; per-site notifications are a follow-up (see docs).
+      const isPowerOnSite = siteKey === POWER_ON_PORTAL_SITE_KEY
+
       const { data: submitResult, error: dbError } = await (supabase as any).rpc('submit_portal_request', {
         p_name:             form.name.trim(),
         p_phone:            form.phone.trim() || null,
@@ -679,6 +685,8 @@ export default function CustomerPortalView() {
         p_page_url:         attrValue('page_url'),
         p_source_category:  classifySource(attribution),
         p_referred_by_text: form.referred_by.trim() || null,
+        // Multi-tenant routing: opaque public site key resolved server-side (never an organization id).
+        p_site_key:         siteKey,
       })
 
       const submitData = submitResult as { request_id: string; attach_token: string } | null
@@ -716,7 +724,7 @@ export default function CustomerPortalView() {
       fireAdsConversion()
 
       // Internal lead notification — fire and forget, never blocks lead save
-      fetch('/.netlify/functions/notify-new-lead', {
+      if (isPowerOnSite) fetch('/.netlify/functions/notify-new-lead', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -739,7 +747,7 @@ export default function CustomerPortalView() {
       }).catch(() => {})
 
       // Send confirmation email (fire and forget)
-      if (form.email.trim()) {
+      if (isPowerOnSite && form.email.trim()) {
         fetch('/.netlify/functions/portal-schedule', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

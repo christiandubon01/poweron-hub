@@ -150,8 +150,8 @@ function validatePayload(p) {
 function validateEnvelope(b) {
   if (!record(b) || b.contract_version !== 1) fail('UNSUPPORTED_SCHEMA');
   const fields = {
-    create: ['idempotency_key','recovery_token','planner_payload','customer_note','consent_version','photo_manifest'],
-    recover: ['idempotency_key','recovery_token'],
+    create: ['site_key','idempotency_key','recovery_token','planner_payload','customer_note','consent_version','photo_manifest'],
+    recover: ['site_key','idempotency_key','recovery_token'],
     authorize_photos: ['request_id','recovery_token','authorization_key','photo_ids'],
     finalize_photos: ['request_id','recovery_token','finalization_key','authorization_id','photo_ids','close_photos'],
     read_photos: ['request_id','recovery_token']
@@ -162,6 +162,7 @@ function validateEnvelope(b) {
   for (const k of ['idempotency_key','request_id','authorization_key','finalization_key','authorization_id']) {
     if (Object.hasOwn(b,k) && (typeof b[k] !== 'string' || !UUID.test(b[k]))) fail();
   }
+  if (Object.hasOwn(b,'site_key') && (typeof b.site_key !== 'string' || !SITE_KEY.test(b.site_key))) fail();
   if (b.action === 'create') {
     validatePayload(b.planner_payload);
     if (b.planner_payload.submission.idempotency_key !== b.idempotency_key) fail();
@@ -183,6 +184,9 @@ function validateEnvelope(b) {
   if (b.action === 'finalize_photos' && (typeof b.close_photos !== 'boolean' || (!b.close_photos && b.photo_ids.length === 0))) fail();
   return b;
 }
+const SITE_KEY = /^ps_[a-z0-9]{24,64}$/;
+/** Bootstrap origins (Power On) plus the one exact preview origin. Per-site origins live in
+ *  portal_site_integrations; the handler unions those in and the RPCs enforce the per-site match. */
 function allowedOrigins(env) {
   const set = new Set(['https://poweronsolutionsllc.com','https://www.poweronsolutionsllc.com','https://app.poweronsolutionsllc.com']);
   if (env.PANEL_PLANNER_PREVIEW_ORIGIN) {
@@ -192,4 +196,4 @@ function allowedOrigins(env) {
   }
   return set;
 }
-module.exports = { PlannerError, STATUS, UUID, MAX_BYTES, validatePayload, validateEnvelope, allowedOrigins };
+module.exports = { SITE_KEY, PlannerError, STATUS, UUID, MAX_BYTES, validatePayload, validateEnvelope, allowedOrigins };

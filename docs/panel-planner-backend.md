@@ -224,3 +224,7 @@ COMMIT;
 ```
 
 Note: the pre-existing-failure counts quoted above are the Phase 4C figures; the current-main baseline (Phase 4C-R) is 6287 passed / 47 failed / 1 skipped, identical to the reconciled feature.
+
+## Site-integration routing (migrations 149–150)
+
+Planner organization resolution no longer uses the global singleton. `create` and `recover` envelopes carry a required public `site_key`; the database resolves it to an enabled integration and organization, owner recipients/origins/tracking host come from that integration, and `PANEL_PLANNER_OWNER_EMAIL` is a temporary fallback for the legacy Power On integration only. Migration order is 148 → 149 → 150. See `docs/portal-multitenant-routing.md`.

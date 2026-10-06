@@ -8,7 +8,14 @@ function makeHandler({env=process.env,backendFactory=()=>runtime(env)}={}) {
     const headers={'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin',
       'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type'};
     const respond=(status,body)=>({statusCode:status,headers,body:JSON.stringify(body)});
-    if(!origin || !allowedOrigins(env).has(origin)) return respond(403,{contract_version:1,error:{code:'ORIGIN_DENIED',retryable:false}});
+    const denied=()=>respond(403,{contract_version:1,error:{code:'ORIGIN_DENIED',retryable:false}});
+    if(!origin || typeof origin!=='string') return denied();
+    if(!allowedOrigins(env).has(origin)) {
+      // Exact-match against enabled site integrations' origins; any lookup failure fails closed.
+      let known=false;
+      try { const list=await backendFactory().rpc('portal_site_allowed_origins',{}); known=Array.isArray(list)&&list.includes(origin); } catch { known=false; }
+      if(!known) return denied();
+    }
     headers['Access-Control-Allow-Origin']=origin;
     if(event.httpMethod==='OPTIONS')return {statusCode:204,headers,body:''};
     if(event.httpMethod!=='POST')return respond(405,{contract_version:1,error:{code:'INVALID_PAYLOAD',retryable:false}});
@@ -27,10 +34,12 @@ function makeHandler({env=process.env,backendFactory=()=>runtime(env)}={}) {
         case 'create':
           result=await backend.rpc('submit_panel_planner_request',{
             p_payload:b.planner_payload,p_idempotency_key:b.idempotency_key,p_recovery_token:b.recovery_token,
-            p_customer_note:b.customer_note,p_consent_version:b.consent_version,p_photo_manifest:b.photo_manifest});
+            p_customer_note:b.customer_note,p_consent_version:b.consent_version,p_photo_manifest:b.photo_manifest,
+            p_site_key:b.site_key,p_origin:origin});
           break;
         case 'recover':
-          result=await backend.rpc('recover_panel_planner_request',{p_idempotency_key:b.idempotency_key,p_recovery_token:b.recovery_token});
+          result=await backend.rpc('recover_panel_planner_request',{p_idempotency_key:b.idempotency_key,p_recovery_token:b.recovery_token,
+            p_site_key:b.site_key,p_origin:origin});
           break;
         case 'authorize_photos': {
           const batch=await backend.rpc('authorize_panel_planner_photos',{p_request_id:b.request_id,

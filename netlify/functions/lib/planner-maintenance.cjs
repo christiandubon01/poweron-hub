@@ -11,16 +11,19 @@ async function runMaintenance({env=process.env,backend=runtime(env),fetcher=fetc
     try {
       if(!env.RESEND_API_KEY || !env.PANEL_PLANNER_FROM_EMAIL)throw new Error('configuration');
       const owner=event.event_type==='owner_new_request';
-      const recipient=owner ? env.PANEL_PLANNER_OWNER_EMAIL : event.email;
+      // Trusted per-site recipient. PANEL_PLANNER_OWNER_EMAIL is a TEMPORARY fallback honored only for the
+      // legacy Power On integration (owner_email_fallback_allowed); other sites never use it.
+      const recipient=owner ? (event.owner_email || (event.owner_email_fallback_allowed ? env.PANEL_PLANNER_OWNER_EMAIL : null)) : event.email;
       if(!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))throw new Error('configuration');
-      const tracking='https://app.poweronsolutionsllc.com/portal/track/'+event.request_id;
+      const tracking=(event.tracking_base_url||'https://app.poweronsolutionsllc.com')+'/portal/track/'+event.request_id;
+      const brand=event.display_name||event.site_label||'your service provider';
       const proposed={
         from:env.PANEL_PLANNER_FROM_EMAIL,to:[recipient],
-        subject:owner ? 'New Panel Planner service request' : 'We received your request — Power On Solutions',
+        subject:owner ? 'New Panel Planner service request' : 'We received your request — '+brand,
         text:owner ? ['New Panel Planner request',event.request_id,event.name,event.phone||'',event.email||'',
           event.address||'',event.city||'',event.description||'',tracking].join('\n') :
           ['Hi '+event.name+',','Your service request is saved.',tracking,
-            'Optional photo delivery is tracked separately.','Power On Solutions'].join('\n')
+            'Optional photo delivery is tracked separately.',brand].join('\n')
       };
       // Freeze exact provider payload before first attempt; config/contact changes cannot alter replays.
       const payload=await backend.rpc('prepare_panel_planner_notification',{
