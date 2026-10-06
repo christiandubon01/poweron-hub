@@ -1,7 +1,8 @@
-// Server-only runner. Review/configure scheduler before deployment.
-import maintenance from '../netlify/functions/lib/planner-maintenance.cjs';
-if (process.argv.includes('--run')) {
-  console.log(JSON.stringify(await maintenance.runMaintenance()));
+// Server-only runner. Both --run and the explicit enable switch are required.
+import scheduler from '../netlify/functions/lib/planner-scheduler.cjs';
+if(process.argv.includes('--run')) {
+  const result=await scheduler.makeScheduledHandler()();
+  if(result.statusCode!==200)process.exitCode=1;
 } else {
-  console.log('Use --run only in the reviewed backend job environment.');
+  console.log(JSON.stringify({status:'disabled',maintenance_enabled:false,reason:'explicit_run_required'}));
 }

@@ -367,6 +367,17 @@ describe('planner PostgreSQL transactions, security and recovery',()=>{
     expect((await db.query('SELECT snapshot,payload_digest,recovery_token_hash FROM portal_request_planner_details')).rows[0].snapshot).toEqual(b.planner_payload)
   })
   it('notification intents come from saved request and email presence',async()=>{await create();let events=await rpc(db,'claim_panel_planner_notifications');expect(events.length).toBe(1);expect(events[0].name).toBe('Planner Test');expect(events[0].event_type).toBe('owner_new_request')})
+  it('failed and uncertain events are not claimed or revived',async()=>{
+    await create();await create();await db.exec("UPDATE portal_planner_notification_events SET state='failed' WHERE id=(SELECT id FROM portal_planner_notification_events LIMIT 1); UPDATE portal_planner_notification_events SET state='uncertain' WHERE state='pending';")
+    const before=(await db.query('SELECT id,state,attempts FROM portal_planner_notification_events ORDER BY id')).rows
+    expect(await rpc(db,'claim_panel_planner_notifications')).toEqual([])
+    expect((await db.query('SELECT id,state,attempts FROM portal_planner_notification_events ORDER BY id')).rows).toEqual(before)
+  })
+  it('active notification claims exclude a concurrent runner',async()=>{
+    await create();const first=await rpc(db,'claim_panel_planner_notifications');expect(first).toHaveLength(1)
+    expect(await rpc(db,'claim_panel_planner_notifications')).toEqual([])
+    expect((await db.query('SELECT state,attempts FROM portal_planner_notification_events')).rows[0]).toEqual({state:'sending',attempts:1})
+  })
   it('failed notification never changes request saved',async()=>{const b=envelope();await create(b);const [event]=await rpc(db,'claim_panel_planner_notifications');await rpc(db,'complete_panel_planner_notification',{p_id:event.id,p_claim_token:event.claim_token,p_state:'failed',p_message_id:null});const receipt=await recover(b);expect(receipt.request_state).toBe('saved');expect(receipt.notifications.owner).toBe('failed')})
   it('rate counter rejects excess requests and expires window',async()=>{const hash='f'.repeat(64);for(let i=0;i<60;i++)expect(await rpc(db,'panel_planner_rate_limit',{p_bucket_hash:hash})).toBe(true);expect(await rpc(db,'panel_planner_rate_limit',{p_bucket_hash:hash})).toBe(false);await db.exec("UPDATE test_clock SET t=t+interval '10 minutes'");expect(await rpc(db,'panel_planner_rate_limit',{p_bucket_hash:hash})).toBe(true)})
   it('attribution fields preserved without putting snapshot into public description',async()=>{const b=envelope();b.planner_payload.attribution={utm_source:'google',gclid:'G1',gbraid:'B1',wbraid:'W1',utm_medium:'cpc',utm_campaign:'panel',utm_content:'ad',utm_term:'panel upgrade'};await create(b);const row=(await db.query('SELECT * FROM portal_requests')).rows[0];for(const[k,v]of Object.entries(b.planner_payload.attribution))expect(row[k]).toBe(v)})

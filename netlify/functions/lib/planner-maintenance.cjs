@@ -1,12 +1,17 @@
 'use strict';
 const {runtime}=require('./planner-runtime.cjs');
-async function runMaintenance({env=process.env,backend=runtime(env),fetcher=fetch}={}) {
+async function runMaintenance({env=process.env,backend=runtime(env),fetcher=fetch,onStage=()=>{}}={}) {
+  onStage('orphan_discovery');
   const paths=await backend.rpc('panel_planner_orphan_paths',{});
+  onStage('orphan_cleanup');
   await backend.remove(paths);
+  onStage('technical_expiry');
   const expired=await backend.rpc('panel_planner_expire_technical_data',{});
+  onStage('notification_claim');
   const events=await backend.rpc('claim_panel_planner_notifications',{});
   const counts={orphans_removed:paths.length,technical_records_expired:expired,sent:0,failed:0,uncertain:0};
   for(const event of events) {
+    onStage('notification_delivery');
     let state='failed', messageId=null;
     try {
       if(!env.RESEND_API_KEY || !env.PANEL_PLANNER_FROM_EMAIL)throw new Error('configuration');
