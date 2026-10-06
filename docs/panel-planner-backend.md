@@ -60,7 +60,7 @@ The registration RPC rechecks capability/deadline/state under row locks and inde
 
 Photo states: not_requested, pending, partial, complete, closed_without_all_photos, expired, unavailable_after_acceptance. PUT success alone is never registration success.
 
-Customer planner reads require request ID plus its own unexpired recovery capability. UUID-only legacy attachment reads explicitly reject planner rows; lookup failures fail closed. Legacy non-planner behavior is preserved once migration 147 is present. Deploy the migration BEFORE the guarded reader, otherwise legacy customer reads deliberately fail closed while the details table is unavailable. Existing JWT/org-scoped owner reading is preserved. Planner customer read links last 300 seconds. No bucket/public-policy change is made.
+Customer planner reads require request ID plus its own unexpired recovery capability. UUID-only legacy attachment reads explicitly reject planner rows; lookup failures fail closed. Legacy non-planner behavior is preserved once migration 148 is present. Deploy the migration BEFORE the guarded reader, otherwise legacy customer reads deliberately fail closed while the details table is unavailable. Existing JWT/org-scoped owner reading is preserved. Planner customer read links last 300 seconds. No bucket/public-policy change is made.
 
 ## Authenticated owner and HUNTER contracts
 
@@ -198,3 +198,29 @@ Final feature status (exact 22-file implementation boundary, nothing staged):
 Git diff --check and no-index whitespace checks of all new files passed. Temporary baseline worktree and execution logs were removed after capturing results. No commits or pushes were made.
 
 Explicit same-organization admin access, missing canonical tenant mapping and missing mapped-tenant membership checks also pass. Final full-suite totals are 6,306 passed, 59 pre-existing failures and one skipped (6,366 total); focused totals are 462 passed including 139 new planner checks. Failing-file counts still exactly match the captured clean baseline inventory.
+
+## Phase 4D staging validation record (2026-10-06)
+
+No isolated staging Supabase/Netlify target exists (the only linked project, `supabase/.temp/linked-project.json`, is production and was not used). Validation ran on a disposable local PostgreSQL 16 cluster with independent client sessions. The repository migration history cannot be replayed from empty (pgvector/pg_cron/pg_net, MySQL-style `COMMENT` in 052, and objects created outside the migration files), so prerequisites were layered on top of the replayable migrations through 147 (including `147_cash_owner_facts.sql`). Results: migration 148 applies cleanly with no object/policy/grant collisions and no change to any non-planner object; the empty-data rollback below returns the schema byte-for-byte to its pre-148 state; independent-session races (12 callers) for create, HUNTER acceptance, authorization, finalization and notification leasing all pass. Real Supabase Storage, signed-URL CORS and Resend delivery remain open staging gates.
+
+### Verified empty-data rollback order
+
+`planner_private` functions depend on the details row type, so drop the schema BEFORE the tables. The script aborts if any planner row exists.
+
+```sql
+BEGIN;
+DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.portal_request_planner_details)
+  OR EXISTS(SELECT 1 FROM public.portal_planner_notification_events)
+  OR EXISTS(SELECT 1 FROM public.portal_planner_rate_limits)
+  THEN RAISE EXCEPTION 'planner data present: rollback aborted'; END IF; END $$;
+DO $$ DECLARE r record; BEGIN
+  FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p WHERE p.pronamespace='public'::regnamespace
+    AND (p.proname ~ 'panel_planner' OR p.proname='accept_portal_request_to_hunter')
+  LOOP EXECUTE 'DROP FUNCTION '||r.sig; END LOOP; END $$;
+DROP SCHEMA planner_private CASCADE;
+DROP TABLE public.portal_planner_notification_events, public.portal_planner_rate_limits, public.portal_request_planner_details;
+ALTER TABLE public.portal_requests DROP CONSTRAINT portal_requests_id_org_unique;
+COMMIT;
+```
+
+Note: the pre-existing-failure counts quoted above are the Phase 4C figures; the current-main baseline (Phase 4C-R) is 6287 passed / 47 failed / 1 skipped, identical to the reconciled feature.
