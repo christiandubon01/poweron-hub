@@ -331,8 +331,8 @@ describe('CASH-8 Debt Killer workspace shell', () => {
     control.cashSnapshot = readySnapshot
     control.cashEditing = false
     await act(async () => { root.render(<DebtKiller />) })
-    // Ready state: Outlook renders TOTAL CASH metric
-    expect(host.textContent).toContain('TOTAL CASH')
+    // Ready state: Outlook renders the single Cash Status row (CASH I HAVE)
+    expect(host.textContent).toContain('CASH I HAVE')
     expect(host.textContent).toContain('$2,500.00')
     expect(host.textContent).not.toContain('Needs assumptions')
   })

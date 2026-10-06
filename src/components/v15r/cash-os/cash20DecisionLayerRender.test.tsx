@@ -43,36 +43,40 @@ describe('owner decision layer (rendered)', () => {
   })
   afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
 
-  it('answers the owner questions in plain language, with future money kept apart from cash', async () => {
+  it('answers the owner questions compactly, with future money kept apart from cash', async () => {
     await act(async () => { root.render(<CashOsDecisionLayer snapshot={snapshot()} />) })
     const text = host.textContent ?? ''
-    expect(text).toContain('Where you stand today')
-    expect(text).toContain('Cash you have')
-    expect(text).toContain('$150.00')
-    expect(text).toContain("Money that isn't cash yet")
+    // The four cash-status numbers belong to Outlook's single status row, not this layer.
+    expect(text).not.toContain('Where you stand today')
+    expect(text).not.toContain('Cash you have')
+    for (const title of ['Today', 'Needs attention', 'Money', 'Next']) expect(host.querySelector(`section[aria-label="${title}"]`), title).not.toBeNull()
     expect(text).toContain('None of this is in your cash total')
-    expect(host.querySelector('[data-testid="money-unlockable"]')?.textContent).toContain('Desert Willow')
-    expect(host.querySelector('[data-testid="money-unlockable"]')?.textContent).toContain('$950.00')
-    expect(host.querySelector('[data-testid="money-collectible"]')).toBeNull()
-    expect(host.querySelector('[data-testid="money-not-counted"]')?.textContent).toContain('Surgery Center')
-    expect(text).toContain('Watch out for')
+    const rows = [...host.querySelectorAll('[data-testid="money-row"]')]
+    const dw = rows.find(r => r.textContent?.includes('Desert Willow'))!
+    expect(dw.querySelector('[data-money-state="unlockable"]')).not.toBeNull()
+    expect(dw.textContent).toContain('$950.00')
+    expect(rows.find(r => r.textContent?.includes('Surgery Center'))?.querySelector('[data-money-state="not_counted"]')).not.toBeNull()
     expect(text).toContain('CareCredit: promotional deadline 2026-12-22')
-    expect(text).toContain('What you could do next')
+    // The old always-expanded walls are gone.
+    for (const old of ['Watch out for', 'What you could do next', "Money that isn't cash yet", 'Next 7 days']) expect(text).not.toContain(old)
     // The system's internal vocabulary does not leak into the owner layer.
     for (const jargon of ['Collection Clock', 'funding gap', 'Required before', 'bucket', 'envelope', 'cash commitment']) {
       expect(text.toLowerCase()).not.toContain(jargon.toLowerCase())
     }
   })
 
-  it('every rendered action shows a reason and flags what it cannot know', async () => {
+  it('every action shows a reason when opened and flags what it cannot know', async () => {
     await act(async () => { root.render(<CashOsDecisionLayer snapshot={snapshot()} />) })
-    const actions = [...host.querySelectorAll('[data-testid="decision-action"]')]
-    expect(actions.length).toBeGreaterThan(0)
-    for (const el of actions) {
+    const more = [...host.querySelectorAll('[data-testid="command-next"] button')].find(b => /^Show d+ more$/.test(b.textContent ?? ''))
+    if (more) await act(async () => { (more as HTMLElement).click() })
+    const rows = [...host.querySelectorAll('[data-testid="next-row"]')]
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) await act(async () => { (row.querySelector('button[aria-expanded]') as HTMLElement).click() })
+    for (const el of host.querySelectorAll('[data-testid="next-row"]')) {
       expect(el.querySelectorAll('li').length).toBeGreaterThan(0)
-      expect(['recommended', 'needs_verification', 'informational']).toContain(el.getAttribute('data-certainty'))
+      expect(el.getAttribute('data-row-id')).toMatch(/^next:/)
     }
-    expect(actions.some(el => (el.textContent ?? '').includes('Not known yet'))).toBe(true)
+    expect([...host.querySelectorAll('[data-testid="next-row"]')].some(el => (el.textContent ?? '').includes('Not known yet'))).toBe(true)
     expect(host.querySelector('[data-testid="decision-data-gaps"]')?.textContent).toContain('Past-due and catch-up amounts are not stored')
   })
 

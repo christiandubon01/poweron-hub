@@ -74,7 +74,13 @@ describe('owner facts UI', () => {
       el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
     })
   }
-  const card = (testId: string, name: string) => [...host.querySelectorAll(`[data-testid="${testId}"] .text-sm`)].find(d => d.textContent?.includes(name)) as HTMLElement
+  // Money rows are compact; the job editor lives in the expanded (Level 2) panel of the row.
+  const moneyRow = async (name: string) => {
+    const row = [...host.querySelectorAll('[data-testid="money-row"]')].find(r => r.textContent?.includes(name)) as HTMLElement
+    if (!row) throw new Error('missing money row: ' + name)
+    if (row.querySelector('button[aria-expanded="false"]')) await click(row.querySelector('button[aria-expanded]'))
+    return row
+  }
   const field = (scope: ParentNode, question: string) => {
     const labelEl = [...scope.querySelectorAll('label')].find(l => l.textContent?.includes(question))
     return (labelEl?.querySelector('input,select,textarea') ?? null) as HTMLInputElement | null
@@ -82,7 +88,7 @@ describe('owner facts UI', () => {
 
   async function openEditor(testId: string, name: string, onRefresh = vi.fn()) {
     await act(async () => { root.render(<CashOsDecisionLayer snapshot={snapshot()} onRefresh={onRefresh} />) })
-    await click(byText('button', 'Tell Cash OS about this job', card(testId, name)))
+    await click(byText('button', 'Tell Cash OS about this job', await moneyRow(name)))
     return { editor: host.querySelector('[data-testid="project-facts-editor"]') as HTMLElement, onRefresh }
   }
 
@@ -109,8 +115,7 @@ describe('owner facts UI', () => {
 
   it('Surgery Center: time & material plus a plain-language blocker', async () => {
     await act(async () => { root.render(<CashOsDecisionLayer snapshot={snapshot()} onRefresh={vi.fn()} />) })
-    const notCounted = host.querySelector('[data-testid="money-not-counted"]')!
-    await click(byText('button', 'Tell Cash OS about this job', notCounted))
+    await click(byText('button', 'Tell Cash OS about this job', await moneyRow('Surgery Center')))
     const editor = host.querySelector('[data-testid="project-facts-editor"]') as HTMLElement
     await setField(field(editor, 'How is this job billed?'), 'time_and_material')
     expect(editor.textContent).toContain('Future hours are never counted as money owed')
@@ -139,7 +144,7 @@ describe('owner facts UI', () => {
       amountCertainty: 'fixed', requirement: 'required', confidence: 'expected', status: 'scheduled', sourceType: 'manual', reconciliationState: 'unreconciled',
       projectId: 'mh', provenance: { source: { organizationId: ORG, kind: 'cash_commitment', recordId: 'c1' }, freshness: 'current', confidence: 'expected', reconciliationState: 'unreconciled' } }
     await act(async () => { root.render(<CashOsDecisionLayer snapshot={snapshot([spend])} onRefresh={vi.fn()} />) })
-    await click(byText('button', 'Tell Cash OS about this job', card('money-unlockable', 'Mobile Home')))
+    await click(byText('button', 'Tell Cash OS about this job', await moneyRow('Mobile Home')))
     const editor = host.querySelector('[data-testid="project-facts-editor"]') as HTMLElement
     await setField(field(editor, 'Do you need to spend money'), 'yes')
     expect(editor.textContent).toContain('$1,800.00 total')

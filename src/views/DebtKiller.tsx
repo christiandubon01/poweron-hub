@@ -139,6 +139,15 @@ function PreSetupTransactions({ sources, onAdd, onRefresh }: { sources: CashOsSo
 }
 
 
+/** Outlook: status row + graph/day inspector, then the compact command center. Detail lives in the other tabs. */
+function OutlookPanel({ cash, onNavigate }: { cash: ReturnType<typeof useCashOsSnapshot>; onNavigate: (tab: DebtKillerTab) => void }) {
+  const snapshot = cash.snapshot
+  if (!snapshot) return null
+  return <CashOsOutlook snapshot={snapshot} horizonDays={cash.horizonDays} confidenceMode={cash.confidenceMode}
+    onHorizon={cash.setHorizonDays} onConfidence={cash.setConfidenceMode} onNavigate={onNavigate}
+    afterGraph={graphLink => <CashOsDecisionLayer snapshot={snapshot} onRefresh={cash.refresh} onNavigate={onNavigate} graphLink={graphLink} />} />
+}
+
 export default function DebtKiller() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [tab, setTab] = useState<DebtKillerTab>('Outlook')
@@ -400,16 +409,7 @@ export default function DebtKiller() {
         </CashCard>
       ) : cash.snapshot ? (
         <>
-          {tab === 'Outlook' && authoritative && (<>
-            <CashOsDecisionLayer snapshot={cash.snapshot} onRefresh={cash.refresh} />
-            <CashOsOutlook
-              snapshot={cash.snapshot}
-              horizonDays={cash.horizonDays}
-              confidenceMode={cash.confidenceMode}
-              onHorizon={cash.setHorizonDays}
-              onConfidence={cash.setConfidenceMode}
-            />
-          </>)}
+          {tab === 'Outlook' && authoritative && <OutlookPanel cash={cash} onNavigate={setTab} />}
           {tab === 'Calendar' && (
             <div className="space-y-4">
               <div className="flex flex-wrap gap-2" aria-label="Calendar horizon">
