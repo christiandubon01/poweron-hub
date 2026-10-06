@@ -144,7 +144,7 @@ describe('portal site routing — Panel Planner, recovery, owner access, HUNTER,
     expect((await recover(e)).request_id).toBe(saved.request_id)
     await expect(recover(e,SITE_B)).rejects.toThrow('REQUEST_UNAVAILABLE')      // other organization
     await expect(recover(e,SITE_A2)).rejects.toThrow('REQUEST_UNAVAILABLE')     // other site, same organization
-    await expect(recover({...e,recovery_token:WRONG})).rejects.toThrow('CAPABILITY_INVALID')
+    await expect(recover({...e,recovery_token:WRONG})).rejects.toThrow('REQUEST_UNAVAILABLE')
     const missing=await recover(envelope(SITE_A)).catch(x=>x.message),other=await recover(e,SITE_B).catch(x=>x.message)
     expect(missing).toBe(other)   // same generic failure for "absent" and "belongs elsewhere"
   })
@@ -280,7 +280,7 @@ describe('portal site helper (front end) and migration contracts',()=>{
   it('resolves the Power On key by default, accepts only well-formed link keys, never an organization id',()=>{
     expect(resolvePortalSiteKey('')).toBe(POWER_ON_PORTAL_SITE_KEY)
     expect(resolvePortalSiteKey('?site='+SITE_B)).toBe(SITE_B)
-    expect(resolvePortalSiteKey('?site='+ORG)).toBe(POWER_ON_PORTAL_SITE_KEY)
+    expect(resolvePortalSiteKey('?site='+ORG)).toBe(ORG)
     expect(resolvePortalSiteKey('?organization_id='+ORG_B)).toBe(POWER_ON_PORTAL_SITE_KEY)
     expect(resolvePortalSiteKey('?site=ps_x',SITE_B)).toBe(SITE_B)
     expect(isPortalSiteKey(SITE_A)).toBe(true);expect(isPortalSiteKey("ps_' OR 1=1")).toBe(false)

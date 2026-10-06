@@ -72,7 +72,7 @@ const MILESTONE_LABELS: Record<string, { label: string; icon: string; desc: stri
   on_my_way:        { label: 'On My Way',             icon: '🚗', desc: 'Your technician is heading to your location.' },
   arrived:          { label: 'Arrived',               icon: '📍', desc: 'Your technician has arrived.' },
   work_started:     { label: 'Work Started',          icon: '⚡', desc: 'Work is in progress.' },
-  work_completed:   { label: 'Work Completed',        icon: '🎉', desc: 'All done! Thank you for choosing Power On Solutions.' },
+  work_completed:   { label: 'Work Completed',        icon: '🎉', desc: 'All done! Thank you for choosing your service provider.' },
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -378,6 +378,7 @@ export default function PortalTrackView() {
   useEffect(() => { injectStyles() }, [])
 
   const { requestId } = useParams<{ requestId: string }>()
+  const [brand, setBrand] = useState<{ display_name: string; logo_url: string | null; public_phone: string | null; site_key: string | null; power_on_compatibility: boolean } | null>(null)
   const [request, setRequest] = useState<PortalRequest | null>(null)
   const [timeline, setTimeline] = useState<JobTimeline[]>([])
   const [techLocation, setTechLocation] = useState<TechLocation | null>(null)
@@ -397,6 +398,8 @@ export default function PortalTrackView() {
     async function loadRequestStatus() {
       const { data } = await (supabase as any).rpc('get_portal_request_status', { p_id: requestId })
       if (!data) { setNotFound(true); setLoading(false); return }
+      const { data: config } = await (supabase as any).rpc('get_portal_request_public_config', { p_id: requestId })
+      setBrand(config || null)
       setRequest(data as PortalRequest)
       setLoading(false)
 
@@ -461,13 +464,18 @@ export default function PortalTrackView() {
   const isOnMyWay = doneTypes.has('on_my_way') && !doneTypes.has('arrived')
   const timelineMap = Object.fromEntries(timeline.map(t => [t.event_type, t]))
 
+  const brandName = brand?.display_name || 'Your service provider'
+  const brandLogo = brand?.logo_url || (brand?.power_on_compatibility ? LOGO_URL : null)
+  const brandPhone = brand?.public_phone || (brand?.power_on_compatibility ? '(760) 623-8962' : null)
+  const portalUrl = brand?.site_key ? '/portal?site=' + encodeURIComponent(brand.site_key) : '/portal'
+
   return (
     <div className="pt">
       <div className="pt-grain" />
       <nav className="pt-nav">
         <div className="pt-nav-inner">
-          <img src={LOGO_URL} alt="Power On Solutions LLC" className="pt-logo" />
-          <a href="tel:17606238962" className="pt-phone">(760) 623-8962</a>
+          {brandLogo ? <img src={brandLogo} alt={brandName} className="pt-logo" /> : <span>{brandName}</span>}
+          {brandPhone && <a href={'tel:' + brandPhone.replace(/[^+0-9]/g, '')} className="pt-phone">{brandPhone}</a>}
         </div>
       </nav>
 
@@ -481,13 +489,13 @@ export default function PortalTrackView() {
           <div className="pt-not-found">
             <div className="pt-not-found-icon">🔍</div>
             <div className="pt-not-found-title">Request Not Found</div>
-            <p className="pt-not-found-sub">We couldn't find this request. Please check your link or call us at (760) 623-8962.</p>
+            <p className="pt-not-found-sub">We couldn't find this request. Please check your link or contact your service provider.</p>
           </div>
         ) : request?.status === 'dismissed' ? (
           <div className="pt-not-found">
             <div className="pt-not-found-icon">📋</div>
             <div className="pt-not-found-title">Request No Longer Active</div>
-            <p className="pt-not-found-sub">We weren't able to move forward with this request at this time. Please call us at (760) 623-8962 if you have questions or would like to submit a new request.</p>
+            <p className="pt-not-found-sub">We weren't able to move forward with this request at this time. Please contact your service provider if you have questions or would like to submit a new request.</p>
           </div>
         ) : request ? (
           <>
@@ -583,14 +591,15 @@ export default function PortalTrackView() {
               </div>
             )}
 
-            <div className="pt-cta"><a href="/portal">← Submit Another Request</a></div>
+            <div className="pt-cta"><a href={portalUrl}>← Submit Another Request</a></div>
           </>
         ) : null}
       </div>
 
       <footer className="pt-footer">
-        © {new Date().getFullYear()} Power On Solutions LLC &nbsp;·&nbsp; C-10 Electrical License #1151468 &nbsp;·&nbsp;
-        <a href="tel:17606238962">(760) 623-8962</a>
+        © {new Date().getFullYear()} {brandName}
+        {brand?.power_on_compatibility && <> &nbsp;·&nbsp; C-10 Electrical License #1151468</>}
+        {brandPhone && <> &nbsp;·&nbsp; <a href={'tel:' + brandPhone.replace(/[^+0-9]/g, '')}>{brandPhone}</a></>}
       </footer>
     </div>
   )

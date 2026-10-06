@@ -27,12 +27,12 @@ export function isPortalSiteKey(value: unknown): value is string {
   return typeof value === 'string' && PORTAL_SITE_KEY_PATTERN.test(value)
 }
 
-/** Explicit env key, else a valid ?site= link parameter, else the Power On integration. */
+/** Explicit env/link identifiers reach server validation; only absent identifiers use Power On. */
 export function resolvePortalSiteKey(search: string = '', envKey?: string): string {
-  if (isPortalSiteKey(envKey)) return envKey
+  if (envKey !== undefined && envKey !== '') return envKey
   try {
     const fromLink = new URLSearchParams(search).get('site')
-    if (isPortalSiteKey(fromLink)) return fromLink
+    if (fromLink !== null) return fromLink
   } catch { /* fall through to the default */ }
   return POWER_ON_PORTAL_SITE_KEY
 }
