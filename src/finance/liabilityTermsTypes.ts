@@ -30,6 +30,13 @@ export interface LiabilityTermsRow {
   original_principal_minor: number | null
   maturity_date: string | null
   owner_notes: string | null
+  /** CASH-UX-2 owner facts. Optional: absent until migration 147 is applied. */
+  past_due_minor?: number | null
+  /** Amount needed to bring the account current. Distinct from the normal payment and from the balance. */
+  catch_up_minor?: number | null
+  consequence_note?: string | null
+  operationally_critical?: boolean
+  critical_reason?: string | null
   created_at: string
   updated_at: string
 }
@@ -48,4 +55,9 @@ export interface LiabilityTermsInput {
   original_principal_minor?: number | null
   maturity_date?: string | null
   owner_notes?: string | null
+  past_due_minor?: number | null
+  catch_up_minor?: number | null
+  consequence_note?: string | null
+  operationally_critical?: boolean
+  critical_reason?: string | null
 }

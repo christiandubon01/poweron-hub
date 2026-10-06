@@ -22,6 +22,39 @@ function provenance(organizationId: string, kind: 'financial_obligation' | 'cash
   }
 }
 
+/** Owner criticality facts. Left undefined when the column is absent (migration 147 not applied yet). */
+function criticalityFrom(row: any): { operationallyCritical?: boolean; criticalReason?: string | null } {
+  if (row.operationally_critical === undefined) return {}
+  return { operationallyCritical: row.operationally_critical === true, criticalReason: row.critical_reason ?? null }
+}
+
+type FactInput = { projectId?: string | null; operationallyCritical?: boolean; criticalReason?: string | null }
+
+/** Update mapping: only keys the caller provided are written. */
+function factPatch(input: FactInput): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  if ('projectId' in input) patch.project_id = input.projectId?.trim() || null
+  if ('operationallyCritical' in input) {
+    patch.operationally_critical = input.operationallyCritical === true
+    // A reason only makes sense for a critical item; clearing the flag clears the reason.
+    patch.critical_reason = input.operationallyCritical === true ? (input.criticalReason?.trim() || null) : null
+  } else if ('criticalReason' in input) {
+    patch.critical_reason = input.criticalReason?.trim() || null
+  }
+  return patch
+}
+
+/** Create mapping: only send the new fact columns when the owner actually answered them. */
+function createFactPatch(input: FactInput): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  if (input.projectId?.trim()) patch.project_id = input.projectId.trim()
+  if (input.operationallyCritical === true) {
+    patch.operationally_critical = true
+    if (input.criticalReason?.trim()) patch.critical_reason = input.criticalReason.trim()
+  }
+  return patch
+}
+
 function mapObligation(row: any): RecurringObligation {
   return {
     id: row.id,
@@ -46,6 +79,7 @@ function mapObligation(row: any): RecurringObligation {
     accountId: row.account_id,
     debtAccountId: row.debt_account_id,
     projectId: row.project_id,
+    ...criticalityFrom(row),
     sourceType: row.source_type,
     provenance: provenance(row.organization_id, 'financial_obligation', row.id, row.confidence),
   }
@@ -85,6 +119,7 @@ function mapCommitment(row: any): CashCommitment {
     projectId: row.project_id,
     employeeId: row.employee_id,
     debtAccountId: row.debt_account_id,
+    ...criticalityFrom(row),
     sourceType: 'manual',
     reconciliationState: row.reconciliation_state,
     actualTransactionId: row.actual_transaction_id,
@@ -230,6 +265,10 @@ export interface CreateObligationInput {
   isRequired: boolean
   confidence: 'confirmed' | 'expected' | 'possible'
   debtAccountId?: string | null
+  /** Optional: tie this to a job. Obligations are never required to have one. */
+  projectId?: string | null
+  operationallyCritical?: boolean
+  criticalReason?: string | null
 }
 
 export interface UpdateObligationInput {
@@ -241,6 +280,9 @@ export interface UpdateObligationInput {
   isRequired?: boolean
   confidence?: 'confirmed' | 'expected' | 'possible'
   debtAccountId?: string | null
+  projectId?: string | null
+  operationallyCritical?: boolean
+  criticalReason?: string | null
 }
 
 export interface CreateCommitmentInput {
@@ -251,6 +293,10 @@ export interface CreateCommitmentInput {
   isRequired: boolean
   confidence: 'confirmed' | 'expected' | 'possible'
   debtAccountId?: string | null
+  /** Optional: tie a one-time required spend (e.g. materials) to a job. */
+  projectId?: string | null
+  operationallyCritical?: boolean
+  criticalReason?: string | null
 }
 
 export interface UpdateCommitmentInput {
@@ -261,6 +307,9 @@ export interface UpdateCommitmentInput {
   isRequired?: boolean
   confidence?: 'confirmed' | 'expected' | 'possible'
   debtAccountId?: string | null
+  projectId?: string | null
+  operationallyCritical?: boolean
+  criticalReason?: string | null
 }
 
 // ─── Validation helpers (pure, no side effects) ───────────────────────────────
@@ -311,6 +360,7 @@ export async function createFinancialObligation(input: CreateObligationInput): P
       is_required: input.isRequired,
       confidence: input.confidence,
       debt_account_id: input.debtAccountId ?? null,
+      ...createFactPatch(input),
     })
     .select('id')
     .single()
@@ -348,6 +398,7 @@ export async function updateFinancialObligation(id: string, input: UpdateObligat
   if (input.isRequired !== undefined) patch.is_required = input.isRequired
   if (input.confidence !== undefined) patch.confidence = input.confidence
   if ('debtAccountId' in input) patch.debt_account_id = input.debtAccountId ?? null
+  Object.assign(patch, factPatch(input))
   if (Object.keys(patch).length === 0) return
   const { error } = await db()
     .from('financial_obligations')
@@ -385,6 +436,7 @@ export async function createCashCommitment(input: CreateCommitmentInput): Promis
       is_required: input.isRequired,
       confidence: input.confidence,
       debt_account_id: input.debtAccountId ?? null,
+      ...createFactPatch(input),
     })
     .select('id')
     .single()
@@ -413,6 +465,7 @@ export async function updateCashCommitment(id: string, input: UpdateCommitmentIn
   if (input.isRequired !== undefined) patch.is_required = input.isRequired
   if (input.confidence !== undefined) patch.confidence = input.confidence
   if ('debtAccountId' in input) patch.debt_account_id = input.debtAccountId ?? null
+  Object.assign(patch, factPatch(input))
   if (Object.keys(patch).length === 0) return
   const { error } = await db()
     .from('cash_commitments')

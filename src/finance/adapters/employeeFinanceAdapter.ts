@@ -150,6 +150,25 @@ export interface EmployeeRateInput {
   isOwner?: boolean | null
 }
 
+/**
+ * What a manually entered planned item's free-text category says about payroll.
+ *  - 'wages'   : the employee wage liability itself (category is just "payroll"). Derived payroll already
+ *                covers this, so a manual copy is a genuine duplicate risk.
+ *  - 'service' : a cost of running payroll (agency, processing, software, filing fees). An operating expense,
+ *                a different financial fact from wages, so it never overlaps derived wage exposure.
+ *  - 'none'    : unrelated to payroll.
+ */
+export type ManualPayrollCategoryKind = 'wages' | 'service' | 'none'
+
+const PAYROLL_SERVICE_WORDS = /\b(service|services|fee|fees|processing|processor|agency|provider|software|subscription|filing|admin|administration|charge|charges)\b/
+
+export function classifyManualPayrollCategory(category: string | null | undefined): ManualPayrollCategoryKind {
+  const normalized = String(category ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  if (!normalized.includes('payroll')) return 'none'
+  if (PAYROLL_SERVICE_WORDS.test(normalized)) return 'service'
+  return normalized === 'payroll' ? 'wages' : 'none'
+}
+
 /** Minimal interface for checking manual payroll obligation overlap. */
 export interface ManualPayrollObligationLike {
   id: string
@@ -610,7 +629,7 @@ export function buildPayrollExposure(
     for (const obl of manualObligations) {
       if (obl.organizationId !== orgId) continue
       const hasEmployeeAttr = obl.attribution?.employeeId != null
-      const isPayrollCategory = obl.category === 'payroll'
+      const isPayrollCategory = classifyManualPayrollCategory(obl.category) === 'wages'
       if (hasEmployeeAttr || isPayrollCategory) {
         diagnostics.push({
           kind: 'potential_manual_payroll_overlap',
@@ -622,7 +641,7 @@ export function buildPayrollExposure(
     for (const comm of manualCommitments) {
       if (comm.organizationId !== orgId) continue
       const hasEmployeeId = comm.employeeId != null
-      const isPayrollCategory = comm.category === 'payroll'
+      const isPayrollCategory = classifyManualPayrollCategory(comm.category) === 'wages'
       if (hasEmployeeId || isPayrollCategory) {
         diagnostics.push({
           kind: 'potential_manual_payroll_overlap',
