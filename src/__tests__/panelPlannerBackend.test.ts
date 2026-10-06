@@ -372,6 +372,19 @@ describe('planner PostgreSQL transactions, security and recovery',()=>{
   it('attribution fields preserved without putting snapshot into public description',async()=>{const b=envelope();b.planner_payload.attribution={utm_source:'google',gclid:'G1',gbraid:'B1',wbraid:'W1',utm_medium:'cpc',utm_campaign:'panel',utm_content:'ad',utm_term:'panel upgrade'};await create(b);const row=(await db.query('SELECT * FROM portal_requests')).rows[0];for(const[k,v]of Object.entries(b.planner_payload.attribution))expect(row[k]).toBe(v)})
 })
 describe('planner API, storage byte validation and legacy bypass protection',()=>{
+  it('existing-object signing denial preserves a create-only authorization for reconciliation',async()=>{
+    const f={client_photo_id:randomUUID(),object_path:randomUUID()+'/'+randomUUID()+'.png',mime_type:'image/png',size_bytes:32};let request
+    const rt=runtime({SUPABASE_URL:'https://project.example',SUPABASE_SERVICE_ROLE_KEY:'server-test'},async(url,opts)=>{
+      request={url,opts};return new Response(JSON.stringify({error:'Duplicate',message:'The resource already exists'}),{status:400})
+    })
+    const result=await rt.signUpload(f);expect(result).toMatchObject({...f,upload_required:false,signed_upload_url:null,signed_upload_expires_at:null})
+    expect(JSON.parse(request.opts.body)).toEqual({upsert:false});expect(request.opts.headers['x-upsert']).toBeUndefined()
+  })
+  it.each([{status:403,error:'AccessDenied'},{status:500,error:'Duplicate'},{status:400,error:'InvalidRequest'}])('signing failure stays closed for %j',async failure=>{
+    const rt=runtime({SUPABASE_URL:'https://project.example',SUPABASE_SERVICE_ROLE_KEY:'server-test'},async()=>new Response(JSON.stringify({error:failure.error}),{status:failure.status}))
+    await expect(rt.signUpload({object_path:randomUUID()+'/'+randomUUID()+'.png'})).rejects.toThrow('TEMPORARILY_UNAVAILABLE')
+  })
+
   it('denies UUID-only legacy photo reads for planner rows',async()=>expect(await denyPlannerUuidRead(async()=>new Response(JSON.stringify([{request_id:randomUUID()}])), 'https://db.example',{},randomUUID())).toBe(true))
   it('preserves legacy non-planner photo reads',async()=>expect(await denyPlannerUuidRead(async()=>new Response('[]'),'https://db.example',{},randomUUID())).toBe(false))
   it('legacy planner detection fails closed',async()=>await expect(denyPlannerUuidRead(async()=>new Response('',{status:500}),'https://db.example',{},randomUUID())).rejects.toThrow('TEMPORARILY_UNAVAILABLE'))

@@ -30,11 +30,20 @@ function runtime(env = process.env, fetcher = fetch) {
   async function signUpload(file) {
     const url=base+'/storage/v1/object/upload/sign/portal-uploads/'+file.object_path;
     const response=await fetcher(url,{method:'POST',headers,body:JSON.stringify({upsert:false}),signal:AbortSignal.timeout(15000)});
-    if(!response.ok) throw new PlannerError('TEMPORARILY_UNAVAILABLE');
-    const data=await response.json(); const signed=signedUrl(data,url);
+    const data=await response.json().catch(()=>null);
+    if(!response.ok) {
+      // Storage cannot mint a create-only URL for an existing object. Keep the
+      // authorization replay usable for server-side reconciliation, without
+      // authorizing overwrite or treating other provider errors as success.
+      if([400,409].includes(response.status) && ['Duplicate','ResourceAlreadyExists'].includes(data?.error))
+        return {...file,signed_upload_url:null,signed_upload_expires_at:null,
+          method:'PUT',content_type:file.mime_type,upload_required:false};
+      throw new PlannerError('TEMPORARILY_UNAVAILABLE');
+    }
+    const signed=signedUrl(data,url);
     let expires = Date.now()+7200000;
     try { const token=data.token || new URL(signed).searchParams.get('token'); const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()); if(Number.isFinite(claims.exp))expires=claims.exp*1000; } catch { /* documented Storage default */ }
-    return {...file,signed_upload_url:signed,signed_upload_expires_at:new Date(expires).toISOString(),method:'PUT',content_type:file.mime_type};
+    return {...file,upload_required:true,signed_upload_url:signed,signed_upload_expires_at:new Date(expires).toISOString(),method:'PUT',content_type:file.mime_type};
   }
   async function verifyObject(file) {
     const url=objectUrl(file.object_path);
