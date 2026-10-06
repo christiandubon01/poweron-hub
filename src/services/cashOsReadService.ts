@@ -3,6 +3,8 @@ import { getActiveTenantUserId, getBackupData, isTenantDataReady, type BackupDat
 import { resolveFinanceContext, readFinancialLedgerState, type FinanceContext } from './manualLedgerService'
 import { readCashObligationState } from './cashObligationService'
 import { readCashPages } from './cashReadPagination'
+import { readCashProjectFacts } from './cashProjectFactsService'
+import type { CashProjectFactsRow } from '@/finance/cashProjectFacts'
 import type { FinancialAccountRow, FinancialTransactionRow } from '@/finance/ledgerTypes'
 import type { CashCommitment, ObligationOccurrence, RecurringObligation } from '@/finance/obligationsTypes'
 import type { ClosedTimeEntryInput, EmployeeRateInput, OpenSessionInput, ProfileIdentityBridge } from '@/finance/adapters/employeeFinanceAdapter'
@@ -32,6 +34,10 @@ export interface CashOsSourceBundle {
   payrollMultiplier?: number
   backup: BackupData
   liabilityTerms: LiabilityTermsRow[]
+  /** CASH-UX-2 owner-stated project facts. Optional: empty when none exist or the table is not available yet. */
+  projectFacts?: CashProjectFactsRow[]
+  /** Set when project facts could not be read; Cash OS still loads without them. */
+  projectFactsError?: string
 }
 
 function from(table: string): any { return (supabase.from as any)(table) }
@@ -72,7 +78,7 @@ export async function readCashOsSources(
   if (!backup) throw new Error('BACKUP_NOT_HYDRATED')
   const asOfDate = cashOsDateAt(now, CASH_OS_TIMEZONE)
   const asOfTimestamp = now.toISOString()
-  const [ledger, obligations, entries, sessions, profiles, liabilityTerms] = await Promise.all([
+  const [ledger, obligations, entries, sessions, profiles, liabilityTerms, projectFacts] = await Promise.all([
     readFinancialLedgerState().catch(error => { throw new Error(`LEDGER_READ_FAILED: ${String(error)}`) }),
     readCashObligationState().catch(error => { throw new Error(`OBLIGATION_READ_FAILED: ${String(error)}`) }),
     payrollPaidThroughDate !== null
@@ -93,6 +99,10 @@ export async function readCashOsSources(
     readCashPages<LiabilityTermsRow>('financial_liability_terms', q =>
       q.select('*').eq('organization_id', organizationId), from)
       .catch(error => { throw new Error(`LIABILITY_TERMS_READ_FAILED: ${String(error)}`) }),
+    // Owner facts only ever ADD guidance, so a failed read degrades to "no facts" instead of blocking Cash OS.
+    readCashProjectFacts()
+      .then(rows => ({ rows, error: null as string | null }))
+      .catch(error => ({ rows: [] as CashProjectFactsRow[], error: String(error?.message ?? error) })),
   ])
   if (ledger.context.organizationId !== organizationId || ledger.context.userId !== userId
     || obligations.obligations.some(row => row.organizationId !== organizationId)
@@ -122,5 +132,7 @@ export async function readCashOsSources(
     ...(typeof multiplier === 'number' && Number.isFinite(multiplier) && multiplier >= 1
       ? { payrollMultiplier: multiplier } : {}),
     liabilityTerms,
+    projectFacts: projectFacts.rows,
+    ...(projectFacts.error ? { projectFactsError: projectFacts.error } : {}),
   }
 }

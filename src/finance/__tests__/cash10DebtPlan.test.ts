@@ -227,7 +227,7 @@ describe('CORE-CLOSE-2A Debt Plan canonical truth', () => {
 
   it('22: DebtKiller.tsx passes showTrulyFreeCash={cash.status === \'ready\'} in snapshot branch', () => {
     const snapshotIdx = debtKillerSrc.indexOf('cash.snapshot ?')
-    const snapshotBlock = debtKillerSrc.slice(snapshotIdx, snapshotIdx + 2000)
+    const snapshotBlock = debtKillerSrc.slice(snapshotIdx, snapshotIdx + 2600)
     expect(snapshotBlock).toContain("showTrulyFreeCash={cash.status === 'ready'}")
   })
 

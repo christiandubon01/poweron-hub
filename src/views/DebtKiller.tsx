@@ -4,6 +4,8 @@ import { useCashOsSnapshot } from '@/hooks/useCashOsSnapshot'
 import type { CashOsSourceBundle } from '@/services/cashOsReadService'
 import CashOsObligations from '@/components/v15r/cash-os/CashOsObligations'
 import CashOsOutlook from '@/components/v15r/cash-os/CashOsOutlook'
+import CashOsDecisionLayer from '@/components/v15r/cash-os/CashOsDecisionLayer'
+import { projectOptionsFromBackup } from '@/finance/cashProjectFacts'
 import CashOsSetupPanel from '@/components/v15r/cash-os/CashOsSetupPanel'
 import {
   CashCalendarView,
@@ -367,7 +369,7 @@ export default function DebtKiller() {
             </CashCard>
           )}
           {tab === 'Transactions' && <PreSetupTransactions sources={cash.sources} onAdd={openAddSheet} onRefresh={cash.refresh} />}
-          {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} onRefresh={cash.refresh} />}
+          {tab === 'Obligations' && <CashOsObligations obligations={cash.sources?.obligations ?? []} commitments={cash.sources?.commitments ?? []} occurrences={cash.sources?.occurrences ?? []} transactions={cash.sources?.transactions ?? []} accounts={cash.sources?.accounts ?? []} projects={projectOptionsFromBackup(cash.sources?.backup)} onRefresh={cash.refresh} />}
           {tab === 'Debt Plan' && (
             <div className="space-y-5">
               <CashOsDebtPlan sources={cash.sources} snapshot={null} showTrulyFreeCash={false} onRefresh={cash.refresh} />
@@ -376,16 +378,19 @@ export default function DebtKiller() {
           )}
         </>
       ) : cash.status === 'partial' && tab === 'Outlook' ? (
-        <CashCard title="Partial / Needs attention">
-          <p className="text-sm text-amber-300">
-            Payroll inputs need review. Authoritative cash totals and trajectory are withheld until the missing or overlapping source is resolved.
-          </p>
-          <ul className="mt-3 space-y-1 text-xs text-[var(--text-secondary)]">
-            {cash.snapshot?.payrollDiagnostics.map((d, index) => (
-              <li key={`${d.kind}:${index}`}>{d.kind.replace(/_/g, ' ')}: {d.note}</li>
-            ))}
-          </ul>
-        </CashCard>
+        <div className="space-y-5">
+          <CashOsDecisionLayer snapshot={cash.snapshot} partial onRefresh={cash.refresh} />
+          <CashCard title="Partial / Needs attention">
+            <p className="text-sm text-amber-300">
+              Payroll inputs need review. Authoritative cash totals and trajectory are withheld until the missing or overlapping source is resolved.
+            </p>
+            <ul className="mt-3 space-y-1 text-xs text-[var(--text-secondary)]">
+              {cash.snapshot?.payrollDiagnostics.map((d, index) => (
+                <li key={`${d.kind}:${index}`}>{d.kind.replace(/_/g, ' ')}: {d.note}</li>
+              ))}
+            </ul>
+          </CashCard>
+        </div>
       ) : cash.status === 'partial' && (tab === 'Calendar' || tab === 'Projects') ? (
         <CashCard title="Partial / Needs attention">
           <p className="text-sm text-amber-300">
@@ -395,7 +400,8 @@ export default function DebtKiller() {
         </CashCard>
       ) : cash.snapshot ? (
         <>
-          {tab === 'Outlook' && authoritative && (
+          {tab === 'Outlook' && authoritative && (<>
+            <CashOsDecisionLayer snapshot={cash.snapshot} onRefresh={cash.refresh} />
             <CashOsOutlook
               snapshot={cash.snapshot}
               horizonDays={cash.horizonDays}
@@ -403,7 +409,7 @@ export default function DebtKiller() {
               onHorizon={cash.setHorizonDays}
               onConfidence={cash.setConfidenceMode}
             />
-          )}
+          </>)}
           {tab === 'Calendar' && (
             <div className="space-y-4">
               <div className="flex flex-wrap gap-2" aria-label="Calendar horizon">

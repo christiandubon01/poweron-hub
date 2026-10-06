@@ -24,6 +24,11 @@ interface FormState {
   original_principal_usd: string
   maturity_date: string
   owner_notes: string
+  past_due_usd: string
+  catch_up_usd: string
+  consequence_note: string
+  critical: boolean
+  critical_reason: string
 }
 
 function bpToPct(bp: number | null): string {
@@ -68,6 +73,28 @@ function initForm(t: LiabilityTermsRow | null): FormState {
     original_principal_usd: minorToUsd(t?.original_principal_minor ?? null),
     maturity_date: t?.maturity_date ?? '',
     owner_notes: t?.owner_notes ?? '',
+    past_due_usd: minorToUsd(t?.past_due_minor ?? null),
+    catch_up_usd: minorToUsd(t?.catch_up_minor ?? null),
+    consequence_note: t?.consequence_note ?? '',
+    critical: t?.operationally_critical === true,
+    critical_reason: t?.critical_reason ?? '',
+  }
+}
+
+/**
+ * The owner-fact columns exist only once migration 147 is applied. Send them when the saved row already has
+ * them, or when the owner actually answered one, so editing ordinary terms never breaks before then.
+ */
+function ownerFactPatch(form: FormState, initial: LiabilityTermsRow | null): Partial<LiabilityTermsInput> {
+  const supported = initial != null && 'catch_up_minor' in initial
+  const answered = form.past_due_usd.trim() !== '' || form.catch_up_usd.trim() !== '' || form.consequence_note.trim() !== '' || form.critical
+  if (!supported && !answered) return {}
+  return {
+    past_due_minor: usdToMinor(form.past_due_usd),
+    catch_up_minor: usdToMinor(form.catch_up_usd),
+    consequence_note: emptyNull(form.consequence_note),
+    operationally_critical: form.critical,
+    critical_reason: form.critical ? emptyNull(form.critical_reason) : null,
   }
 }
 
@@ -87,7 +114,7 @@ export default function CashOsDebtTermsEditor({ accountId, accountDisplayName, i
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  function set(key: keyof FormState, value: string) {
+  function set(key: Exclude<keyof FormState, 'critical'>, value: string) {
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
@@ -109,6 +136,7 @@ export default function CashOsDebtTermsEditor({ accountId, accountDisplayName, i
         original_principal_minor: usdToMinor(form.original_principal_usd),
         maturity_date: emptyNull(form.maturity_date),
         owner_notes: emptyNull(form.owner_notes),
+        ...ownerFactPatch(form, initialTerms),
       }
       const saved = await upsertLiabilityTerms(accountId, input)
       await onSave(saved)
@@ -229,6 +257,42 @@ export default function CashOsDebtTermsEditor({ accountId, accountDisplayName, i
             </div>
           </div>
         )}
+
+        {/* If you're behind: kept separate from the normal payment above and from the account balance */}
+        <div className="space-y-3 border-t border-[var(--border-primary)] pt-3">
+          <p className="text-[10px] font-bold tracking-[0.14em] text-[var(--text-secondary)]">IF YOU'RE BEHIND ON THIS DEBT</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={LABEL}>CURRENTLY PAST DUE ($)</label>
+              <input className={INPUT} type="number" step="0.01" min="0" placeholder="e.g. 329"
+                value={form.past_due_usd} onChange={e => set('past_due_usd', e.target.value)} />
+            </div>
+            <div>
+              <label className={LABEL}>NEEDED TO CATCH UP ($)</label>
+              <input className={INPUT} type="number" step="0.01" min="0" placeholder="e.g. 442"
+                value={form.catch_up_usd} onChange={e => set('catch_up_usd', e.target.value)} />
+            </div>
+          </div>
+          <p className="text-[11px] text-[var(--text-muted)]">Leave blank if you're current or don't know. These are separate from your normal payment and from the balance.</p>
+          <div>
+            <label className={LABEL}>WHAT HAPPENS IF YOU MISS PAYMENTS? (OPTIONAL)</label>
+            <input className={INPUT} type="text" maxLength={300} placeholder="e.g. Late fee, account sent to collections"
+              value={form.consequence_note} onChange={e => set('consequence_note', e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="flex min-h-[44px] cursor-pointer items-center gap-3 py-1.5">
+            <input type="checkbox" checked={form.critical} onChange={e => setForm(prev => ({ ...prev, critical: e.target.checked }))} className="h-4 w-4 accent-orange-500" />
+            <span className="text-sm">Missing this payment would interfere with my ability to keep working</span>
+          </label>
+          {form.critical && (
+            <div className="mt-1">
+              <label className={LABEL}>WHY? (OPTIONAL)</label>
+              <input className={INPUT} type="text" maxLength={300} placeholder="e.g. Primary work vehicle — needed for jobs, estimates, materials and collections"
+                value={form.critical_reason} onChange={e => set('critical_reason', e.target.value)} />
+            </div>
+          )}
+        </div>
 
         {/* Notes */}
         <div>

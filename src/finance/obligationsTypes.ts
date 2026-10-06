@@ -40,6 +40,9 @@ export interface RecurringObligation {
   accountId?: string | null
   debtAccountId?: string | null
   projectId?: string | null
+  /** Owner fact: missing this would interfere with the ability to keep working. Never inferred. */
+  operationallyCritical?: boolean
+  criticalReason?: string | null
   sourceType: 'manual' | 'owner_reviewed_overhead'
   provenance: FinancialProvenance
 }
@@ -75,6 +78,9 @@ export interface CashCommitment {
   projectId?: string | null
   employeeId?: string | null
   debtAccountId?: string | null
+  /** Owner fact: missing this would interfere with the ability to keep working. Never inferred. */
+  operationallyCritical?: boolean
+  criticalReason?: string | null
   sourceType: 'manual'
   reconciliationState: PlannedReconciliationState
   actualTransactionId?: string | null

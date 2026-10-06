@@ -3,6 +3,7 @@ import type { CashOsSnapshot } from '@/finance/cashOsSnapshot'
 import { CashCollectionClock } from './CashOsOutlook'
 import { CashCard, CashEmpty, cashDate, money } from './cashOsUi'
 import CashOsObligations from './CashOsObligations'
+import { projectOptionsFromBackup } from '@/finance/cashProjectFacts'
 import { CashOsAccountMenu, CashOsAccountRestore } from './CashOsAccountMenu'
 
 export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
@@ -139,6 +140,7 @@ export function CashObligationsView({ snapshot, onRefresh }: { snapshot: CashOsS
       occurrences={snapshot.occurrences}
       transactions={snapshot.transactions}
       accounts={snapshot.accounts}
+      projects={projectOptionsFromBackup((snapshot as any).backup)}
       onRefresh={onRefresh ?? (() => {})}
     />
   )

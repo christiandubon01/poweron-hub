@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { RecurringObligation, CashCommitment, ObligationOccurrence } from '@/finance/obligationsTypes'
+import type { ProjectOption } from '@/finance/cashProjectFacts'
 import type { FinancialTransactionRow, FinancialAccountRow } from '@/finance/ledgerTypes'
 import { generateRecurrenceDates } from '@/finance/recurrence'
 import {
@@ -90,6 +91,60 @@ function RequiredControl({ checked, onChange }: { checked: boolean; onChange: (v
       <span className="text-sm">Required (included in protected cash)</span>
     </label>
   )
+}
+
+// ─── Owner facts captured where they are met (CASH-UX-2) ─────────────────────
+
+interface OwnerFactState { projectId: string | null; critical: boolean; reason: string }
+
+const CATEGORY_SUGGESTIONS = ['Rent', 'Vehicle', 'Insurance', 'Materials', 'Equipment', 'Payroll service fee']
+
+function OwnerFactFields({ projects, jobLabel, jobHint, value, onChange }: {
+  projects: ProjectOption[]
+  jobLabel: string
+  jobHint: string
+  value: OwnerFactState
+  onChange: (next: OwnerFactState) => void
+}) {
+  return (
+    <div className="space-y-4">
+      {projects.length > 0 && (
+        <label className="block">
+          <span className={labelCls}>{jobLabel}</span>
+          <select value={value.projectId ?? ''} onChange={e => onChange({ ...value, projectId: e.target.value || null })} className={inputCls}>
+            <option value="">— Not tied to a job —</option>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <span className="mt-1 block text-xs text-[var(--text-muted)]">{jobHint}</span>
+        </label>
+      )}
+      <div>
+        <label className="flex min-h-[44px] cursor-pointer items-center gap-3 py-1.5">
+          <input type="checkbox" checked={value.critical}
+            onChange={e => onChange({ ...value, critical: e.target.checked })} className="h-4 w-4 accent-orange-500" />
+          <span className="text-sm">Missing this would interfere with my ability to keep working</span>
+        </label>
+        {value.critical && (
+          <label className="mt-1 block">
+            <span className={labelCls}>Why? (optional)</span>
+            <input type="text" maxLength={300} placeholder="e.g. Primary work vehicle — needed for jobs, estimates, materials and collections"
+              value={value.reason} onChange={e => onChange({ ...value, reason: e.target.value })} className={inputCls} />
+          </label>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Only send the new facts when they changed, or when the database already supports them. */
+function factFields(initial: { projectId?: string | null; operationallyCritical?: boolean } | null | undefined, v: OwnerFactState) {
+  const out: { projectId?: string | null; operationallyCritical?: boolean; criticalReason?: string | null } = {}
+  if (v.projectId !== (initial?.projectId ?? null)) out.projectId = v.projectId
+  if (initial?.operationallyCritical !== undefined || v.critical) {
+    out.operationallyCritical = v.critical
+    out.criticalReason = v.critical ? v.reason : null
+  }
+  return out
 }
 
 // ─── Reconciliation helpers ───────────────────────────────────────────────────
@@ -217,6 +272,7 @@ function ObligationForm({
   pending,
   error,
   accounts,
+  projects = [],
   onSubmit,
   onCancel,
   submitLabel,
@@ -225,7 +281,8 @@ function ObligationForm({
   pending: boolean
   error: string | null
   accounts?: FinancialAccountRow[]
-  onSubmit: (fields: { name: string; amountRaw: string; schedule: ObligationRecurrenceSchedule; anchorDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null }) => void
+  projects?: ProjectOption[]
+  onSubmit: (fields: { name: string; amountRaw: string; schedule: ObligationRecurrenceSchedule; anchorDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null; owner: OwnerFactState }) => void
   onCancel: () => void
   submitLabel: string
 }) {
@@ -237,11 +294,13 @@ function ObligationForm({
   const [isRequired, setIsRequired] = useState(initial ? initial.requirement === 'required' : true)
   const [confidence, setConfidence] = useState<'confirmed' | 'expected' | 'possible'>(initial?.confidence ?? 'expected')
   const [debtAccountId, setDebtAccountId] = useState<string | null>(initial?.debtAccountId ?? null)
+  const [owner, setOwner] = useState<OwnerFactState>({
+    projectId: initial?.projectId ?? null, critical: initial?.operationallyCritical === true, reason: initial?.criticalReason ?? '' })
 
   const liabilityAccounts = (accounts ?? []).filter(a => a.account_class === 'liability' && a.status === 'active')
 
   return (
-    <form onSubmit={e => { e.preventDefault(); onSubmit({ name, amountRaw, schedule, anchorDate, category, isRequired, confidence, debtAccountId }) }} className="space-y-4">
+    <form onSubmit={e => { e.preventDefault(); onSubmit({ name, amountRaw, schedule, anchorDate, category, isRequired, confidence, debtAccountId, owner }) }} className="space-y-4">
       <label className="block">
         <span className={labelCls}>Name</span>
         <input type="text" required placeholder="e.g. Vehicle loan" value={name}
@@ -265,8 +324,10 @@ function ObligationForm({
       </label>
       <label className="block">
         <span className={labelCls}>Category (optional)</span>
-        <input type="text" placeholder="e.g. Rent, Vehicle, Insurance" value={category}
+        <input type="text" list="cash-obligation-categories" placeholder="e.g. Rent, Vehicle, Insurance" value={category}
           onChange={e => setCategory(e.target.value)} className={inputCls} />
+        <datalist id="cash-obligation-categories">{CATEGORY_SUGGESTIONS.map(c => <option key={c} value={c} />)}</datalist>
+        <span className="mt-1 block text-xs text-[var(--text-muted)]">Use “Payroll service fee” for what you pay a payroll company. Plain “Payroll” is for employee wages.</span>
       </label>
       <label className="block">
         <span className={labelCls}>Confidence</span>
@@ -292,6 +353,9 @@ function ObligationForm({
           </select>
         </label>
       )}
+      <OwnerFactFields projects={projects} jobLabel="For a job (optional)"
+        jobHint="Only if this cost belongs to one job. Most recurring bills do not."
+        value={owner} onChange={setOwner} />
       {error && <p className="text-xs text-red-300">{error}</p>}
       <div className="flex gap-3 pt-1">
         <button type="submit" disabled={pending} className={btnPrimary}>
@@ -310,6 +374,7 @@ function CommitmentForm({
   pending,
   error,
   accounts,
+  projects = [],
   onSubmit,
   onCancel,
   submitLabel,
@@ -318,7 +383,8 @@ function CommitmentForm({
   pending: boolean
   error: string | null
   accounts?: FinancialAccountRow[]
-  onSubmit: (fields: { title: string; amountRaw: string; expectedDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null }) => void
+  projects?: ProjectOption[]
+  onSubmit: (fields: { title: string; amountRaw: string; expectedDate: string; category: string; isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null; owner: OwnerFactState }) => void
   onCancel: () => void
   submitLabel: string
 }) {
@@ -329,11 +395,13 @@ function CommitmentForm({
   const [isRequired, setIsRequired] = useState(initial ? initial.requirement === 'required' : true)
   const [confidence, setConfidence] = useState<'confirmed' | 'expected' | 'possible'>(initial?.confidence ?? 'expected')
   const [debtAccountId, setDebtAccountId] = useState<string | null>(initial?.debtAccountId ?? null)
+  const [owner, setOwner] = useState<OwnerFactState>({
+    projectId: initial?.projectId ?? null, critical: initial?.operationallyCritical === true, reason: initial?.criticalReason ?? '' })
 
   const liabilityAccounts = (accounts ?? []).filter(a => a.account_class === 'liability' && a.status === 'active')
 
   return (
-    <form onSubmit={e => { e.preventDefault(); onSubmit({ title, amountRaw, expectedDate, category, isRequired, confidence, debtAccountId }) }} className="space-y-4">
+    <form onSubmit={e => { e.preventDefault(); onSubmit({ title, amountRaw, expectedDate, category, isRequired, confidence, debtAccountId, owner }) }} className="space-y-4">
       <label className="block">
         <span className={labelCls}>Title</span>
         <input type="text" required placeholder="e.g. Equipment purchase" value={title}
@@ -378,6 +446,9 @@ function CommitmentForm({
           </select>
         </label>
       )}
+      <OwnerFactFields projects={projects} jobLabel="Which job is this spend for? (optional)"
+        jobHint="Tie materials or other required spending to the job it will unlock. It stays a cost, never job revenue."
+        value={owner} onChange={setOwner} />
       {error && <p className="text-xs text-red-300">{error}</p>}
       <div className="flex gap-3 pt-1">
         <button type="submit" disabled={pending} className={btnPrimary}>
@@ -397,6 +468,7 @@ export default function CashOsObligations({
   occurrences = [],
   transactions = [],
   accounts = [],
+  projects = [],
   onRefresh,
 }: {
   obligations: RecurringObligation[]
@@ -404,6 +476,8 @@ export default function CashOsObligations({
   occurrences?: ObligationOccurrence[]
   transactions?: FinancialTransactionRow[]
   accounts?: FinancialAccountRow[]
+  /** Jobs a cost can optionally be tied to. */
+  projects?: ProjectOption[]
   onRefresh: () => void | Promise<void>
 }) {
   const [mode, setMode] = useState<Mode>('list')
@@ -423,7 +497,7 @@ export default function CashOsObligations({
   async function handleObligationSubmit(fields: {
     name: string; amountRaw: string; schedule: ObligationRecurrenceSchedule
     anchorDate: string; category: string; isRequired: boolean
-    confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null
+    confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null; owner: OwnerFactState
   }) {
     let amountMinor: number
     try { amountMinor = parseDollarsMinor(fields.amountRaw) }
@@ -440,6 +514,8 @@ export default function CashOsObligations({
           amountMinor, schedule: fields.schedule, anchorDate: fields.anchorDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
           debtAccountId: fields.debtAccountId,
+          projectId: fields.owner.projectId,
+          operationallyCritical: fields.owner.critical, criticalReason: fields.owner.critical ? fields.owner.reason : null,
         }
         await createFinancialObligation(payload)
       } else if (mode === 'edit-obligation' && selectedId) {
@@ -448,6 +524,7 @@ export default function CashOsObligations({
           amountMinor, schedule: fields.schedule, anchorDate: fields.anchorDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
           debtAccountId: fields.debtAccountId,
+          ...factFields(selectedObligation, fields.owner),
         }
         await updateFinancialObligation(selectedId, patch)
       }
@@ -472,7 +549,7 @@ export default function CashOsObligations({
 
   async function handleCommitmentSubmit(fields: {
     title: string; amountRaw: string; expectedDate: string; category: string
-    isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null
+    isRequired: boolean; confidence: 'confirmed' | 'expected' | 'possible'; debtAccountId: string | null; owner: OwnerFactState
   }) {
     let amountMinor: number
     try { amountMinor = parseDollarsMinor(fields.amountRaw) }
@@ -489,6 +566,8 @@ export default function CashOsObligations({
           amountMinor, expectedDate: fields.expectedDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
           debtAccountId: fields.debtAccountId,
+          projectId: fields.owner.projectId,
+          operationallyCritical: fields.owner.critical, criticalReason: fields.owner.critical ? fields.owner.reason : null,
         }
         await createCashCommitment(payload)
       } else if (mode === 'edit-commitment' && selectedId) {
@@ -497,6 +576,7 @@ export default function CashOsObligations({
           amountMinor, expectedDate: fields.expectedDate,
           isRequired: fields.isRequired, confidence: fields.confidence,
           debtAccountId: fields.debtAccountId,
+          ...factFields(selectedCommitment, fields.owner),
         })
       }
       await onRefresh(); reset()
@@ -572,7 +652,7 @@ export default function CashOsObligations({
       <CashCard title={mode === 'add-obligation' ? 'New recurring obligation' : 'Edit obligation'}>
         <ObligationForm
           initial={mode === 'edit-obligation' ? selectedObligation : null}
-          pending={pending} error={error} accounts={accounts}
+          pending={pending} error={error} accounts={accounts} projects={projects}
           onSubmit={handleObligationSubmit} onCancel={reset}
           submitLabel={mode === 'add-obligation' ? 'Add obligation' : 'Save changes'}
         />
@@ -603,7 +683,7 @@ export default function CashOsObligations({
       <CashCard title={mode === 'add-commitment' ? 'New one-time commitment' : 'Edit commitment'}>
         <CommitmentForm
           initial={mode === 'edit-commitment' ? selectedCommitment : null}
-          pending={pending} error={error} accounts={accounts}
+          pending={pending} error={error} accounts={accounts} projects={projects}
           onSubmit={handleCommitmentSubmit} onCancel={reset}
           submitLabel={mode === 'add-commitment' ? 'Add commitment' : 'Save changes'}
         />
