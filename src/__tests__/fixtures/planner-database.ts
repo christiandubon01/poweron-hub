@@ -15,7 +15,7 @@ export async function database() {
   if(!status)throw new Error('Tracking function fixture missing')
   await db.exec(status)
   await db.exec('GRANT EXECUTE ON FUNCTION public.get_portal_request_status(uuid) TO anon,authenticated')
-  await db.exec(readFileSync('supabase/migrations/147_panel_planner_submission_foundation.sql','utf8'))
+  await db.exec(readFileSync('supabase/migrations/148_panel_planner_submission_foundation.sql','utf8'))
   // Local fixture-only substitution; production helper has no clock override.
   await db.exec("CREATE OR REPLACE FUNCTION planner_private.now() RETURNS timestamptz LANGUAGE sql STABLE AS $$ SELECT t FROM public.test_clock $$")
   return db

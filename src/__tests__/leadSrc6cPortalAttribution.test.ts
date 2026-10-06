@@ -95,7 +95,7 @@ describe('LEAD-SRC-6C portal acquisition → Hunter source', () => {
   it('[STATIC] convertToLead writes acquisition on source and channel on source_tag', () => {
     const src = readRepoFile('src/services/portal/portalService.ts')
     expect(src).toContain('accept_portal_request_to_hunter')
-    const migration = readRepoFile('supabase/migrations/147_panel_planner_submission_foundation.sql')
+    const migration = readRepoFile('supabase/migrations/148_panel_planner_submission_foundation.sql')
     expect(migration).toContain("CASE WHEN lower(btrim(r.source_category)) IN('paid_search'")
     expect(migration).toContain("THEN lower(btrim(r.source_category)) ELSE 'customer_portal' END,'customer_portal'")
 

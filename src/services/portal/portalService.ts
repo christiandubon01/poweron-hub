@@ -2,7 +2,7 @@
  * portalService.ts
  * Handles portal_requests CRUD and conversion to hunter_leads.
  *
- * convertToLead(): authorizes the canonical request and invokes migration 147\'s
+ * convertToLead(): authorizes the canonical request and invokes migration 148\'s
  * atomic org-scoped HUNTER acceptance RPC. Existing source/channel, score and
  * value-profile behavior remain server controlled. Geocoding and timeline work
  * run best-effort only after first acceptance.
@@ -379,7 +379,7 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
   }
   request = canonicalRequest as PortalRequest
 
-  // Migration 147 locks the canonical request and atomically creates/links one lead.
+  // Migration 148 locks the canonical request and atomically creates/links one lead.
   const { data: acceptance, error: acceptError } = await (supabase as any).rpc(
     'accept_portal_request_to_hunter', { p_request_id: request.id }
   )

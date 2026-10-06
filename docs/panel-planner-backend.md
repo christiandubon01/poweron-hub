@@ -8,7 +8,7 @@ Worktree: `C:/Users/chris/Desktop/Power On Hub/PowerOn-panel-planner-backend`.
 
 ## Architecture and persistence
 
-Migration `147_panel_planner_submission_foundation.sql` follows migration 146. It adds one private `portal_request_planner_details` row per normal `portal_requests` record, a notification outbox, a bounded IP-hash rate counter, and privileged RPCs. No second CRM, lead pipeline or authentication system is added.
+Migration `148_panel_planner_submission_foundation.sql` follows migrations 146 and 147 (`147_cash_owner_facts.sql`). It adds one private `portal_request_planner_details` row per normal `portal_requests` record, a notification outbox, a bounded IP-hash rate counter, and privileged RPCs. No second CRM, lead pipeline or authentication system is added.
 
 The details row has a composite request/organization FK and scoped unique (organization, client, idempotency key) constraint. Its immutable fields include the complete frozen schema-1 snapshot, customer note, preferred contact, service-request consent, photo manifest, creation time and deadlines. Snapshot is bounded to 128 KiB in both transport and PostgreSQL JSONB representation; the manifest is at most 10 photos/16 KiB; mutable photo transport is bounded to 128 KiB. RLS is enabled, anonymous/employee table access is denied, and authenticated users have no direct grant to secret columns. Server timestamps establish every deadline.
 
@@ -91,7 +91,7 @@ The endpoint uses a durable 60-actions/10-minute rate bucket keyed by HMAC of Ne
 
 Baseline at the exact base commit: 303 files, 6,227 tests: 6,167 passed, 59 failed, 1 skipped. Final full suite: 304 files, 6,366 tests: 6,306 passed, 59 failed, 1 skipped. The failure identities were compared to the clean baseline; no new failing test is introduced. The 59 failures are pre-existing migration-boundary, auth/UI and QBO contract/environment assertions and remain unmodified outside three targeted conversion assertions.
 
-Focused Portal/security gate: five files, 462 passing tests, including all 139 new planner tests. The new suite executes migration 147 on PostgreSQL through pinned development-only PGlite 0.5.8/pgcrypto, checks real rollback/RLS/ACL/tracking/receipt/authorization/finalization/HUNTER/outbox behavior, uses generated frozen payload fixtures, and tests HTTP, Storage byte checks, legacy bypass denial and notification delivery failure. Existing affected source assertions were updated to verify the authoritative atomic RPC contract rather than old client-side insertion.
+Focused Portal/security gate: five files, 462 passing tests, including all 139 new planner tests. The new suite executes migration 148 on PostgreSQL through pinned development-only PGlite 0.5.8/pgcrypto, checks real rollback/RLS/ACL/tracking/receipt/authorization/finalization/HUNTER/outbox behavior, uses generated frozen payload fixtures, and tests HTTP, Storage byte checks, legacy bypass denial and notification delivery failure. Existing affected source assertions were updated to verify the authoritative atomic RPC contract rather than old client-side insertion.
 
 PGlite serializes queries within one local engine. Concurrent Promise callers are regression tests, not independent-session MVCC proof. A separate-session PostgreSQL/Supabase staging race test remains required for create, finalize/accept and queue leasing. Storage/provider HTTP is simulated locally; actual signed upload/read/CORS and Resend delivery/reconciliation remain staging gates. Docker is installed but its daemon was not running; it was not started. No test uses live Supabase writes.
 
@@ -99,7 +99,7 @@ All pre-existing migration files, website model/outputs/Steps 1–7/design, Sola
 
 ## Migration review, deployment order and rollback
 
-Migration 147 is transactional and additive. It adds tables/functions/policies plus a composite unique constraint to portal_requests, with no destructive rewrite or historical-data deletion. The unique index may take a table lock while built: assess table size/lock timeout in staging. Existing request policies/bucket configuration/tracking functions are unchanged. The owner/admin role and canonical tenant helper functions remain the authority.
+Migration 148 is transactional and additive. It adds tables/functions/policies plus a composite unique constraint to portal_requests, with no destructive rewrite or historical-data deletion. The unique index may take a table lock while built: assess table size/lock timeout in staging. Existing request policies/bucket configuration/tracking functions are unchanged. The owner/admin role and canonical tenant helper functions remain the authority.
 
 Before deployment:
 1. Review migration/endpoint ACLs, contracts, private projections and complete baseline failure list; resolve or formally triage the 59 pre-existing failures under the normal owner workflow.
@@ -192,7 +192,7 @@ Final feature status (exact 22-file implementation boundary, nothing staged):
 ?? src/__tests__/fixtures/planner-payload-variants-v1.json
 ?? src/__tests__/panelPlannerBackend.test.ts
 ?? src/services/portal/plannerDetails.ts
-?? supabase/migrations/147_panel_planner_submission_foundation.sql
+?? supabase/migrations/148_panel_planner_submission_foundation.sql
 ```
 
 Git diff --check and no-index whitespace checks of all new files passed. Temporary baseline worktree and execution logs were removed after capturing results. No commits or pushes were made.
