@@ -1,0 +1,263 @@
+[
+  {
+    "schema_version": 1,
+    "lead_type": "panel_planner",
+    "client": "panel-planner-web-v1",
+    "submission": {
+      "page_url": null,
+      "idempotency_key": "00000000-0000-4000-8000-000000000001",
+      "consent": true
+    },
+    "customer": {
+      "name": "Planner Test",
+      "phone": "7605550100"
+    },
+    "intent": {
+      "intents": [],
+      "customer_type": null,
+      "reported_recommendation": null
+    },
+    "context": {
+      "home_size_range": {
+        "value": null,
+        "provenance": "unknown"
+      }
+    },
+    "existing_service": {
+      "main_rating": {
+        "value": null,
+        "provenance": "unknown"
+      },
+      "other_amps": {
+        "value": null,
+        "provenance": "unknown"
+      }
+    },
+    "existing_loads": [],
+    "planned_loads": [],
+    "panel": {
+      "age_band": {
+        "value": null,
+        "provenance": "unknown"
+      },
+      "concerns": {
+        "corrosion": {
+          "value": "present",
+          "provenance": "customer_known"
+        }
+      },
+      "note": ""
+    },
+    "photos": [],
+    "uncertainty": {
+      "known_unknowns": [
+        {
+          "id": "service.main_rating",
+          "reason": "unknown"
+        }
+      ],
+      "help_requested": []
+    },
+    "result_states": {
+      "source": "client_derived",
+      "determination": "preliminary",
+      "ruleset": {
+        "id": "workflow-only",
+        "version": "workflow-0.2",
+        "status": "unvalidated"
+      },
+      "capacity_outlook": "not_assessed",
+      "capacity_reason_codes": [
+        "no_planned_additions"
+      ],
+      "condition_outlook": "evaluation_recommended",
+      "condition_reason_codes": [
+        "concern_corrosion"
+      ],
+      "prompt_contact_suggested": false,
+      "paths_presented": [
+        "gather_more_information",
+        "professional_evaluation",
+        "other_professional_solution",
+        "panel_replacement"
+      ],
+      "next_step": "request_professional_review"
+    },
+    "professional_review_requested": false,
+    "attribution": {}
+  },
+  {
+    "schema_version": 1,
+    "lead_type": "panel_planner",
+    "client": "panel-planner-web-v1",
+    "submission": {
+      "page_url": null,
+      "idempotency_key": "00000000-0000-4000-8000-000000000001",
+      "consent": true
+    },
+    "customer": {
+      "name": "Planner Test",
+      "phone": "7605550100"
+    },
+    "intent": {
+      "intents": [],
+      "customer_type": null,
+      "reported_recommendation": null
+    },
+    "context": {
+      "home_size_range": {
+        "value": null,
+        "provenance": "unknown"
+      }
+    },
+    "existing_service": {
+      "main_rating": {
+        "value": null,
+        "provenance": "unknown"
+      },
+      "other_amps": {
+        "value": null,
+        "provenance": "unknown"
+      }
+    },
+    "existing_loads": [],
+    "planned_loads": [],
+    "panel": {
+      "age_band": {
+        "value": null,
+        "provenance": "unknown"
+      },
+      "concerns": {
+        "corrosion": {
+          "value": "absent",
+          "provenance": "customer_known"
+        }
+      },
+      "note": ""
+    },
+    "photos": [],
+    "uncertainty": {
+      "known_unknowns": [
+        {
+          "id": "service.main_rating",
+          "reason": "unknown"
+        }
+      ],
+      "help_requested": []
+    },
+    "result_states": {
+      "source": "client_derived",
+      "determination": "preliminary",
+      "ruleset": {
+        "id": "workflow-only",
+        "version": "workflow-0.2",
+        "status": "unvalidated"
+      },
+      "capacity_outlook": "not_assessed",
+      "capacity_reason_codes": [
+        "no_planned_additions"
+      ],
+      "condition_outlook": "no_concerns_reported",
+      "condition_reason_codes": [
+        "no_concerns_reported_by_customer"
+      ],
+      "prompt_contact_suggested": false,
+      "paths_presented": [
+        "gather_more_information",
+        "professional_evaluation"
+      ],
+      "next_step": "continue_planning"
+    },
+    "professional_review_requested": false,
+    "attribution": {}
+  },
+  {
+    "schema_version": 1,
+    "lead_type": "panel_planner",
+    "client": "panel-planner-web-v1",
+    "submission": {
+      "page_url": null,
+      "idempotency_key": "00000000-0000-4000-8000-000000000001",
+      "consent": true
+    },
+    "customer": {
+      "name": "Planner Test",
+      "phone": "7605550100"
+    },
+    "intent": {
+      "intents": [],
+      "customer_type": null,
+      "reported_recommendation": null
+    },
+    "context": {
+      "home_size_range": {
+        "value": null,
+        "provenance": "unknown"
+      }
+    },
+    "existing_service": {
+      "main_rating": {
+        "value": null,
+        "provenance": "unknown"
+      },
+      "other_amps": {
+        "value": null,
+        "provenance": "unknown"
+      }
+    },
+    "existing_loads": [],
+    "planned_loads": [],
+    "panel": {
+      "age_band": {
+        "value": null,
+        "provenance": "unknown"
+      },
+      "concerns": {
+        "corrosion": {
+          "value": null,
+          "provenance": "unknown"
+        }
+      },
+      "note": ""
+    },
+    "photos": [],
+    "uncertainty": {
+      "known_unknowns": [
+        {
+          "id": "service.main_rating",
+          "reason": "unknown"
+        },
+        {
+          "id": "panel.concern.corrosion",
+          "reason": "unsure"
+        }
+      ],
+      "help_requested": []
+    },
+    "result_states": {
+      "source": "client_derived",
+      "determination": "preliminary",
+      "ruleset": {
+        "id": "workflow-only",
+        "version": "workflow-0.2",
+        "status": "unvalidated"
+      },
+      "capacity_outlook": "not_assessed",
+      "capacity_reason_codes": [
+        "no_planned_additions"
+      ],
+      "condition_outlook": "more_information_needed",
+      "condition_reason_codes": [
+        "concern_unsure"
+      ],
+      "prompt_contact_suggested": false,
+      "paths_presented": [
+        "gather_more_information",
+        "professional_evaluation"
+      ],
+      "next_step": "add_information"
+    },
+    "professional_review_requested": false,
+    "attribution": {}
+  }
+]

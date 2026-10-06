@@ -278,7 +278,10 @@ describe('LEAD-SRC-2B portal conversion estimated_value', () => {
     expect(src).not.toContain('VALUE_RANGE_MAP')
     expect(src).not.toMatch(/min:\s*1500,\s*max:\s*6000/)
     expect(src).not.toMatch(/min:\s*2000,\s*max:\s*8000/)
-    expect(src).toContain('resolvePortalLeadEstimatedValue')
+    expect(src).toContain('accept_portal_request_to_hunter')
+    const migration = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/147_panel_planner_submission_foundation.sql'), 'utf8')
+    expect(migration).toContain("setting_key='lead_value_profiles_v1'")
+    expect(migration).toContain("round(((p->>'minValue')::numeric+(p->>'maxValue')::numeric)/2)")
   })
 })
 
@@ -431,10 +434,13 @@ describe('LEAD-SRC-2F shared tenant authority for profiles + conversion', () => 
       'utf8'
     )
     expect(portalSrc).toContain('tenantId = await resolveHunterTenantId()')
-    expect(portalSrc).toContain('tenant_id:        tenantId')
-    expect(portalSrc).toContain('resolvePortalLeadEstimatedValue({')
-    expect(portalSrc).toContain('tenantId,')
-    expect(portalSrc).toContain('serviceCategory: request.service_category')
+    expect(portalSrc).toContain('accept_portal_request_to_hunter')
+    const migration = readFileSync(resolve(process.cwd(), 'supabase/migrations/147_panel_planner_submission_foundation.sql'), 'utf8')
+    expect(migration).toContain('SELECT hunter_tenant_id INTO tenant FROM public.organizations WHERE id=org')
+    expect(migration).toContain('user_id=auth.uid() AND tenant_id=tenant')
+    expect(migration).toContain('WHERE ts.tenant_id=tenant')
+    expect(migration).toContain('VALUES(tenant,auth.uid()')
+
   })
 
   it('20. multiple user_tenants rows cannot diverge Settings vs convert (shared resolver only)', () => {

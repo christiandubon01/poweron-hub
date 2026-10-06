@@ -453,6 +453,14 @@ exports.handler = async (event) => {
 
   if (!isOwnerMode) {
     try {
+      const { denyPlannerUuidRead } = require('./lib/planner-legacy-guard.cjs')
+      if (await denyPlannerUuidRead(fetch, SUPABASE_URL, serviceHeaders, requestId)) {
+        return jsonResponse(403, { error: 'Planner recovery capability required' }, origin)
+      }
+    } catch {
+      return jsonResponse(503, { error: 'Request unavailable' }, origin)
+    }
+    try {
       const selectFields = 'id,notes'
       const reqRes = await fetch(
         `${SUPABASE_URL}/rest/v1/portal_requests?id=eq.${encodeURIComponent(requestId)}&select=${selectFields}&limit=1`,

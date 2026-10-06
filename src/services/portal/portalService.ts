@@ -2,28 +2,18 @@
  * portalService.ts
  * Handles portal_requests CRUD and conversion to hunter_leads.
  *
- * convertToLead():
- *   1. Builds hunter_leads insert payload from portal_request fields
- *   2. Inserts into hunter_leads:
- *        source     = portal source_category when valid (paid_search, …)
- *                     else 'customer_portal' fallback
- *        source_tag = 'customer_portal' (submission channel — LEAD-SRC-6C)
- *      score=82
- *   3. Geocodes address via geocode-single Edge Function → updates lat/lng
- *   4. Updates portal_request: status → 'accepted', hunter_lead_id → new id
+ * convertToLead(): authorizes the canonical request and invokes migration 147\'s
+ * atomic org-scoped HUNTER acceptance RPC. Existing source/channel, score and
+ * value-profile behavior remain server controlled. Geocoding and timeline work
+ * run best-effort only after first acceptance.
  */
 
 import { supabase } from '@/lib/supabase'
 import { geocodeAddressViaEdge, triggerGeocodingBackfill } from '@/services/geocoding/GeocodingClient'
-import { resolvePortalLeadEstimatedValue } from '@/services/portal/leadValueProfiles'
 import {
   isHunterTenantAuthorityError,
   resolveHunterTenantId,
 } from '@/services/hunter/resolveHunterTenantId'
-import {
-  normalizePortalAcquisitionCategory,
-  PORTAL_CHANNEL_TAG,
-} from '@/features/sales-intelligence/conversion-receipts/conversionReceiptSource'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -389,74 +379,16 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
   }
   request = canonicalRequest as PortalRequest
 
-  // Map service_category → lead_type
-  const leadTypeMap: Record<string, string> = {
-    residential:   'residential',
-    commercial:    'commercial',
-    solar:         'solar',
-    maintenance:   'maintenance',
-    panel_upgrade: 'panel_upgrade',
-    ev_charger:    'ev_charger',
-    other:         'electrical',
-  }
-  const leadType = leadTypeMap[request.service_category ?? ''] ?? 'electrical'
-
-  // Build description
-  const descParts: string[] = []
-  if (request.description) descParts.push(request.description)
-  if (request.preferred_date) descParts.push(`Preferred date: ${request.preferred_date}`)
-  if (request.preferred_time) descParts.push(`Preferred time: ${request.preferred_time}`)
-  if (request.notes) descParts.push(request.notes)
-
-  // Owner job-value profiles (tenant_settings) — null when no matching profile.
-  // Snapshot midpoint onto the lead; later profile edits do not rewrite history.
-  const estimatedValue = await resolvePortalLeadEstimatedValue({
-    tenantId,
-    serviceCategory: request.service_category,
-  })
-
-  // LEAD-SRC-6C: acquisition lives on source; Customer Portal channel on source_tag.
-  // Invalid/missing source_category falls back to channel-as-source (legacy shape).
-  const acquisition =
-    normalizePortalAcquisitionCategory((request as any).source_category) ?? PORTAL_CHANNEL_TAG
-
-  const insertPayload = {
-    tenant_id:        tenantId,
-    user_id:          userId,
-    lead_type:        leadType,
-    source:           acquisition,
-    source_tag:       PORTAL_CHANNEL_TAG,
-    status:           'new',
-    score:            82,   // inbound hot lead — customer actively reached out
-    score_tier:       'strong',
-    contact_name:     request.name,
-    phone:            request.phone ?? null,
-    email:            request.email ?? null,
-    address:          request.address ?? null,
-    city:             request.city ?? null,
-    description:      descParts.join('\n') || null,
-    notes:            `Portal submission — ${request.request_type} request`,
-    estimated_value:  estimatedValue,
-    estimated_margin: 35,
-    // Geocoding fields — populated below after insert
-    geocoding_status: 'pending',
-    latitude:         null,
-    longitude:        null,
-    distance_from_base_miles: null,
-  }
-
-  const { data: leadData, error: leadError } = await (supabase as any)
-    .from('hunter_leads')
-    .insert(insertPayload)
-    .select('id')
-    .single()
-
-  if (leadError || !leadData) {
-    console.error('[portalService] convertToLead insert failed:', leadError)
+  // Migration 147 locks the canonical request and atomically creates/links one lead.
+  const { data: acceptance, error: acceptError } = await (supabase as any).rpc(
+    'accept_portal_request_to_hunter', { p_request_id: request.id }
+  )
+  if (acceptError || !acceptance?.lead_id) {
+    console.error('[portalService] atomic acceptance failed')
     return null
   }
-
-  const newLeadId = leadData.id as string
+  const newLeadId = acceptance.lead_id as string
+  if (acceptance.replayed) return newLeadId
 
   // ── Geocode address (best-effort, non-blocking on failure) ────────────────
   const addressStr = [request.address, request.city, 'CA']
@@ -519,20 +451,6 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
       .catch((err) => {
         console.error('[portalService] geocoding failed (non-fatal):', err)
       })
-  }
-
-  // ── Update portal_request ─────────────────────────────────────────────────
-  const { error: updateError } = await (supabase as any)
-    .from('portal_requests')
-    .update({
-      status:         'accepted',
-      hunter_lead_id: newLeadId,
-    })
-    .eq('id', request.id)
-    .eq('organization_id', organizationId)
-
-  if (updateError) {
-    console.error('[portalService] update portal_request failed:', updateError)
   }
 
   // ── Insert "Accepted" + "Scheduling" job_timeline milestones ─────────────

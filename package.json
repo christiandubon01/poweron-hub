@@ -56,6 +56,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/howler": "^2.2.12",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

@@ -1,0 +1,42 @@
+// @ts-nocheck
+import { PGlite } from '@electric-sql/pglite'
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
+import { readFileSync } from 'node:fs'
+export const ORG='10000000-0000-4000-8000-000000000001'
+export const TENANT='20000000-0000-4000-8000-000000000001'
+export const OWNER='30000000-0000-4000-8000-000000000001'
+export const EMPLOYEE='30000000-0000-4000-8000-000000000002'
+export const OTHER_OWNER='30000000-0000-4000-8000-000000000003'
+export async function database() {
+  const db=new PGlite({extensions:{pgcrypto}})
+  await db.exec(SQL)
+  const legacy=readFileSync('supabase/migrations/111_private_portal_storage.sql','utf8')
+  const status=legacy.match(/CREATE OR REPLACE FUNCTION public\.get_portal_request_status[\s\S]*?\$\$;/i)?.[0]
+  if(!status)throw new Error('Tracking function fixture missing')
+  await db.exec(status)
+  await db.exec('GRANT EXECUTE ON FUNCTION public.get_portal_request_status(uuid) TO anon,authenticated')
+  await db.exec(readFileSync('supabase/migrations/147_panel_planner_submission_foundation.sql','utf8'))
+  // Local fixture-only substitution; production helper has no clock override.
+  await db.exec("CREATE OR REPLACE FUNCTION planner_private.now() RETURNS timestamptz LANGUAGE sql STABLE AS $$ SELECT t FROM public.test_clock $$")
+  return db
+}
+export async function reset(db) {
+  await db.exec("RESET ROLE; SET request.jwt.claim.sub=''; TRUNCATE public.portal_requests,public.hunter_leads,storage.objects,public.portal_planner_rate_limits CASCADE; UPDATE public.test_clock SET t='2026-10-06T00:00:00Z'; DELETE FROM public.tenant_settings;")
+}
+export async function role(db,user=OWNER) {
+  await db.exec("SET ROLE authenticated; SET request.jwt.claim.sub='"+user+"'")
+}
+const types={
+  p_payload:'jsonb',p_photo_manifest:'jsonb',p_verified_objects:'jsonb',p_delivery_payload:'jsonb',
+  p_idempotency_key:'uuid',p_request_id:'uuid',p_authorization_key:'uuid',p_finalization_key:'uuid',
+  p_authorization_id:'uuid',p_id:'uuid',p_claim_token:'uuid',p_photo_ids:'uuid[]',p_close_photos:'boolean'
+}
+export async function rpc(db,name,args={}) {
+  const entries=Object.entries(args)
+  const params=entries.map(([k,v])=>types[k]==='jsonb' ? JSON.stringify(v) : v)
+  const named=entries.map(([k],i)=>k+' => $'+(i+1)+'::'+(types[k]||'text')).join(',')
+  const result=await db.query('SELECT public.'+name+'('+named+') AS value',params)
+  return result.rows[0].value
+}
+
+const SQL="\nCREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;\nCREATE SCHEMA auth; CREATE SCHEMA extensions; CREATE SCHEMA storage;\nCREATE EXTENSION pgcrypto WITH SCHEMA extensions;\nCREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$\n SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;\nCREATE TABLE public.organizations(id uuid PRIMARY KEY,hunter_tenant_id uuid UNIQUE);\nCREATE TABLE public.test_profiles(id uuid PRIMARY KEY,org uuid,role text);\nINSERT INTO public.organizations VALUES('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001'),\n ('10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002');\nINSERT INTO public.test_profiles VALUES\n ('30000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','owner'),\n ('30000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','employee'),\n ('30000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000002','owner');\nCREATE FUNCTION public.user_org_id() RETURNS uuid LANGUAGE sql SECURITY DEFINER AS $$\n SELECT org FROM public.test_profiles WHERE id=auth.uid() $$;\nCREATE FUNCTION public.is_org_admin_for(p uuid) RETURNS boolean LANGUAGE sql SECURITY DEFINER AS $$\n SELECT EXISTS(SELECT 1 FROM public.test_profiles WHERE id=auth.uid() AND org=p AND role IN('owner','admin')) $$;\nCREATE TABLE public.user_tenants(user_id uuid,tenant_id uuid);\nINSERT INTO public.user_tenants VALUES('30000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001');\nCREATE TABLE public.tenant_settings(tenant_id uuid,setting_key text,setting_value jsonb);\nCREATE TABLE public.hunter_leads(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),tenant_id uuid,user_id uuid,\n lead_type text,source text,source_tag text,status text,score integer,score_tier text,contact_name text,\n phone text,email text,address text,city text,description text,notes text,estimated_value numeric,estimated_margin numeric,geocoding_status text);\nCREATE TABLE public.portal_requests(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),organization_id uuid NOT NULL REFERENCES organizations(id),\n name text NOT NULL,phone text,email text,address text,city text,request_type text,service_category text,source text,status text,\n description text,notes text,preferred_date date,preferred_time text,created_at timestamptz DEFAULT now(),\n hunter_lead_id uuid REFERENCES hunter_leads(id),attach_token_hash text,source_category text,gclid text,gbraid text,wbraid text,\n utm_source text,utm_medium text,utm_campaign text,utm_term text,utm_content text,page_url text);\nALTER TABLE public.portal_requests ENABLE ROW LEVEL SECURITY;\nGRANT SELECT,UPDATE ON public.portal_requests TO authenticated;\nCREATE POLICY owner_request_read ON public.portal_requests FOR SELECT TO authenticated\n USING(organization_id=public.user_org_id() AND public.is_org_admin_for(organization_id));\nCREATE POLICY owner_request_update ON public.portal_requests FOR UPDATE TO authenticated\n USING(organization_id=public.user_org_id() AND public.is_org_admin_for(organization_id))\n WITH CHECK(organization_id=public.user_org_id() AND public.is_org_admin_for(organization_id));\nCREATE TABLE public.portal_request_configuration(singleton boolean PRIMARY KEY,organization_id uuid);\nINSERT INTO public.portal_request_configuration VALUES(true,'10000000-0000-4000-8000-000000000001');\nCREATE TABLE public.portal_upload_authorizations(id uuid PRIMARY KEY,request_id uuid REFERENCES portal_requests(id),\n paths text[],expires_at timestamptz,consumed_at timestamptz,created_at timestamptz DEFAULT now());\nCREATE TABLE storage.buckets(id text PRIMARY KEY,public boolean);\nINSERT INTO storage.buckets VALUES('portal-uploads',false);\nCREATE TABLE storage.objects(id uuid DEFAULT gen_random_uuid(),bucket_id text,name text,metadata jsonb,\n created_at timestamptz DEFAULT now(),UNIQUE(bucket_id,name));\nGRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;\nGRANT EXECUTE ON FUNCTION auth.uid(),public.user_org_id(),public.is_org_admin_for(uuid) TO anon,authenticated,service_role;\nGRANT ALL ON ALL TABLES IN SCHEMA public,storage TO service_role;\nCREATE TABLE public.test_clock(t timestamptz);\nINSERT INTO public.test_clock VALUES('2026-10-06T00:00:00Z');\n"

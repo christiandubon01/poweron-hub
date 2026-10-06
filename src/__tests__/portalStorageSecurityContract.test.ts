@@ -762,8 +762,13 @@ describe('[STATIC SERVICE] SEC-0S R2 Portal owner query and conversion boundary'
     expect(portalService).toMatch(/convertToLead[\s\S]*?\.eq\('id', request\.id\)[\s\S]*?\.eq\('organization_id', organizationId\)/)
   })
 
-  it('conversion update preserves and scopes by organization identity', () => {
-    expect(portalService).toMatch(/update\(\{[\s\S]*?hunter_lead_id: newLeadId[\s\S]*?\.eq\('organization_id', organizationId\)/)
+  it('atomic conversion locks and links only the authorized organization request', () => {
+    expect(portalService).toContain('accept_portal_request_to_hunter')
+    const migration = readFileSync(join(MIG_DIR, '147_panel_planner_submission_foundation.sql'), 'utf8')
+    expect(migration).toContain('id=p_request_id AND organization_id=org FOR UPDATE')
+    expect(migration).toContain('NOT public.is_org_admin_for(org)')
+    expect(migration).toContain('WHERE id=r.id AND organization_id=org')
+
   })
 
   it('dismissal scopes both update and linked-lead lookup by organization', () => {

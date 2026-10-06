@@ -1,0 +1,677 @@
+{
+  "PROVENANCE_VALUES": [
+    "customer_known",
+    "customer_estimated",
+    "inferred_preliminary",
+    "measured",
+    "unknown",
+    "verification_required"
+  ],
+  "SERVICE_RATINGS": [
+    60,
+    100,
+    125,
+    150,
+    200,
+    400,
+    "other"
+  ],
+  "AGE_BANDS": [
+    "under_10",
+    "10_25",
+    "25_40",
+    "40_plus"
+  ],
+  "HOME_SIZE_RANGES": [
+    "under_1500",
+    "1500_2500",
+    "2500_3500",
+    "3500_plus"
+  ],
+  "CUSTOMER_TYPES": [
+    "homeowner",
+    "landlord_property_manager",
+    "hoa",
+    "commercial",
+    "builder_contractor",
+    "other"
+  ],
+  "RECOMMENDATION_SOURCES": [
+    "inspector",
+    "electrician",
+    "utility",
+    "insurer",
+    "other",
+    "unknown"
+  ],
+  "CONTACT_METHODS": [
+    "phone",
+    "text",
+    "email"
+  ],
+  "INTENT_IDS": [
+    "ev_charger",
+    "hvac",
+    "pool_spa",
+    "electric_range_cooking",
+    "electric_dryer",
+    "electric_water_heater",
+    "tankless_water_heater",
+    "solar",
+    "battery",
+    "remodel",
+    "adu_addition",
+    "existing_panel_concern",
+    "told_need_upgrade",
+    "understand_existing_system",
+    "other"
+  ],
+  "LOAD_TYPES": {
+    "central_hvac": {
+      "label": "Central heating & cooling (HVAC)",
+      "family": "hvac",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "tonnage": {
+          "kind": "number",
+          "min": 1,
+          "max": 10,
+          "unit": "tons"
+        },
+        "equipment_type": {
+          "kind": "enum",
+          "options": [
+            "heat_pump",
+            "ac_with_gas_heat",
+            "ac_with_electric_heat",
+            "other"
+          ]
+        },
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "additional_hvac": {
+      "label": "Additional or mini-split HVAC",
+      "family": "hvac",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "tonnage": {
+          "kind": "number",
+          "min": 0.5,
+          "max": 10,
+          "unit": "tons"
+        },
+        "equipment_type": {
+          "kind": "enum",
+          "options": [
+            "mini_split",
+            "portable_or_window",
+            "other"
+          ]
+        },
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "electric_range": {
+      "label": "Electric range",
+      "family": "cooking",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "electric_oven": {
+      "label": "Electric oven",
+      "family": "cooking",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "electric_dryer": {
+      "label": "Electric dryer",
+      "family": "laundry",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "electric_water_heater": {
+      "label": "Electric water heater",
+      "family": "water_heating",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "kw_rating": {
+          "kind": "number",
+          "min": 1,
+          "max": 12,
+          "unit": "kW"
+        },
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "tankless_water_heater": {
+      "label": "Electric tankless water heater",
+      "family": "water_heating",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "kw_rating": {
+          "kind": "number",
+          "min": 5,
+          "max": 40,
+          "unit": "kW"
+        },
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "pool_equipment": {
+      "label": "Pool equipment",
+      "family": "pool_spa",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "pump_type": {
+          "kind": "enum",
+          "options": [
+            "single_speed",
+            "variable_speed",
+            "other"
+          ]
+        },
+        "heater_type": {
+          "kind": "enum",
+          "options": [
+            "none",
+            "electric",
+            "gas",
+            "heat_pump"
+          ]
+        },
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "spa_hot_tub": {
+      "label": "Spa or hot tub",
+      "family": "pool_spa",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "voltage": {
+          "kind": "enum",
+          "options": [
+            120,
+            240
+          ]
+        },
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "ev_charging": {
+      "label": "EV charging",
+      "family": "ev",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "charging_amps": {
+          "kind": "enum",
+          "options": [
+            16,
+            24,
+            32,
+            40,
+            48
+          ]
+        },
+        "charger_model": {
+          "kind": "text",
+          "maxLength": 80
+        },
+        "vehicle": {
+          "kind": "text",
+          "maxLength": 80
+        },
+        "breaker_amps_reported": {
+          "kind": "enum",
+          "options": [
+            15,
+            20,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            100,
+            125,
+            150,
+            200
+          ]
+        }
+      }
+    },
+    "solar": {
+      "label": "Solar",
+      "family": "solar",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "system_kw": {
+          "kind": "number",
+          "min": 1,
+          "max": 50,
+          "unit": "kW"
+        },
+        "inverter_type": {
+          "kind": "enum",
+          "options": [
+            "string",
+            "microinverter",
+            "hybrid",
+            "other"
+          ]
+        }
+      }
+    },
+    "battery": {
+      "label": "Battery storage",
+      "family": "storage",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "capacity_kwh": {
+          "kind": "number",
+          "min": 1,
+          "max": 100,
+          "unit": "kWh"
+        },
+        "backup_scope": {
+          "kind": "enum",
+          "options": [
+            "whole_home",
+            "partial_home"
+          ]
+        }
+      }
+    },
+    "adu_addition": {
+      "label": "ADU or addition",
+      "family": "structure",
+      "appliesTo": [
+        "planned"
+      ],
+      "fields": {
+        "approx_sqft": {
+          "kind": "number",
+          "min": 100,
+          "max": 5000,
+          "unit": "sq ft"
+        },
+        "separate_meter": {
+          "kind": "enum",
+          "options": [
+            "yes",
+            "no",
+            "undecided"
+          ]
+        }
+      }
+    },
+    "remodel_addition": {
+      "label": "Remodel",
+      "family": "structure",
+      "appliesTo": [
+        "planned"
+      ],
+      "fields": {
+        "scope_summary": {
+          "kind": "text",
+          "maxLength": 200
+        }
+      }
+    },
+    "other_significant": {
+      "label": "Other significant electrical equipment",
+      "family": "other",
+      "appliesTo": [
+        "existing",
+        "planned"
+      ],
+      "fields": {
+        "description": {
+          "kind": "text",
+          "maxLength": 120
+        }
+      }
+    }
+  },
+  "LOAD_STATUSES": {
+    "existing": [
+      "present",
+      "unsure"
+    ],
+    "planned": [
+      "planned",
+      "considering"
+    ]
+  },
+  "CONCERN_IDS": [
+    "damage_visible",
+    "corrosion",
+    "heat_discoloration",
+    "recurring_breaker_trips",
+    "buzzing_unusual_sound",
+    "equipment_seems_old",
+    "known_equipment_concern",
+    "fuse_equipment",
+    "limited_breaker_space",
+    "inspection_concern",
+    "insurance_concern",
+    "remodel_triggered_concern",
+    "wants_professional_inspection"
+  ],
+  "PHOTO_CATEGORIES": {
+    "main_breaker": {
+      "label": "Main breaker",
+      "requiresCoverRemoval": false
+    },
+    "panel_label": {
+      "label": "Panel label",
+      "requiresCoverRemoval": false
+    },
+    "meter_service_equipment": {
+      "label": "Meter or service equipment",
+      "requiresCoverRemoval": false
+    },
+    "visible_equipment_concern": {
+      "label": "A visible equipment concern",
+      "requiresCoverRemoval": false
+    },
+    "other_equipment": {
+      "label": "Other relevant equipment",
+      "requiresCoverRemoval": false
+    }
+  },
+  "PHOTO_UPLOAD_STATES": [
+    "not_started",
+    "queued",
+    "uploading",
+    "uploaded",
+    "failed"
+  ],
+  "HELP_TOPICS": [
+    "service_main_rating",
+    "panel_label",
+    "meter_equipment",
+    "load_identification"
+  ],
+  "CAPACITY_OUTLOOKS": {
+    "not_assessed": "Not assessed yet",
+    "more_information_needed": "More information needed",
+    "evaluation_recommended": "Further capacity evaluation recommended",
+    "may_be_sufficient": "Existing capacity may be sufficient, to be confirmed"
+  },
+  "CONDITION_OUTLOOKS": {
+    "not_assessed": "Equipment condition not assessed",
+    "no_concerns_reported": "No equipment concerns reported",
+    "more_information_needed": "More information needed about the equipment",
+    "evaluation_recommended": "Existing equipment deserves a professional look"
+  },
+  "REASON_LABELS": {
+    "direct_request_path": "You chose to request service directly",
+    "no_planned_additions": "No planned additions have been added yet",
+    "planned_additions_reported": "You are planning an addition, which a professional should review against your existing service",
+    "third_party_recommendation_reported": "You reported being told about an upgrade, which a professional should confirm",
+    "screening_rules_not_validated": "Whether your existing service suits the plan needs a professional’s review",
+    "service_rating_unknown": "The service size is not known",
+    "service_rating_other": "The service size is something other than the common sizes",
+    "service_rating_needs_verification": "The service size needs professional verification",
+    "service_rating_estimated": "The service size is an estimate",
+    "existing_load_unsure": "You are not sure about some existing equipment",
+    "planned_load_unspecified": "A planned addition is not specific yet",
+    "concern_unsure": "You are not sure about some panel observations",
+    "customer_unsure_about_condition": "You were not sure about the panel condition",
+    "condition_not_provided": "Panel observations were not provided",
+    "no_concerns_reported_by_customer": "No concerns were reported (this is not a condition check)",
+    "basis_not_firm": "The information behind this outcome is not firm enough to support it",
+    "ruleset_output_invalid": "The screening rules returned an unusable result",
+    "concern_damage_visible": "Visible damage",
+    "concern_corrosion": "Corrosion or moisture marks",
+    "concern_heat_discoloration": "Heat marks or discoloration",
+    "concern_recurring_breaker_trips": "Breakers trip repeatedly",
+    "concern_buzzing_unusual_sound": "Buzzing or unusual sounds",
+    "concern_equipment_seems_old": "The panel seems old",
+    "concern_known_equipment_concern": "A known concern about this panel brand or model",
+    "concern_fuse_equipment": "Fuses instead of breakers",
+    "concern_limited_breaker_space": "Little or no open breaker space",
+    "concern_inspection_concern": "An inspection raised a concern",
+    "concern_insurance_concern": "An insurer raised a concern",
+    "concern_remodel_triggered_concern": "A remodel may involve the panel",
+    "concern_wants_professional_inspection": "I would like a professional to inspect it"
+  },
+  "PATHS": {
+    "use_existing_service": {
+      "label": "Keep using the existing service",
+      "description": "A professional may conclude your current service already supports the plan."
+    },
+    "gather_more_information": {
+      "label": "Gather a little more information",
+      "description": "Some details are unknown; knowing them makes any evaluation faster."
+    },
+    "professional_evaluation": {
+      "label": "Have a professional evaluate the system",
+      "description": "A licensed electrician reviews the actual equipment and plan."
+    },
+    "load_management": {
+      "label": "Manage when major loads run",
+      "description": "Some plans can be accommodated by managing how equipment shares capacity; a professional would advise."
+    },
+    "modify_proposed_load": {
+      "label": "Adjust the proposed equipment",
+      "description": "A different size or type of equipment may change what a professional would recommend."
+    },
+    "other_professional_solution": {
+      "label": "Another professional solution",
+      "description": "There can be other ways to meet a plan that a professional would explain."
+    },
+    "panel_replacement": {
+      "label": "Panel replacement",
+      "description": "One option a professional may discuss. Whether it applies is decided only after they evaluate the equipment."
+    },
+    "service_upgrade": {
+      "label": "Service upgrade",
+      "description": "One option a professional may discuss. Whether it applies is decided only after they evaluate the system."
+    }
+  },
+  "NEXT_STEPS": {
+    "direct_request": "Continue with your request",
+    "request_professional_review": "Ask Power On to review this",
+    "add_information": "Tell us a little more about your system",
+    "optional_professional_review": "Optionally have Power On confirm",
+    "continue_planning": "Keep going with the planner"
+  },
+  "ATTRIBUTION_KEYS": [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_content",
+    "utm_term",
+    "gclid",
+    "gbraid",
+    "wbraid"
+  ]
+}
