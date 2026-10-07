@@ -1,0 +1,60 @@
+/**
+ * src/services/spending/taxonomy.ts
+ *
+ * BANK-5 vocabulary. Three INDEPENDENT dimensions describe a provider transaction (PLAID TRANSACTION = EVIDENCE, NOT TRUTH):
+ *   1. ECONOMIC BUCKET  - what was this money for?  (stored as an interpretation of kind 'category'; the key is just TEXT, so buckets
+ *                          can be added or renamed later without rewriting any transaction evidence)
+ *   2. RELATIONSHIP     - what does it belong to?   (obligation / project / debt / payroll / transfer / overhead / personal; "unknown" is the
+ *                          ABSENCE of a decision)
+ *   3. REVIEW STATE     - how certain/approved is it? (derived: suggested / confirmed / needs_review / ignored)
+ * Confidence (high / possible / low) is a fourth, separate fact about a SUGGESTION, never a review state.
+ */
+
+export interface BucketDef {
+  key: string
+  label: string
+  /** Counts toward "money bleeding" (discretionary / untracked) when unassigned. Operating costs like materials and fuel do not. */
+  discretionary: boolean
+  /** Short owner-facing hint for pickers. */
+  hint: string
+}
+
+export const BUCKETS = [
+  { key: 'materials', label: 'Materials', discretionary: false, hint: 'Job materials and supplies' },
+  { key: 'fuel_vehicle', label: 'Fuel / Vehicle', discretionary: false, hint: 'Fuel, repairs, tolls, parking' },
+  { key: 'tools_equipment', label: 'Tools & Equipment', discretionary: true, hint: 'Tools, meters, equipment' },
+  { key: 'software_subscriptions', label: 'Software / Subscriptions', discretionary: true, hint: 'Apps, SaaS, memberships' },
+  { key: 'insurance', label: 'Insurance', discretionary: false, hint: 'Business, vehicle, liability, workers comp' },
+  { key: 'payroll_people', label: 'Payroll / People', discretionary: false, hint: 'Wages, payroll providers, contractors' },
+  { key: 'permits_fees', label: 'Permits & Fees', discretionary: false, hint: 'Permits, licenses, government fees' },
+  { key: 'marketing', label: 'Marketing', discretionary: true, hint: 'Ads, lead services, print' },
+  { key: 'meals', label: 'Meals', discretionary: true, hint: 'Food and drink' },
+  { key: 'office_admin', label: 'Office / Admin', discretionary: true, hint: 'Office supplies, shipping, utilities' },
+  { key: 'bank_finance_fees', label: 'Bank / Finance Fees', discretionary: true, hint: 'Bank, card and finance charges' },
+  { key: 'personal_owner', label: 'Personal / Owner', discretionary: false, hint: 'Owner personal spending' },
+  { key: 'taxes', label: 'Taxes', discretionary: false, hint: 'Income, payroll and sales taxes' },
+  { key: 'transfers', label: 'Transfers', discretionary: false, hint: 'Moving money between accounts' },
+  { key: 'other_needs_review', label: 'Other / Needs Review', discretionary: true, hint: 'Not classified yet' },
+] as const satisfies readonly BucketDef[]
+
+export type BucketKey = (typeof BUCKETS)[number]['key']
+export const BUCKET_KEYS: readonly string[] = BUCKETS.map(b => b.key)
+export const OTHER_BUCKET: BucketKey = 'other_needs_review'
+export const bucketLabel = (key: string | null | undefined): string => BUCKETS.find(b => b.key === key)?.label ?? 'Other / Needs Review'
+export const isBucketKey = (v: unknown): v is BucketKey => typeof v === 'string' && BUCKET_KEYS.includes(v)
+export const isDiscretionary = (key: string): boolean => BUCKETS.find(b => b.key === key)?.discretionary ?? true
+
+export const RELATIONSHIP_KINDS = ['obligation', 'project', 'debt', 'payroll', 'transfer', 'overhead', 'personal'] as const
+export type RelationshipKind = (typeof RELATIONSHIP_KINDS)[number]
+export const isRelationshipKind = (v: unknown): v is RelationshipKind => typeof v === 'string' && (RELATIONSHIP_KINDS as readonly string[]).includes(v)
+export const RELATIONSHIP_LABELS: Record<RelationshipKind | 'unknown', string> = {
+  obligation: 'Known bill', project: 'Project', debt: 'Debt payment', payroll: 'Payroll', transfer: 'Transfer',
+  overhead: 'General overhead', personal: 'Personal', unknown: 'Unknown',
+}
+/** Relationships that mean "this money is already accounted for by something Cash OS knows" (so it is not unassigned spending). */
+export const KNOWN_MONEY_KINDS: readonly RelationshipKind[] = ['obligation', 'debt', 'payroll', 'transfer']
+
+export type Confidence = 'high' | 'possible' | 'low'
+export const CONFIDENCE_RANK: Record<Confidence, number> = { high: 3, possible: 2, low: 1 }
+export type ReviewState = 'suggested' | 'confirmed' | 'needs_review' | 'ignored'
+export type Direction = 'money_out' | 'money_in' | 'zero'

@@ -6,6 +6,7 @@ import CashOsObligations from './CashOsObligations'
 import { projectOptionsFromBackup } from '@/finance/cashProjectFacts'
 import { CashOsAccountMenu, CashOsAccountRestore } from './CashOsAccountMenu'
 import BankConnectionCard from '@/features/bank-connection/BankConnectionCard'
+import SpendingExplorer from '@/features/spending-explorer/SpendingExplorer'
 
 export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
   const { projection } = snapshot
@@ -84,6 +85,7 @@ export function CashTransactionsView({
   const handleMutated = async () => { await onRefresh?.() }
   return <div className="space-y-5">
     <BankConnectionCard />
+    <SpendingExplorer />
     <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
       {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
         <div className="flex items-start justify-between gap-1">
