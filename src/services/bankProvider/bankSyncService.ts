@@ -17,7 +17,7 @@
  */
 import { BankConnectionError, assertAuthority, decryptFor, loadCredential, note, type BankActor } from './bankConnectionService'
 import type { BankAccountDeps } from './bankAccountService'
-import { PlaidApiFailure, type SyncPage } from './plaidPort'
+import { PlaidApiFailure, ProviderResponseError, type SyncPage } from './plaidPort'
 import { toTransactionEvidence, EvidenceRejected, type TransactionEvidence } from './transactionEvidence'
 
 export const SYNC_PAGE_SIZE = 500
@@ -33,6 +33,17 @@ export const SYNC_TIME_BUDGET_MS = 8_000
 /** A `syncing` lease older than this is considered abandoned (a killed invocation) and may be re-claimed. Far above the longest possible run. */
 export const SYNC_LEASE_MS = 2 * 60 * 1000
 const WEBHOOK_CODE = 'SYNC_UPDATES_AVAILABLE'
+
+/** A database failure reduced to what is safe to log: the operation, the SQLSTATE and a schema constraint name. No message, row or value. */
+export class PersistenceFailure extends Error {
+  readonly operation: string
+  readonly sqlState: string | null
+  readonly constraint: string | null
+  constructor(operation: string, sqlState: string | null, constraint: string | null) { super('bank sync persistence failed'); this.name = 'PersistenceFailure'; this.operation = operation; this.sqlState = sqlState; this.constraint = constraint }
+}
+
+/** Where in the flow a failure happened. Fixed vocabulary, safe to log. */
+export type SyncStage = 'credential' | 'provider_request' | 'provider_response' | 'transform' | 'account_resolution' | 'evidence_persistence' | 'cursor_finalize'
 
 export interface SyncState {
   status: 'idle' | 'syncing' | 'failed'
@@ -114,7 +125,8 @@ const unavailable = () => new BankConnectionError('plaid_unavailable', 502, 'The
 class SyncFailure extends Error {
   readonly code: string
   readonly publicError: BankConnectionError
-  constructor(code: string, publicError: BankConnectionError) { super(code); this.name = 'SyncFailure'; this.code = code; this.publicError = publicError }
+  readonly stage: SyncStage | null
+  constructor(code: string, publicError: BankConnectionError, stage: SyncStage | null = null) { super(code); this.name = 'SyncFailure'; this.code = code; this.publicError = publicError; this.stage = stage }
 }
 /**
  * One full owner-requested sync of a connected Item. Never automatic. Safe to retry at any point.
@@ -129,12 +141,14 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
   const startedAt = new Date(clock(deps)).toISOString()
   note(deps, { event: 'bank.sync.started', organizationId: org, itemId: item.id })
 
+  let stage: SyncStage = 'credential'
   const run = async () => {
     const token = decryptFor(deps, actor, item, envelope)
     const state = await deps.sync.getSyncState(org, item.id)
     const startCursor = state?.cursor ? state.cursor : null // the ORIGINAL cursor of this update; replaced only after a complete success
     const hadPriorSuccess = !!state?.lastSuccessfulAt
 
+    stage = 'provider_request'
     // Account discovery belongs to BANK-3: this sync does NOT call /accounts/get. Every transaction must resolve to a provider account of
     // THIS Item and organization that discovery already stored; anything else fails closed (below) and asks the owner to refresh accounts.
     const deadline = clock(deps) + SYNC_TIME_BUDGET_MS
@@ -175,13 +189,16 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
         throw error
       }
     }
+    stage = 'transform'
     const finalPage = pages[pages.length - 1]
     const finalCursor = finalPage.nextCursor || null
 
     // Resolve + transform EVERYTHING before writing anything: a rejected row fails the whole sync with the cursor untouched.
+    stage = 'account_resolution'
     const accountRefs = new Map((await deps.accounts.listProviderAccounts(org, item.id)).map(a => [a.providerAccountId, a.id]))
     const unsupportedAccounts = new Set(pages.flatMap(p => p.accounts).filter(a => a.currency !== 'USD').map(a => a.accountId))
     let skipped = 0, redacted = 0
+    stage = 'transform'
     const toRows = (list: SyncPage['added']): EvidenceRow[] => {
       const byId = new Map<string, EvidenceRow>()
       for (const t of list) {
@@ -189,7 +206,7 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
         const out = toTransactionEvidence(t)
         if (out.kind === 'skipped') { skipped += 1; continue }
         const ref = accountRefs.get(out.evidence.providerAccountId)
-        if (!ref) throw new SyncFailure('ACCOUNT_UNKNOWN', new BankConnectionError('sync_failed', 409, 'The bank returned a transaction for an account Cash OS does not know yet. Nothing was saved. Use "Refresh accounts", then sync again.'))
+        if (!ref) throw new SyncFailure('ACCOUNT_UNKNOWN', new BankConnectionError('sync_failed', 409, 'The bank returned a transaction for an account Cash OS does not know yet. Nothing was saved. Use "Refresh accounts", then sync again.'), 'account_resolution')
         redacted += out.evidence.redactedFields
         byId.set(out.evidence.providerTransactionId, { evidence: out.evidence, providerAccountRef: ref })
       }
@@ -198,6 +215,7 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
     const plan = pages.map(p => ({ added: toRows(p.added), modified: toRows(p.modified), removed: p.removed.map(r => r.transactionId) }))
 
     // Persist in the provider's own order (idempotent upserts), THEN advance the cursor.
+    stage = 'evidence_persistence'
     let added = 0, modified = 0, removedMarked = 0, pendingCount = 0
     for (const step of plan) {
       withinBudget() // stopping here leaves valid, idempotent evidence behind but NEVER moves the cursor or stamps a success
@@ -207,6 +225,7 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
     }
     const hadData = plan.some(s => s.added.length + s.modified.length + s.removed.length > 0)
     // Synced/Waiting/Unconfirmed come ONLY from Plaid's documented transactions_update_status (see classifySyncOutcome).
+    stage = 'cursor_finalize'
     const outcome = classifySyncOutcome(finalPage.updateStatus, hadData, hadPriorSuccess)
     await deps.sync.finishSync(org, item.id, { cursor: finalCursor, state: outcome })
     await deps.sync.markNudgesProcessed(org, item.id, startedAt)
@@ -217,18 +236,42 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
   try {
     return await run()
   } catch (error) {
+    // Classify by what actually failed AND where. Owner messages stay generic and safe; the failure code and the log line carry the
+    // stage plus a sanitized class, so a provider-integration problem is diagnosable without exposing any provider data.
     let failure: SyncFailure
-    if (error instanceof SyncFailure) failure = error
-    else if (error instanceof EvidenceRejected) failure = new SyncFailure(`EVIDENCE_${error.reason.toUpperCase()}`, new BankConnectionError('sync_failed', 502, 'A bank transaction could not be stored safely. Nothing was saved; the issue has been recorded.'))
+    let errorClass = 'none'
+    let detail: string | undefined
+    const at = stage
+    if (error instanceof SyncFailure) { failure = error; errorClass = 'SyncFailure' }
+    else if (error instanceof EvidenceRejected) {
+      errorClass = 'EvidenceRejected'
+      failure = new SyncFailure(`EVIDENCE_${error.reason.toUpperCase()}`, new BankConnectionError('sync_failed', 502, 'A bank transaction could not be stored safely. Nothing was saved; the issue has been recorded.'), 'transform')
+    }
     else if (error instanceof PlaidApiFailure && error.code === 'ITEM_LOGIN_REQUIRED') {
       try { await deps.sync.markLoginRequired(org, item.id) } catch { /* the failure below is still reported */ }
-      failure = new SyncFailure('ITEM_LOGIN_REQUIRED', new BankConnectionError('login_required', 409, 'The bank needs you to sign in again. Use Reconnect.'))
+      errorClass = 'PlaidApiFailure'; detail = `plaid=${error.type}/${error.code}`
+      failure = new SyncFailure('ITEM_LOGIN_REQUIRED', new BankConnectionError('login_required', 409, 'The bank needs you to sign in again. Use Reconnect.'), 'provider_request')
     }
-    else if (error instanceof PlaidApiFailure) failure = new SyncFailure(error.code.slice(0, 64), unavailable())
-    else if (error instanceof BankConnectionError) failure = new SyncFailure(error.code === 'credential_unreadable' ? 'CREDENTIAL_UNREADABLE' : error.code.toUpperCase(), error)
-    else failure = new SyncFailure('SYNC_FAILED', new BankConnectionError('persistence_failed', 503, 'The sync could not be saved. Nothing was changed; please try again.'))
+    else if (error instanceof PlaidApiFailure) {
+      errorClass = 'PlaidApiFailure'; detail = `plaid=${error.type}/${error.code};http=${error.httpStatus ?? 'none'}`
+      failure = new SyncFailure(error.code.slice(0, 64), unavailable(), 'provider_request')
+    }
+    else if (error instanceof ProviderResponseError) {
+      errorClass = 'ProviderResponseError'
+      failure = new SyncFailure('PROVIDER_RESPONSE_UNREADABLE', new BankConnectionError('sync_failed', 502, 'The bank connection service returned data Cash OS could not read. Nothing was saved; the issue has been recorded.'), 'provider_response')
+    }
+    else if (error instanceof PersistenceFailure) {
+      errorClass = 'PersistenceFailure'; detail = `op=${error.operation};sqlstate=${error.sqlState ?? 'none'};constraint=${error.constraint ?? 'none'}`
+      failure = new SyncFailure(`${at.toUpperCase()}_FAILED`, new BankConnectionError('persistence_failed', 503, 'The sync could not be saved. Nothing was changed; please try again.'), at)
+    }
+    else if (error instanceof BankConnectionError) { errorClass = 'BankConnectionError'; failure = new SyncFailure(error.code === 'credential_unreadable' ? 'CREDENTIAL_UNREADABLE' : error.code.toUpperCase(), error, at) }
+    else {
+      // An unexpected exception: record ONLY its constructor name and the stage, never its message, stack or any property.
+      errorClass = error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(error.name) ? error.name : 'UnknownThrown'
+      failure = new SyncFailure(`${at.toUpperCase()}_FAILED`, new BankConnectionError('persistence_failed', 503, 'The sync could not be saved. Nothing was changed; please try again.'), at)
+    }
     try { await deps.sync.failSync(org, item.id, failure.code) } catch { /* the lease expires on its own */ }
-    note(deps, { event: 'bank.sync.failed', organizationId: org, itemId: item.id, code: failure.code })
+    note(deps, { event: 'bank.sync.failed', organizationId: org, itemId: item.id, code: failure.code, stage: failure.stage ?? at, errorClass, detail })
     throw failure.publicError
   }
 }

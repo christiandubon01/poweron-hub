@@ -27,6 +27,11 @@ export class PlaidApiFailure extends Error {
   }
 }
 
+/** The provider answered, but the answer could not be read in the expected shape (a bug or an API change). Carries nothing from the response. */
+export class ProviderResponseError extends Error {
+  constructor() { super('provider response could not be read'); this.name = 'ProviderResponseError' }
+}
+
 export interface LinkTokenResult { linkToken: string; expiration: string }
 export interface ExchangeResult { accessToken: string; itemId: string }
 export interface ItemSummary { itemId: string; institutionId: string | null; hasError: boolean }
@@ -156,6 +161,7 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
         categoryPrimary: str(t.personal_finance_category?.primary), categoryDetailed: str(t.personal_finance_category?.detailed),
         categoryConfidence: str(t.personal_finance_category?.confidence_level),
       })
+      try {
       return {
         added: (data.added ?? []).map(pick), modified: (data.modified ?? []).map(pick),
         removed: (data.removed ?? []).map((r: any) => ({ transactionId: String(r.transaction_id), accountId: str(r.account_id) })),
@@ -163,6 +169,7 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
         updateStatus: str(data.transactions_update_status),
         accounts: (data.accounts ?? []).map((a: any) => ({ accountId: String(a.account_id), currency: str(a.balances?.iso_currency_code) })),
       }
+      } catch { throw new ProviderResponseError() }
     },
     async getWebhookVerificationKey(keyId) {
       const { data } = await call(() => api.webhookVerificationKeyGet({ key_id: keyId }))

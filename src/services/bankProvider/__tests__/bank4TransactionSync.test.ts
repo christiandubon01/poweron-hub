@@ -2,16 +2,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createHash, generateKeyPairSync, createSign, randomBytes } from 'node:crypto'
-import { getSyncStatus, syncTransactions, recordVerifiedWebhook, deriveSyncState, classifySyncOutcome, MAX_MUTATION_RESTARTS, MAX_PAGES, SYNC_LEASE_MS, SYNC_TIME_BUDGET_MS, WAITING_MARKER } from '../bankSyncService'
+import { PersistenceFailure, getSyncStatus, syncTransactions, recordVerifiedWebhook, deriveSyncState, classifySyncOutcome, MAX_MUTATION_RESTARTS, MAX_PAGES, SYNC_LEASE_MS, SYNC_TIME_BUDGET_MS, WAITING_MARKER } from '../bankSyncService'
 import { discoverAccounts } from '../bankAccountService'
 import { BankConnectionError, contextFor } from '../bankConnectionService'
 import { encryptProviderToken, loadBankTokenEncryptionKey } from '../providerTokenCrypto'
-import { PlaidApiFailure, createPlaidSdkPort } from '../plaidPort'
+import { PlaidApiFailure, ProviderResponseError, createPlaidSdkPort } from '../plaidPort'
 import { loadPlaidConfig } from '../plaidConfig'
 import { toTransactionEvidence, providerAmountDirection, EvidenceRejected } from '../transactionEvidence'
 import { verifyPlaidWebhook, sha256Hex, createWebhookKeyCache } from '../plaidWebhookVerify'
 import { buildHandler as syncHandler } from '../../../../netlify/functions/bank/plaid-sync'
 import { buildHandler as webhookHandler } from '../../../../netlify/functions/bank/plaid-webhook'
+import { safeLog } from '../../../../netlify/functions/bank/plaidAuth'
 
 const ORG_A = '10000000-0000-4000-8000-00000000000a'
 const ORG_B = '10000000-0000-4000-8000-00000000000b'
@@ -632,6 +633,81 @@ describe('BANK-4 hardening: webhook verification (authoritative checks)', () => 
       expect((await h({ httpMethod: 'POST', headers: { 'plaid-verification': sign(body) }, body: JSON.stringify(JSON.parse(body)) })).statusCode).toBe(401)
       expect(w.state.events).toHaveLength(1); expect(w.state.events[0].count).toBe(2)
     } finally { for (const e of ENV) { if (saved[e] === undefined) delete process.env[e]; else process.env[e] = saved[e] }; vi.restoreAllMocks() }
+  })
+})
+
+describe('BANK-4 failure observability (stage + sanitized class, never data)', () => {
+  const failedLog = (w) => w.logs.filter(l => l.event === 'bank.sync.failed').at(-1)
+  const OWNER_MESSAGES = /^(The sync could not be saved|A bank transaction could not be stored|The bank connection service|The bank connection service returned|The stored bank credential|The bank returned)/
+  const noLeak = (w, extra = []) => {
+    const text = JSON.stringify(w.logs)
+    for (const bad of [ACCESS, 'Coffee', 'Cafe', '12.34', 'acc-1', 't1', 'Private', ...extra]) expect(text).not.toContain(bad)
+  }
+
+  it('persistence: a database failure is logged with stage + SQLSTATE + constraint NAME only; the owner message stays generic and the cursor stays put', async () => {
+    const w = world(); w.state.items.get(ITEM).sync.cursor = 'c0'; w.state.script = [page({ added: [tx('t1')] })]
+    w.deps.sync.upsertEvidence = async () => { throw new PersistenceFailure('upsert_evidence', '23514', 'financial_provider_transactions_seen_order') }
+    const err = await run(w).catch(e => e)
+    expect(err).toMatchObject({ code: 'persistence_failed', httpStatus: 503 }); expect(err.message).toMatch(OWNER_MESSAGES)
+    expect(failedLog(w)).toMatchObject({ code: 'EVIDENCE_PERSISTENCE_FAILED', stage: 'evidence_persistence', errorClass: 'PersistenceFailure', detail: 'op=upsert_evidence;sqlstate=23514;constraint=financial_provider_transactions_seen_order' })
+    expect(w.state.items.get(ITEM).sync).toMatchObject({ cursor: 'c0', status: 'failed', lastErrorCode: 'EVIDENCE_PERSISTENCE_FAILED', lastSuccessfulAt: null })
+    noLeak(w)
+  })
+  it('cursor_finalize: an unexpected exception is recorded by constructor name and stage only - never its message', async () => {
+    const w = world(); w.state.script = [page({ added: [tx('t1')] })]
+    w.deps.sync.finishSync = async () => { throw new TypeError(`boom ${ACCESS} Coffee 12.34 acc-1`) }
+    await expect(run(w)).rejects.toMatchObject({ httpStatus: 503 })
+    expect(failedLog(w)).toMatchObject({ code: 'CURSOR_FINALIZE_FAILED', stage: 'cursor_finalize', errorClass: 'TypeError' }); expect(failedLog(w).detail).toBeUndefined()
+    noLeak(w, ['boom'])
+  })
+  it('account_resolution: failing to load the known accounts, and an unknown account, are both attributed to that stage', async () => {
+    const w = world(); w.state.script = [page({ added: [tx('t1')] })]
+    w.deps.accounts.listProviderAccounts = async () => { throw new Error('db said Coffee') }
+    await expect(run(w)).rejects.toBeTruthy(); expect(failedLog(w)).toMatchObject({ stage: 'account_resolution', code: 'ACCOUNT_RESOLUTION_FAILED', errorClass: 'Error' }); noLeak(w)
+    const w2 = world(); w2.state.script = [page({ added: [tx('t1', { accountId: 'nope' })], accounts: [{ accountId: 'nope', currency: 'USD' }] })]
+    await expect(run(w2)).rejects.toBeTruthy(); expect(failedLog(w2)).toMatchObject({ stage: 'account_resolution', code: 'ACCOUNT_UNKNOWN' })
+  })
+  it('provider_request: a Plaid error keeps ONLY its type/code/HTTP status (sanitized) for the log; the owner sees the generic provider message', async () => {
+    const w = world(); w.state.script = [new PlaidApiFailure('INTERNAL_SERVER_ERROR', 'API_ERROR', 500)]
+    const err = await run(w).catch(e => e)
+    expect(err).toMatchObject({ code: 'plaid_unavailable', httpStatus: 502 })
+    expect(failedLog(w)).toMatchObject({ stage: 'provider_request', code: 'INTERNAL_SERVER_ERROR', errorClass: 'PlaidApiFailure', detail: 'plaid=API_ERROR/INTERNAL_SERVER_ERROR;http=500' }); noLeak(w)
+  })
+  it('provider_response: a response the adapter cannot read becomes a typed error with no response content, and a distinct code', async () => {
+    const api = { transactionsSync: async () => ({ data: { added: 5, modified: [], removed: [], accounts: [], next_cursor: 'c', has_more: false, secretish: ACCESS } }) }
+    const port = createPlaidSdkPort(loadPlaidConfig({ PLAID_ENV: 'sandbox', PLAID_CLIENT_ID: 'c', PLAID_SECRET: 's' }), api as never)
+    const e = await port.syncTransactions({ accessToken: ACCESS, cursor: null, count: 500 }).catch(x => x)
+    expect(e).toBeInstanceOf(ProviderResponseError); expect(JSON.stringify([e.message, e.stack])).not.toContain(ACCESS)
+    const w = world(); w.state.script = [new ProviderResponseError()]
+    const err = await run(w).catch(x => x)
+    expect(err).toMatchObject({ code: 'sync_failed', httpStatus: 502 })
+    expect(failedLog(w)).toMatchObject({ stage: 'provider_response', code: 'PROVIDER_RESPONSE_UNREADABLE', errorClass: 'ProviderResponseError' }); noLeak(w)
+  })
+  it('transform: a transaction that cannot be stored faithfully is attributed to the transform stage', async () => {
+    const w = world(); w.state.script = [page({ added: [tx('t1', { amount: 1.005 })] })]
+    await expect(run(w)).rejects.toBeTruthy(); expect(failedLog(w)).toMatchObject({ stage: 'transform', code: 'EVIDENCE_INVALID_AMOUNT', errorClass: 'EvidenceRejected' }); noLeak(w)
+  })
+  it('credential: an unreadable stored credential is attributed to the credential stage', async () => {
+    const w = world(); w.deps.key = loadBankTokenEncryptionKey({ POWERON_BANK_TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64') })
+    await expect(run(w)).rejects.toMatchObject({ code: 'credential_unreadable' })
+    expect(failedLog(w)).toMatchObject({ stage: 'credential', code: 'CREDENTIAL_UNREADABLE' }); expect(w.plaid.syncTransactions).not.toHaveBeenCalled(); noLeak(w)
+  })
+
+  it('the logger emits only allowlisted fields, strips unsafe characters, and ignores any extra property (message, stack, response, token)', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    safeLog({ event: 'bank.sync.failed', organizationId: ORG_A, itemId: ITEM, code: 'X', stage: 'evidence_persistence', errorClass: 'PersistenceFailure',
+      detail: 'op=upsert;sqlstate=23514;constraint=a_b "quoted" {json} <tag>\nnext', message: 'Failing row contains (Coffee)', stack: 'at x', response: { token: ACCESS }, error: new Error(ACCESS) } as never)
+    const line = String(spy.mock.calls.at(-1)![0]); spy.mockRestore()
+    const parsed = JSON.parse(line)
+    expect(Object.keys(parsed).sort()).toEqual(['code', 'detail', 'errorClass', 'event', 'itemId', 'organizationId', 'outcome', 'stage'].filter(k => k in parsed))
+    expect(parsed.detail).toBe('op=upsert;sqlstate=23514;constraint=a_bquotedjsontagnext'.slice(0, 160))
+    expect(line).not.toMatch(/Coffee|at x|access-|Failing row|<tag>|\\n/)
+  })
+  it('the repo reduces a database error to operation + SQLSTATE + constraint name and never reads the message body, details or hint', () => {
+    const src = readFileSync(new URL('../bankSyncRepo.ts', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+    expect(src).toMatch(/constraint "\(\[a-z\]\[a-z0-9_\]\{2,80\}\)"/)
+    expect(src).not.toMatch(/\.details|\.hint|throw new Error\(error|new PersistenceFailure\([^)]*message/)
+    expect(src).toContain('throw new PersistenceFailure(operation, sqlState, named ? named[1] : null)') // the message is only matched for a constraint NAME, never forwarded
   })
 })
 

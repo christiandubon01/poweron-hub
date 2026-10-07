@@ -68,9 +68,10 @@ export function serviceClient() {
 }
 
 /** Only these fields can ever be logged. */
+const tidy = (v, max) => (typeof v === 'string' ? v.replace(/[^A-Za-z0-9_=;:/.,-]/g, '').slice(0, max) : undefined)
 export function safeLog(event) {
-  const { event: name, organizationId, itemId, outcome, code } = event
-  console.log(JSON.stringify({ event: name, organizationId, itemId, outcome, code }))
+  const { event: name, organizationId, itemId, outcome, code, stage, errorClass, detail } = event
+  console.log(JSON.stringify({ event: name, organizationId, itemId, outcome, code, stage: tidy(stage, 40), errorClass: tidy(errorClass, 40), detail: tidy(detail, 160) }))
 }
 
 export async function resolveBankContext(event, overrides = {}) {

@@ -62,7 +62,11 @@ export interface BankConnectionRepo {
   markHealthy(organizationId: string, itemId: string): Promise<boolean>
 }
 
-export interface SafeLogEvent { event: string; organizationId: string; itemId?: string; outcome?: string; code?: string }
+/**
+ * Everything a log line may carry. `stage` and `errorClass` are fixed vocabularies; `detail` is built ONLY from allowlisted pieces
+ * (a Plaid error type/code, a database SQLSTATE and constraint name) and is re-sanitized by the logger.
+ */
+export interface SafeLogEvent { event: string; organizationId: string; itemId?: string; outcome?: string; code?: string; stage?: string; errorClass?: string; detail?: string }
 
 export interface BankConnectionDeps {
   plaid: BankPlaidPort
