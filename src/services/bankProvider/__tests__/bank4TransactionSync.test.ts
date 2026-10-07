@@ -747,7 +747,7 @@ describe('BANK-4 static guarantees', () => {
   it('37. migrations are unchanged (BANK-4 needs none)', async () => {
     const { readdirSync } = await import('node:fs')
     const nums = readdirSync(new URL('../../../../supabase/migrations/', import.meta.url)).map(f => parseInt(f, 10)).filter(n => n >= 153)
-    expect(Math.max(...nums)).toBe(154)
+    expect(Math.max(...nums)).toBeLessThanOrEqual(155) // BANK-5 later added 155; BANK-4 itself needed none
   })
   it('the browser code never references secrets and never auto-syncs on load', () => {
     const ui = readFileSync(new URL('../../../features/bank-connection/useBankConnection.ts', import.meta.url), 'utf8')

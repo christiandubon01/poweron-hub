@@ -74,7 +74,11 @@ export function safeLog(event) {
   console.log(JSON.stringify({ event: name, organizationId, itemId, outcome, code, stage: tidy(stage, 40), errorClass: tidy(errorClass, 40), detail: tidy(detail, 160) }))
 }
 
-export async function resolveBankContext(event, overrides = {}) {
+/**
+ * The shared owner/admin bootstrap: authenticate, resolve organization + role from the caller's profile under RLS (NEVER from the body),
+ * require an active owner/admin, build the service-role client. Used by the bank connection endpoints and by the BANK-5 spending endpoint.
+ */
+export async function resolveOwnerContext(event, overrides = {}, forbiddenMessage = 'Only owners and admins can manage bank connections.') {
   const user = await (overrides.verifyUser ?? verifyAuthenticatedUser)(event)
   if (!user) return { ok: false, response: jsonResponse(401, { error: 'Authentication required.' }) }
 
@@ -84,11 +88,19 @@ export async function resolveBankContext(event, overrides = {}) {
   if (data?.is_active === false) return { ok: false, response: jsonResponse(403, { error: 'Access unavailable.' }) }
   const organizationId = data?.org_id || ''
   if (!organizationId || !['owner', 'admin'].includes(data?.role)) {
-    return { ok: false, response: jsonResponse(403, { error: 'Only owners and admins can manage bank connections.' }) }
+    return { ok: false, response: jsonResponse(403, { error: forbiddenMessage }) }
   }
 
   const svc = (overrides.serviceClient ?? serviceClient)()
   if (!svc) return { ok: false, response: jsonResponse(500, { error: 'Server unavailable.' }) }
+  return { ok: true, svc, actor: { organizationId, userId: user.id, role: data.role } }
+}
+
+export async function resolveBankContext(event, overrides = {}) {
+  const owner = await resolveOwnerContext(event, overrides)
+  if (!owner.ok) return owner
+  const { svc, actor } = owner
+  const organizationId = actor.organizationId, user = { id: actor.userId }, data = { role: actor.role }
 
   let config, key
   try {
