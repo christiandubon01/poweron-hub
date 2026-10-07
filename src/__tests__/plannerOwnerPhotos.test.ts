@@ -7,7 +7,7 @@ const {registeredOwnerPhotos}=require('../../netlify/functions/lib/planner-owner
 const id='00000000-0000-4000-8000-000000000001', photoId='00000000-0000-4000-8000-000000000002'
 const path=`${id}/${photoId}.png`, obsolete=`${id}/00000000-0000-4000-8000-000000000003.png`
 const details={photo_manifest:[{client_photo_id:photoId,category:'panel_label',caption:'Label caption'},{client_photo_id:'not-registered',category:'other_equipment',caption:'Hidden'}],photo_transport:{registered:{[photoId]:{object_path:path,mime_type:'image/png'}},objects:{[photoId]:obsolete},authorizations:{old:{files:[{object_path:obsolete}]}}}}
-function endpoint({planner:anyPlanner=details,authorized=true,failed=false,contextFailed=false,signFailed=false,env={SUPABASE_URL:'https://db.example',SUPABASE_SERVICE_ROLE_KEY:'test-only'},origin}:any={}) {
+function endpoint({planner:anyPlanner=details,authorized=true,failed=false,contextFailed=false,signFailed=false,env={SUPABASE_URL:'https://db.example',SUPABASE_SERVICE_ROLE_KEY:'test-only'},origin,headers={}}:any={}) {
   const exports:any={}, signed:string[]=[], fetches:string[]=[]
   const fetcher=async(url:string)=>{
     fetches.push(url)
@@ -21,7 +21,7 @@ function endpoint({planner:anyPlanner=details,authorized=true,failed=false,conte
     exports,URL,process:{env},console,
     fetch:fetcher,require:(module:string)=>module==='@supabase/supabase-js' ? {createClient:()=>({storage:{from:()=>({createSignedUrl:async(p:string,ttl:number)=>{expect(ttl).toBe(300);signed.push(p);return signFailed ? {data:null,error:{message:'Storage unavailable'}} : {data:{signedUrl:'https://db.example/signed-photo'},error:null}}})}})} : require('../../netlify/functions/lib/planner-owner-photos.cjs'),
   })
-  return {signed,fetches,handler:()=>exports.handler({httpMethod:'POST',headers:{Authorization:'Bearer owner-test-jwt',...(origin ? {origin} : {})},body:JSON.stringify({requestId:id})})}
+  return {signed,fetches,helpers:exports._test,handler:(httpMethod='POST')=>exports.handler({httpMethod,headers:{Authorization:'Bearer owner-test-jwt',...(origin ? {origin} : {}),...headers},body:JSON.stringify({requestId:id})})}
 }
 describe('Authenticated Planner photo projection',()=>{
   it('selects registered manifest objects, never current/superseded allocations',()=>{
@@ -73,5 +73,62 @@ describe('Authenticated Planner photo projection',()=>{
   })
   it('ordinary owner attachments retain notes-based signing and generic metadata',async()=>{
     const e=endpoint({planner:null});const result=await e.handler();expect(e.signed).toEqual([obsolete]);expect(JSON.parse(result.body).attachments[0]).not.toHaveProperty('clientPhotoId')
+  })
+})
+
+
+describe('Exact Power On Netlify same-site origin', () => {
+  const site = 'incomparable-croissant-a86c81.netlify.app'
+  const preview = `deploy-preview-3--${site}`
+  it.each([site, preview, `6ac6bab05569990008caf517--${site}`])('allows matching trusted host %s without deploy env', async host => {
+    const e = endpoint({origin:`https://${host}`,headers:{host}})
+    const r = await e.handler()
+    expect(r.statusCode).toBe(200)
+    expect(r.headers['Access-Control-Allow-Origin']).toBe(`https://${host}`)
+    expect(e.signed).toHaveLength(1)
+  })
+  it.each([
+    'evil.netlify.app', `${site}.evil.com`, `evil--${site}.evil.com`, `--${site}`,
+    `bad.prefix--${site}`, `*--${site}`, `${preview},evil.netlify.app`,
+    `https://${preview}`, ` ${preview}`, `${preview}\n`, `${preview}:bad`, `${preview}:99999`,
+  ])('rejects malformed/untrusted host %s before downstream access', async host => {
+    const e = endpoint({origin:`https://${host}`,headers:{'x-forwarded-host':host}})
+    expect((await e.handler()).statusCode).toBe(403)
+    expect(e.fetches).toEqual([]); expect(e.signed).toEqual([])
+  })
+  it.each([
+    `http://${preview}`, `https://${site}`, `https://user:pass@${preview}`,
+    `https://${preview}/`, `https://${preview}/path`, `https://${preview}?`,
+    `https://${preview}?q=1`, `https://${preview}#`, `https://${preview}#hash`, '*',
+  ])('rejects invalid/mismatched origin %s', async origin => {
+    const e = endpoint({origin,headers:{host:preview}})
+    const r = await e.handler(); expect(r.statusCode).toBe(403)
+    expect(r.headers).not.toHaveProperty('Access-Control-Allow-Origin')
+    expect(e.fetches).toEqual([])
+  })
+  it('normalizes host casing/port and uses Host before forwarded host', async () => {
+    const e = endpoint({origin:`https://${preview}`,headers:{host:preview.toUpperCase()+':443','x-forwarded-host':'evil.netlify.app'}})
+    expect((await e.handler()).statusCode).toBe(200)
+    expect(e.helpers.requestHostFromHeaders({host:'evil.netlify.app','x-forwarded-host':preview})).toBe('evil.netlify.app')
+    expect(e.helpers.requestHostFromHeaders({host:'invalid,host','x-forwarded-host':preview})).toBeNull()
+    expect(e.helpers.requestHostFromHeaders({'x-forwarded-host':preview})).toBe(preview)
+  })
+  it('same-site OPTIONS echoes the exact origin without touching auth or Storage', async () => {
+    const e = endpoint({origin:`https://${preview}`,headers:{host:preview}})
+    const r = await e.handler('OPTIONS')
+    expect(r.statusCode).toBe(204); expect(r.headers['Access-Control-Allow-Origin']).toBe(`https://${preview}`)
+    expect(e.fetches).toEqual([]); expect(e.signed).toEqual([])
+  })
+  it.each(['URL','DEPLOY_URL','DEPLOY_PRIME_URL'])('preserves exact %s environment allowlist', async variable => {
+    const origin = 'https://explicit.example'
+    const e = endpoint({origin,env:{SUPABASE_URL:'https://db.example',SUPABASE_SERVICE_ROLE_KEY:'test-only',[variable]:origin}})
+    expect((await e.handler()).statusCode).toBe(200)
+    expect(e.helpers.resolveOrigin('http://localhost:8888')).toBe('http://localhost:8888')
+    expect(e.helpers.resolveOrigin('https://other.example')).toBeNull()
+  })
+  it('same-site origin acceptance does not bypass owner JWT authorization', async () => {
+    const e = endpoint({origin:`https://${preview}`,headers:{host:preview},authorized:false})
+    expect((await e.handler()).statusCode).toBe(403); expect(e.signed).toEqual([])
+    expect(e.fetches).toHaveLength(1)
   })
 })

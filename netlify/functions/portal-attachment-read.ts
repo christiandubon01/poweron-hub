@@ -85,15 +85,49 @@ function buildAllowedOrigins() {
   return origins
 }
 
-function resolveOrigin(requestOrigin) {
+// Netlify's Lambda event Host is preferred; forwarded Host is a fallback only.
+// Reject ambiguous authority strings before stripping an optional numeric port.
+function normalizeRequestHost(host) {
+  if (typeof host !== 'string' || !host || /[\s,/@?#\\]/.test(host) || containsControlChars(host)) return null
+  const match = /^([a-z0-9.-]+)(?::([0-9]{1,5}))?$/i.exec(host)
+  if (!match || (match[2] && (Number(match[2]) < 1 || Number(match[2]) > 65535))) return null
+  const hostname = match[1].toLowerCase()
+  if (hostname.length > 253 || !hostname.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) return null
+  return hostname
+}
+
+function isTrustedPowerOnNetlifyHost(host) {
+  const hostname = normalizeRequestHost(host)
+  const site = 'incomparable-croissant-a86c81.netlify.app'
+  if (hostname === site) return true
+  if (!hostname?.endsWith(`--${site}`)) return false
+  const prefix = hostname.slice(0, -(`--${site}`.length))
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(prefix)
+}
+
+function requestHostFromHeaders(headers = {}) {
+  // Never let a forwarded header override a supplied (even invalid) Host.
+  return normalizeRequestHost(headers.host ?? headers.Host ?? headers['x-forwarded-host'] ?? headers['X-Forwarded-Host'])
+}
+
+function resolveOrigin(requestOrigin, requestHost) {
   if (!requestOrigin) return null
   const allowed = buildAllowedOrigins()
   if (allowed.has(requestOrigin)) return requestOrigin
-  return null
+  if (typeof requestOrigin !== 'string' || /[\s\\]/.test(requestOrigin) || containsControlChars(requestOrigin)) return null
+  const host = normalizeRequestHost(requestHost)
+  if (!isTrustedPowerOnNetlifyHost(host)) return null
+  try {
+    const url = new URL(requestOrigin)
+    // Origin is an authority only: reject even a trailing slash or empty ?/#.
+    if (url.protocol !== 'https:' || url.username || url.password || url.port
+      || requestOrigin.toLowerCase() !== `https://${url.hostname}` || url.hostname !== host) return null
+    return requestOrigin
+  } catch { return null }
 }
 
-function corsHeaders(requestOrigin) {
-  const origin = resolveOrigin(requestOrigin)
+function corsHeaders(requestOrigin, requestHost) {
+  const origin = resolveOrigin(requestOrigin, requestHost)
   const headers = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -103,10 +137,10 @@ function corsHeaders(requestOrigin) {
   return headers
 }
 
-function jsonResponse(statusCode, body, requestOrigin) {
+function jsonResponse(statusCode, body, requestOrigin, requestHost) {
   return {
     statusCode,
-    headers: { ...corsHeaders(requestOrigin), 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(requestOrigin, requestHost), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }
 }
@@ -325,6 +359,7 @@ async function createSignedReadUrl(supabaseUrl, serviceRoleKey, objectPath) {
 }
 
 exports._test = {
+  normalizeRequestHost, isTrustedPowerOnNetlifyHost, requestHostFromHeaders,
   buildAllowedOrigins,
   resolveOrigin,
   corsHeaders,
@@ -341,17 +376,19 @@ exports._test = {
 
 exports.handler = async (event) => {
   const origin = event.headers?.origin ?? event.headers?.Origin
-  const originAllowed = !origin || resolveOrigin(origin) !== null
+  const requestHost = requestHostFromHeaders(event.headers)
+  const reply = (status, body) => jsonResponse(status, body, origin, requestHost)
+  const originAllowed = !origin || resolveOrigin(origin, requestHost) !== null
 
   if (!originAllowed) {
-    return jsonResponse(403, { error: 'Forbidden' }, origin)
+    return reply(403, { error: 'Forbidden' })
   }
 
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: corsHeaders(origin), body: '' }
+    return { statusCode: 204, headers: corsHeaders(origin, requestHost), body: '' }
   }
   if (event.httpMethod !== 'POST') {
-    return jsonResponse(405, { error: 'Method not allowed' }, origin)
+    return reply(405, { error: 'Method not allowed' })
   }
 
   const SUPABASE_URL     = process.env.SUPABASE_URL
@@ -359,23 +396,23 @@ exports.handler = async (event) => {
 
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
     console.error('portal-attachment-read: missing env vars')
-    return jsonResponse(500, { error: 'Server configuration error' }, origin)
+    return reply(500, { error: 'Server configuration error' })
   }
 
   const supabaseHost = (() => { try { return new URL(SUPABASE_URL).host } catch { return '' } })()
   if (!supabaseHost) {
     console.error('portal-attachment-read: invalid SUPABASE_URL')
-    return jsonResponse(500, { error: 'Server configuration error' }, origin)
+    return reply(500, { error: 'Server configuration error' })
   }
 
   let body
   try { body = JSON.parse(event.body || '{}') }
-  catch { return jsonResponse(400, { error: 'Invalid JSON body' }, origin) }
+  catch { return reply(400, { error: 'Invalid JSON body' }) }
 
   // Ignore any client-supplied path/URL fields — only requestId is accepted.
   const { requestId } = body
   if (!requestId || typeof requestId !== 'string' || !UUID_RE.test(requestId)) {
-    return jsonResponse(400, { error: 'Invalid requestId' }, origin)
+    return reply(400, { error: 'Invalid requestId' })
   }
 
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? ''
@@ -400,16 +437,16 @@ exports.handler = async (event) => {
         },
       })
       if (!authRes.ok) {
-        return jsonResponse(403, { error: 'Unauthorized' }, origin)
+        return reply(403, { error: 'Unauthorized' })
       }
       const authData = await authRes.json()
       verifiedUserId = authData?.id
       if (!verifiedUserId) {
-        return jsonResponse(403, { error: 'Unauthorized' }, origin)
+        return reply(403, { error: 'Unauthorized' })
       }
     } catch (err) {
       console.error('portal-attachment-read: auth verification error', err?.message)
-      return jsonResponse(503, { error: 'Authentication service unavailable' }, origin)
+      return reply(503, { error: 'Authentication service unavailable' })
     }
 
     try {
@@ -424,13 +461,13 @@ exports.handler = async (event) => {
       })
       if (!contextRes.ok) {
         console.error('portal-attachment-read: attachment context query error', contextRes.status)
-        return jsonResponse(503, { error: 'Request unavailable' }, origin)
+        return reply(503, { error: 'Request unavailable' })
       }
       const contexts = await contextRes.json()
       ownerRequestContext = Array.isArray(contexts) ? contexts[0] ?? null : null
     } catch (err) {
       console.error('portal-attachment-read: attachment context fetch error', err?.message)
-      return jsonResponse(503, { error: 'Database unavailable' }, origin)
+      return reply(503, { error: 'Database unavailable' })
     }
 
     const callerOrg = ownerRequestContext?.caller_organization_id
@@ -443,7 +480,7 @@ exports.handler = async (event) => {
     ) {
       // Missing, cross-org, role-only, and ordinary-employee cases deliberately
       // share one response and disclose no request/path/attachment information.
-      return jsonResponse(404, { error: 'Request unavailable' }, origin)
+      return reply(404, { error: 'Request unavailable' })
     }
   }
 
@@ -455,10 +492,10 @@ exports.handler = async (event) => {
     try {
       const { denyPlannerUuidRead } = require('./lib/planner-legacy-guard.cjs')
       if (await denyPlannerUuidRead(fetch, SUPABASE_URL, serviceHeaders, requestId)) {
-        return jsonResponse(403, { error: 'Planner recovery capability required' }, origin)
+        return reply(403, { error: 'Planner recovery capability required' })
       }
     } catch {
-      return jsonResponse(503, { error: 'Request unavailable' }, origin)
+      return reply(503, { error: 'Request unavailable' })
     }
     try {
       const selectFields = 'id,notes'
@@ -468,21 +505,21 @@ exports.handler = async (event) => {
       )
       if (!reqRes.ok) {
         console.error('portal-attachment-read: request query error', reqRes.status)
-        return jsonResponse(500, { error: 'Database error' }, origin)
+        return reply(500, { error: 'Database error' })
       }
       const rows = await reqRes.json()
       requestRow = rows?.[0] ?? null
     } catch (err) {
       console.error('portal-attachment-read: request fetch error', err?.message)
-      return jsonResponse(503, { error: 'Database unavailable' }, origin)
+      return reply(503, { error: 'Database unavailable' })
     }
   }
 
   if (!requestRow) {
     if (isOwnerMode) {
-      return jsonResponse(404, { error: 'Request unavailable' }, origin)
+      return reply(404, { error: 'Request unavailable' })
     }
-    return jsonResponse(200, { attachments: [] }, origin)
+    return reply(200, { attachments: [] })
   }
 
   // Owner authority is established above. Planner reads use registered objects only,
@@ -494,15 +531,15 @@ exports.handler = async (event) => {
         `${SUPABASE_URL}/rest/v1/portal_request_planner_details?request_id=eq.${encodeURIComponent(requestId)}&select=photo_manifest,photo_transport&limit=1`,
         { headers: serviceHeaders }
       )
-      if (!response.ok) return jsonResponse(503, { error: 'Request unavailable' }, origin)
+      if (!response.ok) return reply(503, { error: 'Request unavailable' })
       const rows = await response.json()
-      if (!Array.isArray(rows)) return jsonResponse(503, { error: 'Request unavailable' }, origin)
+      if (!Array.isArray(rows)) return reply(503, { error: 'Request unavailable' })
       if (rows.length) {
         const { registeredOwnerPhotos } = require('./lib/planner-owner-photos.cjs')
         plannerPhotos = registeredOwnerPhotos(rows[0], requestId, validateObjectPath)
       }
     } catch {
-      return jsonResponse(503, { error: 'Request unavailable' }, origin)
+      return reply(503, { error: 'Request unavailable' })
     }
   }
 
@@ -513,7 +550,7 @@ exports.handler = async (event) => {
     : parseNotesForPaths(requestRow.notes, requestId, supabaseHost)
 
   if (validPaths.length === 0) {
-    return jsonResponse(200, { attachments: [] }, origin)
+    return reply(200, { attachments: [] })
   }
 
   const expiresAt = new Date(Date.now() + SIGNED_URL_EXPIRY_SECONDS * 1000).toISOString()
@@ -541,5 +578,5 @@ exports.handler = async (event) => {
     })
   }
 
-  return jsonResponse(200, { attachments }, origin)
+  return reply(200, { attachments })
 }

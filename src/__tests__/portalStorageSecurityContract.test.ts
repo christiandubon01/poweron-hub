@@ -795,8 +795,8 @@ describe('[STATIC FUNCTION] SEC-0S R2 controlled CORS behavior', () => {
     })
 
     it(`${name}: rejects an unknown browser Origin with controlled 403`, () => {
-      expect(source).toContain('const originAllowed = !origin || resolveOrigin(origin) !== null')
-      expect(source).toContain("return jsonResponse(403, { error: 'Forbidden' }, origin)")
+      expect(source).toContain(name === 'portal-attachment-read' ? 'const originAllowed = !origin || resolveOrigin(origin, requestHost) !== null' : 'const originAllowed = !origin || resolveOrigin(origin) !== null')
+      expect(source).toContain(name === 'portal-attachment-read' ? "return reply(403, { error: 'Forbidden' })" : "return jsonResponse(403, { error: 'Forbidden' }, origin)")
     })
 
     it(`${name}: omits allow-origin when the Origin is absent or rejected`, () => {

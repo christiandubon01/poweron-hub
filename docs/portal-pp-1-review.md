@@ -59,3 +59,13 @@ R3 starts at `a422f3a580e7d045b22f6d1f3b3141f75878f01b`. The public `fetchAttach
 Only the current owner Inbox Planner section on a Netlify Deploy Preview uses the detailed helper. A subdued line appears beneath unavailable photos, including image-load failure after signed URLs were returned. Ordinary attachments, production presentation and customer tracking retain the original path. No server, Storage policy, authorization, email, scheduler or production configuration repair is attempted. The actual failure remains for owner retest to identify from HTTP status and counts.
 
 R3 validation: 498 focused tests across twelve files, TypeScript and whitespace checks. All requests in tests are mocked or use local test databases; no production activity. The review branch is updated by normal push only; PR #3 remains draft and unmerged.
+
+## R4 exact same-site Netlify origin repair
+
+R4 starts at `8d6f66c4c0baa4080e0e869e7a50c365585ae2b4`. Owner runtime evidence identified HTTP 403 at the attachment-read browser-origin gate, before downstream authorization/projection/signing. The environment-only origin list did not resolve the actual canonical Deploy Preview origin.
+
+Attachment-read now preserves that exact environment/local allowlist and additionally accepts an HTTPS authority-only Origin matching the normalized request Host for `incomparable-croissant-a86c81.netlify.app` or a safe nonempty single-label deployment prefix followed by `--incomparable-croissant-a86c81.netlify.app`. Host wins over forwarded Host; forwarded Host is only a fallback when Host is absent. Normalization rejects whitespace/control characters, comma-separated values, protocol strings, invalid DNS labels and invalid ports. Origin credentials, paths (including trailing slash), queries, fragments, HTTP, arbitrary Netlify sites, suffix confusion and host mismatch are rejected. There is no Netlify wildcard.
+
+All subsequent JWT/org checks, attachment context, registered-only projection, path validation, private bucket, service-role use, five-minute signing and safe response metadata remain unchanged. The R3 diagnostic remains preview-only. No Supabase/Storage investigation or configuration changes, production activity, notifications or scheduler activation occur. Owner retest must confirm real photos load after the preview rebuild.
+
+R4 validation: 529 focused tests across twelve files, TypeScript and whitespace checks pass. Tests include matching canonical/preview/hashed origins, malformed and mismatched authorities, all three explicit environment origins, localhost, OPTIONS, rejection before downstream requests and unchanged owner authorization/signing boundaries.
