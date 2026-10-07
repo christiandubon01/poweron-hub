@@ -31,6 +31,8 @@ import {
   dismissPortalRequest,
   type PortalRequest,
 } from '@/services/portal/portalService'
+import { getPlannerOwnerDetails, type PlannerOwnerDetails } from '@/services/portal/plannerDetails'
+import { PlannerOwnerSection } from './PlannerOwnerSection'
 import { isHunterTenantAuthorityError } from '@/services/hunter/resolveHunterTenantId'
 import {
   fetchReferralClaimForRequest,
@@ -330,26 +332,47 @@ function DetailModal({
   const [signedEntries, setSignedEntries] = useState<AttachmentEntry[]>([])
   const [loadingAttachments, setLoadingAttachments] = useState(false)
 
+  const [plannerDetails, setPlannerDetails] = useState<PlannerOwnerDetails | null>(null)
+  const [plannerLoading, setPlannerLoading] = useState(true)
+  const [plannerError, setPlannerError] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    setPlannerDetails(null)
+    setPlannerLoading(true)
+    setPlannerError(false)
+    // Existence probe through the owner-safe RPC: null means an ordinary request.
+    // No description heuristics or browser reads of private Planner tables.
+    getPlannerOwnerDetails(req.id).then(details => {
+      if (active) setPlannerDetails(details)
+    }).catch(() => { if (active) setPlannerError(true) })
+      .finally(() => { if (active) setPlannerLoading(false) })
+    return () => { active = false }
+  }, [req.id])
+
   // LEAD-SRC-4B: referral claim for this portal request
   const [referralClaim, setReferralClaim] = useState<ReferralClaim | null>(null)
   const [loadingClaim, setLoadingClaim] = useState(true)
 
   useEffect(() => {
     // Quick client-side check: skip the server call when notes have no attachment markers
-    if (!req.notes || (!req.notes.includes('FilePaths:') && !req.notes.includes('Files:'))) {
+    if (!plannerDetails && (!req.notes || (!req.notes.includes('FilePaths:') && !req.notes.includes('Files:')))) {
       setSignedEntries([])
       return
     }
+    let active = true
+    setSignedEntries([])
     setLoadingAttachments(true)
 
     // Get the owner's JWT from the current authenticated session
     supabase.auth.getSession().then(({ data }) => {
-      const jwt = data.session?.access_token ?? undefined
-      return fetchAttachmentSignedUrls(req.id, jwt)
-    }).then(setSignedEntries)
-      .catch(() => setSignedEntries([]))
-      .finally(() => setLoadingAttachments(false))
-  }, [req.id, req.notes])
+      const jwt = data.session?.access_token
+      return jwt ? fetchAttachmentSignedUrls(req.id, jwt) : []
+    }).then(entries => { if (active) setSignedEntries(entries) })
+      .catch(() => { if (active) setSignedEntries([]) })
+      .finally(() => { if (active) setLoadingAttachments(false) })
+    return () => { active = false }
+  }, [req.id, req.notes, plannerDetails])
 
   useEffect(() => {
     setLoadingClaim(true)
@@ -376,6 +399,7 @@ function DetailModal({
       onClick={onClose}
     >
       <div
+        role="dialog" aria-modal="true" aria-label={`Portal request from ${req.name}`}
         className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-amber-700/40 bg-gray-950"
         style={{ boxShadow: '0 40px 100px rgba(0,0,0,.6)' }}
         onClick={e => e.stopPropagation()}
@@ -401,7 +425,7 @@ function DetailModal({
               Submitted {new Date(req.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors ml-4 flex-shrink-0">
+          <button type="button" aria-label="Close request details" onClick={onClose} className="text-gray-500 hover:text-white transition-colors ml-4 flex-shrink-0">
             <X size={18} />
           </button>
         </div>
@@ -490,6 +514,10 @@ function DetailModal({
             </div>
           )}
 
+          {plannerLoading && <p role="status" className="text-xs text-gray-400">Checking Planner details…</p>}
+          {plannerError && <p role="status" className="text-sm text-gray-400">Planner details unavailable. You can still use the request actions.</p>}
+          {plannerDetails && <PlannerOwnerSection details={plannerDetails} attachments={signedEntries} loadingPhotos={loadingAttachments} />}
+
           {/* Referral — LEAD-SRC-4B */}
           {(loadingClaim || referralClaim) && (
             <div>
@@ -503,7 +531,7 @@ function DetailModal({
           )}
 
           {/* Photos / Videos — signed short-lived URLs from private storage */}
-          {(loadingAttachments || mediaEntries.length > 0) && (
+          {!plannerDetails && (loadingAttachments || mediaEntries.length > 0) && (
             <div>
               <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">
                 Photos / Videos {!loadingAttachments && `(${mediaEntries.length})`}

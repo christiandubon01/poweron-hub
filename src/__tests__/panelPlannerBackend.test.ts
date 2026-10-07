@@ -115,9 +115,16 @@ describe('planner PostgreSQL transactions, security and recovery',()=>{
   it('HUNTER existing link from another tenant is denied',async()=>{const r=await create();const id=randomUUID();await db.query('INSERT INTO hunter_leads(id,tenant_id) VALUES($1,$2)',[id,randomUUID()]);await db.query('UPDATE portal_requests SET hunter_lead_id=$1 WHERE id=$2',[id,r.request_id]);await role(db);await expect(rpc(db,'accept_portal_request_to_hunter',{p_request_id:r.request_id})).rejects.toThrow('REQUEST_UNAVAILABLE')})
   it('HUNTER source normalization retains existing semantics',async()=>{const r=await create();await db.query("UPDATE portal_requests SET source_category=' Paid_Search ' WHERE id=$1",[r.request_id]);await role(db);await rpc(db,'accept_portal_request_to_hunter',{p_request_id:r.request_id});await db.exec('RESET ROLE');expect((await db.query('SELECT source FROM hunter_leads')).rows[0].source).toBe('paid_search')})
   it('invalid value profile is ignored instead of blocking acceptance',async()=>{const r=await create();await db.query("INSERT INTO tenant_settings VALUES($1,'lead_value_profiles_v1',$2::jsonb)",[TENANT,JSON.stringify({profiles:[{id:'x',name:'x',serviceCategory:'panel_upgrade',minValue:'bad',maxValue:123}]})]);await role(db);await rpc(db,'accept_portal_request_to_hunter',{p_request_id:r.request_id});await db.exec('RESET ROLE');expect((await db.query('SELECT estimated_value FROM hunter_leads')).rows[0].estimated_value).toBeNull()})
+  it.each(['sent','failed','uncertain'])('terminal %s notification is never reclaimed or changed',async state=>{
+    await create()
+    await db.query('UPDATE portal_planner_notification_events SET state=$1',[state])
+    expect(await rpc(db,'claim_panel_planner_notifications')).toEqual([])
+    const row=(await db.query('SELECT state,attempts,provider_message_id FROM portal_planner_notification_events')).rows[0]
+    expect(row).toEqual({state,attempts:0,provider_message_id:null})
+  })
   it('notification payload freezes through retry and stops after ambiguous horizon',async()=>{
     await create();let [event]=await rpc(db,'claim_panel_planner_notifications');
-    const first={to:['trusted@example.com'],text:'saved request'};
+    const first={to:['trusted@example.com'],text:'saved request',html:'<h1>Frozen Planner alert</h1>'};
     expect(await rpc(db,'prepare_panel_planner_notification',{p_id:event.id,p_claim_token:event.claim_token,p_delivery_payload:first})).toEqual(first)
     await db.exec("UPDATE test_clock SET t=t+interval '6 minutes'");
     ;[event]=await rpc(db,'claim_panel_planner_notifications');
@@ -341,6 +348,20 @@ describe('planner PostgreSQL transactions, security and recovery',()=>{
     expect(new Set(results.map(x=>x.lead_id)).size).toBe(1);expect(results.filter(x=>!x.replayed).length).toBe(1)
     await db.exec('RESET ROLE');expect((await db.query('SELECT count(*)::int n FROM hunter_leads')).rows[0].n).toBe(1)
     expect((await db.query('SELECT count(*)::int n FROM portal_request_planner_details')).rows[0].n).toBe(1)
+  })
+  it('owner details and registered photo metadata still resolve after first conversion and replay',async()=>{
+    const b=envelope(1),r=await create(b),batch=await authorize(r,b)
+    await storeFile(batch.files[0]);await finalize(args(r,batch),batch)
+    await role(db)
+    const before=await rpc(db,'get_panel_planner_owner_details',{p_request_id:r.request_id})
+    const first=await rpc(db,'accept_portal_request_to_hunter',{p_request_id:r.request_id})
+    const replay=await rpc(db,'accept_portal_request_to_hunter',{p_request_id:r.request_id})
+    const after=await rpc(db,'get_panel_planner_owner_details',{p_request_id:r.request_id})
+    expect(first.replayed).toBe(false);expect(replay).toEqual({lead_id:first.lead_id,replayed:true})
+    expect(after).toEqual(before);expect(after.photos).toHaveLength(1);expect(after.photos[0].registered).toBe(true)
+    expect(after.photos[0].caption).toBe('Customer label')
+    await db.exec('RESET ROLE')
+    expect((await db.query('SELECT count(*)::int n FROM hunter_leads')).rows[0].n).toBe(1)
   })
   it('HUNTER link failure rolls back lead insert',async()=>{
     const r=await create();await db.exec("CREATE FUNCTION public.test_reject_link() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test link failure'; END $$; CREATE TRIGGER test_reject_link BEFORE UPDATE ON portal_requests FOR EACH ROW EXECUTE FUNCTION test_reject_link();")

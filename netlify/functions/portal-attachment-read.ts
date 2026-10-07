@@ -485,9 +485,32 @@ exports.handler = async (event) => {
     return jsonResponse(200, { attachments: [] }, origin)
   }
 
-  // Organization equality (owner) is already enforced. Path parsing uses the
-  // same normalizer for customer and owner — no mode-divergent security rules.
-  const validPaths = parseNotesForPaths(requestRow.notes, requestId, supabaseHost)
+  // Owner authority is established above. Planner reads use registered objects only,
+  // with safe manifest metadata; notes and superseded allocations are not authoritative.
+  let plannerPhotos = null
+  if (isOwnerMode) {
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/portal_request_planner_details?request_id=eq.${encodeURIComponent(requestId)}&select=photo_manifest,photo_transport&limit=1`,
+        { headers: serviceHeaders }
+      )
+      if (!response.ok) return jsonResponse(503, { error: 'Request unavailable' }, origin)
+      const rows = await response.json()
+      if (!Array.isArray(rows)) return jsonResponse(503, { error: 'Request unavailable' }, origin)
+      if (rows.length) {
+        const { registeredOwnerPhotos } = require('./lib/planner-owner-photos.cjs')
+        plannerPhotos = registeredOwnerPhotos(rows[0], requestId, validateObjectPath)
+      }
+    } catch {
+      return jsonResponse(503, { error: 'Request unavailable' }, origin)
+    }
+  }
+
+  // Owner organization equality is already enforced. Planner paths were validated
+  // against registered objects; ordinary notes retain the existing normalizer.
+  const validPaths = plannerPhotos !== null
+    ? plannerPhotos.map(photo => photo.path)
+    : parseNotesForPaths(requestRow.notes, requestId, supabaseHost)
 
   if (validPaths.length === 0) {
     return jsonResponse(200, { attachments: [] }, origin)
@@ -506,6 +529,11 @@ exports.handler = async (event) => {
       console.error('portal-attachment-read: sign error for path index', i, err?.message)
     }
     attachments.push({
+      ...(plannerPhotos !== null ? {
+        clientPhotoId: plannerPhotos[i].clientPhotoId,
+        category: plannerPhotos[i].category,
+        caption: plannerPhotos[i].caption,
+      } : {}),
       displayName: meta.displayName,
       mimeType: meta.mimeType,
       signedUrl,
