@@ -24,7 +24,7 @@ async function runMaintenance({env=process.env,backend=runtime(env),fetcher=fetc
       const tracking=(event.tracking_base_url||'https://app.poweronsolutionsllc.com')+'/portal/track/'+event.request_id;
       const brand=event.display_name||event.site_label||'your service provider';
       const proposed=owner ? {from:env.PANEL_PLANNER_FROM_EMAIL,to:[recipient],
-        ...buildPlannerOwnerEmail(event,tracking,brand)} : {
+        ...buildPlannerOwnerEmail(event,brand)} : {
         from:env.PANEL_PLANNER_FROM_EMAIL,to:[recipient],
         subject:'We received your request — '+brand,
         text:['Hi '+event.name+',','Your service request is saved.',tracking,
