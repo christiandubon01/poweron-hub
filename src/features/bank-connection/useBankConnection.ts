@@ -33,6 +33,14 @@ export interface BankAccountSummary {
   live: boolean
   mapping: { id: string; financialAccountId: string; financialAccountName: string } | null
 }
+/** Sanitized sync status: state, last synced time and evidence COUNTS only (no transaction text, ids or amounts). */
+export interface BankSyncSummary {
+  connectionId: string
+  state: 'not_synced' | 'syncing' | 'waiting' | 'unconfirmed' | 'synced' | 'error' | 'login_required'
+  lastSyncedAt: string | null
+  counts: { posted: number; pending: number; removed: number }
+  updatesAvailable: boolean
+}
 export interface CashAccountOption { id: string; displayName: string; accountType: string; ownershipContext: string }
 
 /** `unavailable` = the caller may not manage bank connections (or it is not configured); the card renders nothing. */
@@ -41,7 +49,7 @@ export type BankConnectionLoad = 'loading' | 'ready' | 'unavailable'
 async function request(path: string, init: { method: 'GET' | 'POST'; body?: unknown }) {
   const res = await fetch(`${BASE}/${path}`, { method: init.method, headers: await authedJsonHeaders(), body: init.body === undefined ? undefined : JSON.stringify(init.body) })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw Object.assign(new Error(typeof data?.error === 'string' ? data.error : 'Request failed.'), { status: res.status })
+  if (!res.ok) throw Object.assign(new Error(typeof data?.error === 'string' ? data.error : 'Request failed.'), { status: res.status, code: typeof data?.code === 'string' ? data.code : undefined })
   return data
 }
 
@@ -51,6 +59,7 @@ export function useBankConnection() {
   const [environment, setEnvironment] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<BankAccountSummary[]>([])
   const [cashAccounts, setCashAccounts] = useState<CashAccountOption[]>([])
+  const [syncs, setSyncs] = useState<BankSyncSummary[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -72,7 +81,13 @@ export function useBankConnection() {
       setCashAccounts(Array.isArray(data.cashAccounts) ? data.cashAccounts : [])
     } catch { /* keep the last known list */ }
   }, [])
-  useEffect(() => { void refresh(); void refreshAccounts() }, [refresh, refreshAccounts])
+  const refreshSyncs = useCallback(async () => {
+    try {
+      const data = await request('plaid-sync', { method: 'GET' })
+      setSyncs(Array.isArray(data.syncs) ? data.syncs : [])
+    } catch { /* keep the last known status */ }
+  }, [])
+  useEffect(() => { void refresh(); void refreshAccounts(); void refreshSyncs() }, [refresh, refreshAccounts, refreshSyncs])
 
   /** Separate, retry-safe call (never part of the connection exchange): fetch + save the bank's accounts, then reload the list. */
   const discoverAccounts = useCallback(async (itemId: string) => {
@@ -93,7 +108,7 @@ export function useBankConnection() {
             setConnections(Array.isArray(status.connections) ? status.connections : [])
             const live = (status.connections as BankConnectionSummary[] | undefined)?.filter(c => c.status !== 'disconnected') ?? []
             for (const c of live) {
-              try { await discoverAccounts(c.id) } catch (error) { setMessage(`Connected, but the bank accounts could not be loaded yet: ${(error as Error).message}`) }
+              try { await discoverAccounts(c.id) } catch (error) { setMessage(`Connected, but the bank accounts could not be loaded yet: ${(error as Error).message}`); await refresh(); await refreshSyncs() }
             }
           } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
         },
@@ -118,8 +133,16 @@ export function useBankConnection() {
 
   const findAccounts = useCallback(async (itemId: string) => {
     setBusy(true); setMessage(null)
-    try { await discoverAccounts(itemId) } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+    try { await discoverAccounts(itemId) } catch (error) { setMessage((error as Error).message) }
+    finally { await refresh(); await refreshSyncs(); setBusy(false) } // a sign-in-needed result changes the connection status: show Reconnect
   }, [discoverAccounts])
+  /** Owner-requested only: never automatic. Stores bank evidence; changes no balance, ledger or report. */
+  const syncNow = useCallback(async (itemId: string) => {
+    setBusy(true); setMessage(null)
+    try { await request('plaid-sync', { method: 'POST', body: { action: 'sync', itemId } }) }
+    catch (error) { setMessage((error as Error).message) }
+    finally { await refreshSyncs(); await refresh(); setBusy(false) }
+  }, [refreshSyncs, refresh])
   const mapAccount = useCallback(async (providerAccountId: string, financialAccountId: string) => {
     setBusy(true); setMessage(null)
     try { await request('plaid-accounts', { method: 'POST', body: { action: 'map', providerAccountId, financialAccountId } }); await refreshAccounts() }
@@ -131,5 +154,5 @@ export function useBankConnection() {
     catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
   }, [refreshAccounts])
 
-  return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, environment, busy, message, connect, reconnect, disconnect, refresh }
+  return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh }
 }

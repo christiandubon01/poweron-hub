@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { BankAccountSummary, BankConnectionSummary, CashAccountOption } from './useBankConnection'
+import type { BankAccountSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption } from './useBankConnection'
 import { useBankConnection } from './useBankConnection'
 
 const STATUS: Record<BankConnectionSummary['status'], { label: string; color: string; glyph: string }> = {
@@ -52,12 +52,36 @@ function AccountRow({ account, cashAccounts, mappedElsewhere, busy, onMap, onUnm
   </li>
 }
 
+const SYNC_LABEL: Record<BankSyncSummary['state'], string> = {
+  not_synced: 'Not synced yet', syncing: 'Syncing…', waiting: 'Waiting for the bank to prepare your transactions',
+  unconfirmed: 'No transactions came back yet. That does not confirm there are none. Try again later.',
+  synced: 'Synced', error: 'Last sync failed. You can try again.', login_required: 'Sign-in needed. Use Reconnect.',
+}
+
+/** Compact bank-evidence status. It is NOT the ledger: nothing here changes a balance, report or Outlook number. */
+function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: string; sync: BankSyncSummary | undefined; busy: boolean; onSync: (id: string) => Promise<void> }) {
+  const state = sync?.state ?? 'not_synced'
+  const when = sync?.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null
+  return <div className="w-full" data-testid="bank-sync-section" data-state={state}>
+    <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Transactions · bank evidence</p>
+    <div className="flex flex-wrap items-center justify-between gap-2 py-1">
+      <div className="min-w-0 text-xs">
+        <p data-testid="bank-sync-state">{SYNC_LABEL[state]}{state === 'synced' && when ? <span className="text-[var(--text-secondary)]"> · Last synced {when}</span> : null}</p>
+        {sync && (sync.counts.posted > 0 || sync.counts.pending > 0) && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-counts">{sync.counts.posted} posted · {sync.counts.pending} pending</p>}
+        {sync?.updatesAvailable && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-updates">New bank updates are available.</p>}
+        <p className="text-[var(--text-secondary)]">Bank evidence only. It does not change your balances, ledger or reports.</p>
+      </div>
+      <button type="button" className={btn} disabled={busy || state === 'syncing' || state === 'login_required'} onClick={() => void onSync(connectionId)}>{state === 'not_synced' ? 'Sync transactions' : 'Sync again'}</button>
+    </div>
+  </div>
+}
+
 /**
  * Minimal bank connection surface (Sandbox). It renders nothing when the caller cannot manage bank connections or the feature is
  * not configured. Connecting a bank does not change any balance, project, obligation, debt or Outlook number.
  */
 export default function BankConnectionCard() {
-  const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, environment, busy, message, connect, reconnect, disconnect } = useBankConnection()
+  const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect } = useBankConnection()
   if (load !== 'ready') return null
   const active = connections.filter(c => c.status !== 'disconnected')
   return <section data-testid="bank-connection-card" aria-label="Bank connection" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
@@ -77,8 +101,12 @@ export default function BankConnectionCard() {
           {(c.status === 'login_required' || c.status === 'error') && <button type="button" className={btn} disabled={busy} onClick={() => void reconnect(c.id)}>Reconnect</button>}
           <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Disconnect this bank? Your history and records are kept.')) void disconnect(c.id) }}>Disconnect</button>
         </div>
+        <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} />
         <div className="w-full">
-          <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Accounts</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Accounts</p>
+            {accounts.some(a => a.connectionId === c.id && a.live) && <button type="button" className={btn} disabled={busy} onClick={() => void findAccounts(c.id)}>Refresh accounts</button>}
+          </div>
           {(() => {
             const mine = accounts.filter(a => a.connectionId === c.id && a.live)
             const mappedElsewhere = new Set(accounts.filter(a => a.live && a.mapping).map(a => a.mapping!.financialAccountId))

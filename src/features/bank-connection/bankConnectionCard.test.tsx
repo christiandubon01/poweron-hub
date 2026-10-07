@@ -44,7 +44,7 @@ describe('BankConnectionCard (BANK-2)', () => {
     await mount({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn()] } } })
     const row = host.querySelector('[data-testid="bank-connection-row"]')!
     expect(row.textContent).toMatch(/First Platypus Bank/); expect(row.textContent).toMatch(/Connected/); expect(row.textContent).toContain('●')
-    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Disconnect', 'Find bank accounts']) // BANK-3 adds the account retry control
+    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Disconnect', 'Sync transactions', 'Find bank accounts']) // BANK-3/4 add the account retry and owner sync controls
     expect(host.querySelector('[data-testid="bank-connect"]')).toBeNull()
   })
 
@@ -52,7 +52,7 @@ describe('BankConnectionCard (BANK-2)', () => {
     await mount({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn({ status: 'login_required' })] } } })
     const row = host.querySelector('[data-testid="bank-connection-row"]')!
     expect(row.textContent).toMatch(/Sign-in needed/)
-    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Reconnect', 'Disconnect', 'Find bank accounts'])
+    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Reconnect', 'Disconnect', 'Sync transactions', 'Find bank accounts'])
     expect(host.innerHTML).not.toMatch(/access-|v1:|public-|link-sandbox/)
   })
 
@@ -114,7 +114,7 @@ describe('BankConnectionCard (BANK-2)', () => {
       expect(rows[1].textContent).toMatch(/Cash OS account → Wells Fargo Business Checking 6960/); expect(rows[1].textContent).toMatch(/Mapped/)
       expect([...rows[0].querySelectorAll('button')].map(b => b.textContent)).toEqual(['Map account'])
       expect([...rows[1].querySelectorAll('button')].map(b => b.textContent)).toEqual(['Change mapping', 'Remove mapping'])
-      expect(host.textContent).not.toMatch(/\ba1\b|\bi1\b|balance|access|token|json/i)
+      expect(rows.map(r => r.textContent).join(' ')).not.toMatch(/\ba1\b|\bi1\b|balance|access|token|json/i)
     })
 
     it('mapping is an explicit owner choice: pick a Cash OS account, Save posts the ids only, and nothing is auto-selected', async () => {
@@ -160,6 +160,93 @@ describe('BankConnectionCard (BANK-2)', () => {
       await flush()
       const post = fetchMock.mock.calls.find(([u, init]) => String(u).endsWith('plaid-accounts') && init?.method === 'POST')!
       expect(JSON.parse(post[1].body)).toEqual({ action: 'discover', itemId: 'i1' })
+    })
+  })
+
+  describe('BANK-4 transaction evidence sync (owner-initiated, counts only)', () => {
+    const sync = (over: Record<string, unknown> = {}) => ({ connectionId: 'i1', state: 'not_synced', lastSyncedAt: null, counts: { posted: 0, pending: 0, removed: 0 }, updatesAvailable: false, ...over })
+    const base = (syncs: unknown[]) => ({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn()] } }, 'plaid-accounts': { body: { accounts: [], cashAccounts: [] } }, 'plaid-sync': { body: { syncs } } })
+    const posts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')
+
+    it('never syncs by itself: loading the card only reads status, and the first sync is an explicit owner button', async () => {
+      await mount(base([sync()]))
+      expect(posts()).toHaveLength(0)
+      const section = host.querySelector('[data-testid="bank-sync-section"]')!
+      expect(section.textContent).toMatch(/Transactions · bank evidence/); expect(section.textContent).toMatch(/Not synced yet/)
+      expect(section.textContent).toMatch(/Bank evidence only\. It does not change your balances, ledger or reports/)
+      expect([...section.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Sync transactions'])
+    })
+    it('clicking Sync posts only the sync action for that connection', async () => {
+      await mount(base([sync()]))
+      await act(async () => { (host.querySelector('[data-testid="bank-sync-section"] button') as HTMLButtonElement).click() })
+      await flush()
+      const sent = posts().filter(([u]) => String(u).endsWith('plaid-sync'))
+      expect(sent).toHaveLength(1); expect(JSON.parse(sent[0][1].body)).toEqual({ action: 'sync', itemId: 'i1' })
+    })
+    it('shows synced status with last-synced time and compact posted/pending counts, never a transaction list', async () => {
+      await mount(base([sync({ state: 'synced', lastSyncedAt: '2026-10-07T15:30:00Z', counts: { posted: 42, pending: 3, removed: 1 } })]))
+      const section = host.querySelector('[data-testid="bank-sync-section"]')!
+      expect(section.querySelector('[data-testid="bank-sync-state"]')!.textContent).toMatch(/Synced · Last synced/)
+      expect(section.querySelector('[data-testid="bank-sync-counts"]')!.textContent).toBe('42 posted · 3 pending')
+      expect([...section.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Sync again'])
+      expect(section.querySelector('li, table')).toBeNull()
+    })
+    it('shows a truthful WAITING state (not "Synced") and the webhook update hint', async () => {
+      await mount(base([sync({ state: 'waiting', updatesAvailable: true })]))
+      const section = host.querySelector('[data-testid="bank-sync-section"]')!
+      expect(section.querySelector('[data-testid="bank-sync-state"]')!.textContent).toMatch(/Waiting for the bank/); expect(section.textContent).not.toMatch(/Synced/)
+      expect(section.querySelector('[data-testid="bank-sync-updates"]')).not.toBeNull()
+    })
+    it('an empty result with no proof that the bank is still preparing data is "unconfirmed", never "Synced" or "Waiting"', async () => {
+      await mount(base([sync({ state: 'unconfirmed' })]))
+      const text = host.querySelector('[data-testid="bank-sync-state"]')!.textContent!
+      expect(text).toMatch(/does not confirm there are none/); expect(text).not.toMatch(/Synced|Waiting/)
+    })
+    it('ITEM_LOGIN_REQUIRED reaches the card: the service answer is sanitized, the connection flips to sign-in needed, Reconnect appears and Sync is disabled', async () => {
+      const responses: Record<string, { status?: number; body: unknown }> = {
+        'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn()] } },
+        'plaid-accounts': { body: { accounts: [], cashAccounts: [] } },
+        'plaid-sync': { body: { syncs: [sync({ state: 'not_synced' })] } },
+      }
+      await mount(responses)
+      expect(host.textContent).not.toMatch(/Reconnect/)
+      // the server marks the connection and answers with the sanitized login-required error; the next status/sync reads reflect it
+      responses['plaid-accounts'] = { status: 409, body: { error: 'The bank needs you to sign in again. Use Reconnect.', code: 'login_required' } }
+      responses['plaid-connection-status'] = { body: { environment: 'sandbox', connected: false, connections: [conn({ status: 'login_required' })] } }
+      responses['plaid-sync'] = { body: { syncs: [sync({ state: 'login_required' })] } }
+      await act(async () => { ([...host.querySelectorAll('button')].find(b => b.textContent === 'Find bank accounts') as HTMLButtonElement).click() })
+      await flush()
+      const row = host.querySelector('[data-testid="bank-connection-row"]')!
+      expect(row.getAttribute('data-status')).toBe('login_required'); expect(row.textContent).toMatch(/Sign-in needed/)
+      expect([...row.querySelectorAll('button')].map(b => b.textContent)).toContain('Reconnect')
+      expect(host.querySelector('[role="alert"]')!.textContent).toBe('The bank needs you to sign in again. Use Reconnect.')
+      expect(host.textContent).not.toMatch(/ITEM_LOGIN_REQUIRED|ITEM_ERROR/)
+      expect(host.querySelector('[data-testid="bank-sync-state"]')!.textContent).toMatch(/Sign-in needed/)
+      expect((host.querySelector('[data-testid="bank-sync-section"] button') as HTMLButtonElement).disabled).toBe(true)
+    })
+    it('a sync that fails because an account is unknown shows the server message pointing at Refresh accounts, and that button exists once accounts are loaded', async () => {
+      const acct = { id: 'a1', connectionId: 'i1', institutionName: 'Tartan Bank', name: 'Plaid Checking', officialName: null, mask: '0000', type: 'depository', subtype: 'checking', live: true, mapping: null }
+      const responses: Record<string, { status?: number; body: unknown }> = {
+        'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn()] } },
+        'plaid-accounts': { body: { accounts: [acct], cashAccounts: [] } },
+        'plaid-sync': { body: { syncs: [sync()] } },
+      }
+      await mount(responses)
+      responses['plaid-sync'] = { status: 409, body: { error: 'The bank returned a transaction for an account Cash OS does not know yet. Nothing was saved. Use "Refresh accounts", then sync again.', code: 'sync_failed' } }
+      await act(async () => { (host.querySelector('[data-testid="bank-sync-section"] button') as HTMLButtonElement).click() })
+      await flush()
+      expect(host.querySelector('[role="alert"]')!.textContent).toMatch(/Use "Refresh accounts"/)
+      const refresh = [...host.querySelectorAll('button')].find(b => b.textContent === 'Refresh accounts') as HTMLButtonElement
+      expect(refresh).toBeTruthy()
+      responses['plaid-sync'] = { body: { syncs: [sync()] } }
+      await act(async () => { refresh.click() }); await flush()
+      const discover = fetchMock.mock.calls.filter(([u, init]) => String(u).endsWith('plaid-accounts') && init?.method === 'POST')
+      expect(JSON.parse(discover[0][1].body)).toEqual({ action: 'discover', itemId: 'i1' })
+    })
+    it('error and sign-in-needed states are plain-language; Sync is disabled while sign-in is needed or a sync runs', async () => {
+      await mount(base([sync({ state: 'login_required' })]))
+      expect((host.querySelector('[data-testid="bank-sync-section"] button') as HTMLButtonElement).disabled).toBe(true)
+      expect(host.querySelector('[data-testid="bank-sync-state"]')!.textContent).toMatch(/Sign-in needed/)
     })
   })
 })

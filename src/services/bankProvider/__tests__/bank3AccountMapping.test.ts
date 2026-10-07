@@ -59,7 +59,7 @@ function world(key = KEY) {
     async deactivateMapping(org, id, _actor, reason) { const m = state.mappings.find(x => x.org === org && x.id === id); if (m) { m.status = 'inactive'; m.reason = reason } },
   }
   const plaid = {
-    getAccounts: vi.fn(async () => { state.calls.push('getAccounts'); if (state.plaidFail) throw new PlaidApiFailure('ITEM_LOGIN_REQUIRED', 'ITEM_ERROR', 400); return state.plaidAccounts }),
+    getAccounts: vi.fn(async () => { state.calls.push('getAccounts'); if (state.plaidFail) throw new PlaidApiFailure('INTERNAL_SERVER_ERROR', 'API_ERROR', 500); return state.plaidAccounts }),
   }
   const repo = {
     async getItem(org, id) { const i = state.items.get(id); return i && i.org === org ? { id, provider: 'plaid', providerItemId: i.providerItemId, status: i.status } : null },
@@ -279,10 +279,11 @@ describe('BANK-3 static guarantees', () => {
   const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8')
   const sources = ['../bankAccountService.ts', '../bankAccountRepo.ts', '../../../../netlify/functions/bank/plaid-accounts.ts']
   it('5/18. no transaction endpoint is called or added, and no provider transaction / balance / ledger table is written by BANK-3 code', () => {
-    for (const f of [...sources, '../plaidPort.ts']) {
+    for (const f of sources) { // the BANK-3 files themselves never touch transactions (BANK-4 added the sync call to the adapter only)
       const code = read(f).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
       expect(code).not.toMatch(/transactionsSync|transactionsGet|transactionsRefresh|\/transactions\//)
     }
+    expect(read('../plaidPort.ts').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')).not.toMatch(/transactionsGet|transactionsRefresh/)
     for (const f of sources) {
       const code = read(f).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
       expect(code).not.toMatch(/financial_provider_transactions|financial_provider_balance_snapshots|financial_transactions|financial_provider_interpretations|financial_provider_credentials/)

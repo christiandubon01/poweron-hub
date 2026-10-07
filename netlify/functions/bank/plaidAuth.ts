@@ -20,6 +20,7 @@ import { loadBankTokenEncryptionKey } from '../../../src/services/bankProvider/p
 import { createPlaidSdkPort } from '../../../src/services/bankProvider/plaidPort'
 import { createBankConnectionRepo } from '../../../src/services/bankProvider/bankConnectionRepo'
 import { createBankAccountRepo } from '../../../src/services/bankProvider/bankAccountRepo'
+import { createBankSyncRepo } from '../../../src/services/bankProvider/bankSyncRepo'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 
 export const CORS_HEADERS = {
@@ -61,7 +62,7 @@ function userScopedClient(event) {
   if (!token || !url || !anonKey) return null
   return createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${token}` } } })
 }
-function serviceClient() {
+export function serviceClient() {
   const { url, serviceKey } = supabaseConfig()
   return url && serviceKey ? createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null
 }
@@ -99,7 +100,7 @@ export async function resolveBankContext(event, overrides = {}) {
   return {
     ok: true,
     actor: { organizationId, userId: user.id, role: data.role },
-    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), key, environment: config.environment, log: safeLog },
+    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc), key, environment: config.environment, log: safeLog },
   }
 }
 

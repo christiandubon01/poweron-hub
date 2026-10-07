@@ -54,6 +54,11 @@ export function createBankAccountRepo(svc: Svc): BankAccountRepo {
         .eq('organization_id', organizationId).in('id', ids).eq('status', 'active')
       if (error) failed()
     },
+    async markItemLoginRequired(organizationId, itemId) {
+      const { error } = await svc.from('financial_provider_items').update({ status: 'login_required', status_changed_at: new Date().toISOString() })
+        .eq('organization_id', organizationId).eq('id', itemId).in('status', ['healthy', 'connecting'])
+      if (error) failed()
+    },
     async getProviderAccount(organizationId, id) {
       const { data, error } = await svc.from('financial_provider_accounts').select(ACCOUNT_COLUMNS).eq('organization_id', organizationId).eq('id', id).maybeSingle()
       if (error) failed()

@@ -23,6 +23,7 @@ const PUBLIC_TOKEN = /^public-[A-Za-z0-9_-]{8,190}$/
 
 export type BankErrorCode = 'forbidden' | 'invalid_request' | 'not_found' | 'conflict' | 'item_owned_elsewhere'
   | 'invalid_public_token' | 'plaid_unavailable' | 'persistence_failed' | 'disconnect_incomplete' | 'credential_unreadable'
+  | 'login_required' | 'sync_failed' | 'invalid_webhook'
 
 /** Carries only a safe, owner-readable message; never a token, key, response body or stack. */
 export class BankConnectionError extends Error {

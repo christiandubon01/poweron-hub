@@ -49,6 +49,8 @@ class FakePlaid implements BankPlaidPort {
   }
   async getInstitutionName() { this.calls.push('institution'); return this.institution.name }
   async getAccounts() { this.calls.push('getAccounts'); return [] }
+  async syncTransactions(): Promise<never> { throw new Error('BANK-2 tests never sync') }
+  async getWebhookVerificationKey(): Promise<never> { throw new Error('BANK-2 tests never verify webhooks') }
   async removeItem() { this.calls.push('removeItem'); if (this.failRemove) throw new PlaidApiFailure(this.failRemove, 'ITEM_ERROR', 400) }
 }
 
@@ -341,8 +343,8 @@ describe('bank connection service (BANK-2)', () => {
     it('the connection modules never read or write ledger, account, project, obligation, debt or payroll data', () => {
       const files = ['bankConnectionService', 'bankConnectionRepo', 'plaidPort', 'plaidConfig', 'providerTokenCrypto'].map(n => readFileSync(`src/services/bankProvider/${n}.ts`, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')).join('\n')
       expect(files).not.toMatch(/financial_transactions|financial_accounts|financial_obligation|cash_commitments|financial_liability|app_state|include_in_cash|financial_provider_transactions|financial_provider_accounts/)
-      // BANK-3 intentionally adds the free /accounts/get (accountsGet) to the Plaid adapter; transactions and sandbox shortcuts stay forbidden.
-      expect(files).not.toMatch(/transactionsSync|transactionsGet|transactionsRefresh|\/transactions\/|sandboxPublicTokenCreate/)
+      // BANK-3 added /accounts/get and BANK-4 added /transactions/sync (adapter only). /transactions/get, /refresh and sandbox shortcuts stay forbidden.
+      expect(files).not.toMatch(/transactionsGet|transactionsRefresh|transactionsRecurring|\/transactions\/(get|refresh)|sandboxPublicTokenCreate|sandboxItem|sandboxTransactions/)
     })
   })
 })
@@ -409,7 +411,7 @@ describe('Plaid SDK adapter (no network)', () => {
   it('an institution lookup failure is non-fatal (display name only)', async () => {
     expect(await make({ institutionsGetById: async () => { throw axiosError('INSTITUTION_NOT_FOUND', 'INVALID_INPUT') } }).port.getInstitutionName('ins_x')).toBeNull()
   })
-  it('exposes no transaction or sandbox-shortcut method (only free /accounts/get was added by BANK-3)', () => {
-    expect(Object.keys(make().port).sort()).toEqual(['createLinkToken', 'exchangePublicToken', 'getAccounts', 'getInstitutionName', 'getItem', 'removeItem'])
+  it('exposes no /transactions/get, refresh or sandbox-shortcut method (BANK-3 added /accounts/get; BANK-4 added /transactions/sync and webhook-key lookup)', () => {
+    expect(Object.keys(make().port).sort()).toEqual(['createLinkToken', 'exchangePublicToken', 'getAccounts', 'getInstitutionName', 'getItem', 'getWebhookVerificationKey', 'removeItem', 'syncTransactions'])
   })
 })

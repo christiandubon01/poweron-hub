@@ -56,6 +56,8 @@ export interface BankAccountRepo {
   /** One statement, idempotent on (item, provider account id). Re-activates a returned account; never touches created_at. */
   upsertProviderAccounts(organizationId: string, itemId: string, accounts: ProviderAccountRecord[]): Promise<void>
   deactivateProviderAccounts(organizationId: string, ids: string[]): Promise<void>
+  /** Marks a healthy/connecting Item as needing the owner to sign in again (status only; nothing else changes). */
+  markItemLoginRequired(organizationId: string, itemId: string): Promise<void>
   getProviderAccount(organizationId: string, id: string): Promise<(ProviderAccountRow & { itemStatus: string }) | null>
   listAllProviderAccounts(organizationId: string): Promise<Array<ProviderAccountRow & { institutionName: string | null; itemStatus: string }>>
   getFinancialAccount(organizationId: string, id: string): Promise<(CashAccountRow & { status: string }) | null>
@@ -116,6 +118,12 @@ export async function discoverAccounts(deps: BankAccountDeps, actor: BankActor, 
   try {
     summaries = await deps.plaid.getAccounts(token)
   } catch (error) {
+    if (error instanceof PlaidApiFailure && error.code === 'ITEM_LOGIN_REQUIRED') {
+      // The same sanitized state the sync path uses: the connection shows "Sign-in needed" with Reconnect. No raw Plaid error is exposed.
+      try { await deps.accounts.markItemLoginRequired(actor.organizationId, item.id) } catch { /* the owner message below is still correct */ }
+      note(deps, { event: 'bank.accounts.discovery_failed', organizationId: actor.organizationId, itemId: item.id, code: 'ITEM_LOGIN_REQUIRED' })
+      throw new BankConnectionError('login_required', 409, 'The bank needs you to sign in again. Use Reconnect.')
+    }
     note(deps, { event: 'bank.accounts.discovery_failed', organizationId: actor.organizationId, itemId: item.id, code: error instanceof PlaidApiFailure ? error.code : 'ERROR' })
     throw unavailable()
   }

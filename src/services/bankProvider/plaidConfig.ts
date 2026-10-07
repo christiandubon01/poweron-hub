@@ -8,11 +8,13 @@
  *   PLAID_ENV         must be exactly "sandbox"
  *   PLAID_CLIENT_ID   Plaid client id
  *   PLAID_SECRET      Plaid SANDBOX secret
+ *   PLAID_WEBHOOK_URL optional https URL of the plaid-webhook function; when absent new Items simply have no webhook (BANK-4)
  *   POWERON_BANK_TOKEN_ENCRYPTION_KEY   (see providerTokenCrypto.ts)
  */
 export const PLAID_ENV_VAR = 'PLAID_ENV'
 export const PLAID_CLIENT_ID_VAR = 'PLAID_CLIENT_ID'
 export const PLAID_SECRET_VAR = 'PLAID_SECRET'
+export const PLAID_WEBHOOK_URL_VAR = 'PLAID_WEBHOOK_URL'
 
 export type PlaidEnvironmentName = 'sandbox'
 
@@ -32,14 +34,16 @@ export interface PlaidConfig {
   products: ['transactions']
   /** Locked owner decision: 90-day history, set at Link initialization (transactions.days_requested in /link/token/create); Plaid fixes it once Transactions is added to an Item. */
   transactionsDaysRequested: 90
+  /** Optional (BANK-4): where Plaid sends Transactions webhooks for NEW Items. A webhook is only a nudge; /transactions/sync is the truth. */
+  webhookUrl: string | null
 }
 
 /** Names the missing/invalid variable but never carries a value. */
 export class PlaidConfigError extends Error {
   readonly variable: string
-  readonly reason: 'missing' | 'unsupported_environment'
-  constructor(variable: string, reason: 'missing' | 'unsupported_environment') {
-    super(reason === 'missing' ? `Plaid configuration missing: ${variable}` : `Unsupported Plaid environment (BANK-2 allows sandbox only): ${variable}`)
+  readonly reason: 'missing' | 'unsupported_environment' | 'invalid'
+  constructor(variable: string, reason: 'missing' | 'unsupported_environment' | 'invalid') {
+    super(reason === 'missing' ? `Plaid configuration missing: ${variable}` : reason === 'invalid' ? `Plaid configuration invalid: ${variable}` : `Unsupported Plaid environment (BANK-2 allows sandbox only): ${variable}`)
     this.name = 'PlaidConfigError'
     this.variable = variable
     this.reason = reason
@@ -54,6 +58,8 @@ export function loadPlaidConfig(env: Record<string, string | undefined>): PlaidC
   if (!clientId) throw new PlaidConfigError(PLAID_CLIENT_ID_VAR, 'missing')
   const secret = (env[PLAID_SECRET_VAR] ?? '').trim()
   if (!secret) throw new PlaidConfigError(PLAID_SECRET_VAR, 'missing')
+  const webhookRaw = (env[PLAID_WEBHOOK_URL_VAR] ?? '').trim()
+  if (webhookRaw && !/^https:\/\/[^\s]{4,500}$/.test(webhookRaw)) throw new PlaidConfigError(PLAID_WEBHOOK_URL_VAR, 'invalid')
   return { environment: 'sandbox', clientId, secret, clientName: 'Power On Hub', countryCodes: ['US'], language: 'en',
-    products: ['transactions'], transactionsDaysRequested: 90 }
+    products: ['transactions'], transactionsDaysRequested: 90, webhookUrl: webhookRaw || null }
 }
