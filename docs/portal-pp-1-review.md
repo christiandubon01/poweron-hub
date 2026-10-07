@@ -28,3 +28,26 @@ No production calls, DB changes, requests, notification claims/requeues, emails,
 ## Remaining runtime checks
 
 After review and separately authorized deployment, validate the authenticated modal with real owner access, signed-photo previews, tablet/mobile layout and assistive navigation. Preview email rendering in the actual mail clients, including blocked images/dark mode; live delivery requires separate approval. Keep maintenance disabled and leave the pending controlled synthetic event untouched. R1 corrects the owner CTA to `https://app.poweronsolutionsllc.com/`, labeled “Open in Power On Hub →”, matching the normal Portal owner alert. Customer confirmation retains `/portal/track/{request_id}`. No owner deep-link or query-parameter system is added. Existing frozen outbox payloads are not rewritten.
+
+## R2 visual polish and preview photo diagnosis
+
+R2 starts at `bcead55f93069176a1a03d90d1ae0599dab9ad34`. The existing modal now has a responsive 920px maximum width with safe phone margins and its original scrolling/sticky actions. Planner presentation adds a four-tile overview, intent chips, paired equipment cards, structured observation cards, a gold guidance panel with all reasons/unknowns/paths/next step, and a compact request-context grid. All original information and safety/provenance meaning remain. Photos use a one/two/three-column layout, larger signed thumbnails and compact unavailable states, including failed image loads. The map stays collapsed until geocoding succeeds and map tiles load; script/initialization/geocoding/tile failure never reserves a visible empty rectangle. Address and Open Maps are retained.
+
+R2 validation: 477 tests across eleven focused files pass; `tsc --noEmit` and whitespace checks pass. Existing service, conversion, registered-only server projection, private Storage policies, owner/admin RPC, email/CTA, scheduler and customer tracking code are unchanged. No production data/configuration changes or worker invocations.
+
+### Photo diagnosis: runtime evidence still required
+
+The reported photo count comes from the owner-details RPC's registered manifest; it does not prove the separate attachment-read endpoint returned signed URLs. `fetchAttachmentSignedUrls` returns an empty list for non-OK responses/network errors. Consequently, “Photo preview unavailable” alone cannot distinguish missing preview secrets, CORS, JWT/context failure, projection failure, or Storage signing failure.
+
+Verified locally with endpoint integration tests:
+
+- The Inbox passes its current owner JWT; no anonymous fallback is used.
+- An exact preview origin in `DEPLOY_PRIME_URL` passes CORS; untrusted origins fail.
+- Missing `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` produces HTTP 500 / `Server configuration error` before any authentication/DB/Storage access.
+- Failed `get_portal_attachment_context` produces HTTP 503 before private projection/signing.
+- Three manifest-linked registered objects produce three metadata/URL entries when signing succeeds; allocation history is never used.
+- Storage signing failure produces HTTP 200 with null signed URLs and safe metadata, with no public URL fallback.
+
+Actual preview requests from this session were denied at the outbound proxy (CONNECT HTTP 403), before reaching Netlify. This is a session access restriction, not evidence of the application's CORS response. No Netlify environment/log capability is attached. No owner browser JWT was obtained or fabricated. The actual preview secret availability, context result, projection result and signing result remain unverified. Missing deploy-preview secrets are a possible cause, not a confirmed diagnosis. No speculative backend/security/configuration repair was made.
+
+To resolve the photo gate, obtain the preview browser's POST status/body, omitting Authorization/tokens/signed URLs. If it is the configuration error above, a Netlify owner must verify deploy-preview availability of the existing server variables without changing production. If HTTP 200, inspect safe metadata/count and whether URLs are null; use authorized Netlify runtime logs to isolate context/projection/signing as needed. Do not invoke notification workers or use the synthetic event to test delivery.

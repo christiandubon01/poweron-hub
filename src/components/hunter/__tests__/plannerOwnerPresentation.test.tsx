@@ -99,6 +99,35 @@ describe('Current Portal Inbox Planner presentation', () => {
     await render(<PlannerOwnerSection details={d as any} attachments={[]} loadingPhotos={false} />)
     expect(host.textContent).toContain(expected);expect(host.textContent).not.toContain('Power On verified')
   })
+  it('shows the four overview tiles and wider responsive modal without hiding information',async()=>{
+    mocks.details.mockResolvedValue(details());await open()
+    const overview=host.querySelector('[data-testid="planner-overview"]')!
+    for(const title of ['Service','Capacity','Condition','Review'])expect(overview.textContent).toContain(title)
+    expect(overview.textContent).toContain('225 A');expect(overview.textContent).toContain('Customer estimate')
+    expect(overview.textContent).toContain('Preliminary');expect(overview.textContent).toContain('Not inspected')
+    expect(host.querySelector('[role="dialog"]')!.className).toContain('max-w-[920px]')
+    expect(host.querySelector('[data-testid="planner-load-columns"]')!.className).toContain('md:grid-cols-2')
+    expect(host.querySelector('[data-testid="planner-photo-grid"]')!.className).toContain('lg:grid-cols-3')
+    expect(button('Convert to Lead')).toBeDefined();expect(button('Dismiss')).toBeDefined()
+  })
+  it('retains every possible path title and explanation in separate responsive cards',async()=>{
+    const d=details()
+    const taxonomy=JSON.parse(readFileSync('netlify/functions/lib/planner-taxonomy.json','utf8'))
+    d.snapshot.result_states.paths_presented=Object.keys(taxonomy.PATHS)
+    await render(<PlannerOwnerSection details={d as any} attachments={[]} loadingPhotos={false} />)
+    const paths=host.querySelector('[data-testid="planner-paths"]')!
+    expect(paths.children.length).toBe(Object.keys(taxonomy.PATHS).length)
+    for(const path of Object.values(taxonomy.PATHS) as any[]) {
+      expect(paths.textContent).toContain(path.label);expect(paths.textContent).toContain(path.description)
+    }
+  })
+  it('collapses a broken signed thumbnail into a compact unavailable card without losing its metadata',async()=>{
+    await render(<PlannerOwnerSection details={details() as any} attachments={[{clientPhotoId:'photo-one',signedUrl:'https://signed.example/photo',displayName:'Attachment',mimeType:'image/png',expiresAt:null}]} loadingPhotos={false} />)
+    await act(async()=>host.querySelector('img')!.dispatchEvent(new Event('error')))
+    expect(host.querySelector('img')).toBeNull();expect(host.textContent).toContain('Photo preview unavailable')
+    expect(host.textContent).toContain('Panel label close-up');expect(host.textContent).toContain('Not reviewed')
+    expect(host.querySelector('figure')!.className).not.toMatch(/h-\d|aspect-/)
+  })
   it('uses the current Sales Intelligence Leads → HunterPanel → PortalInbox wiring', () => {
     expect(readFileSync('src/components/salesIntel/tabs/LeadsTab.tsx','utf8')).toContain('<HunterPanel')
     expect(readFileSync('src/components/hunter/HunterPanel.tsx','utf8')).toContain('<PortalInbox onLeadConverted={fetchLeads}')
