@@ -17,6 +17,9 @@ import { supabase } from '@/lib/supabase'
 import {
   parseAttachmentPaths,
   fetchAttachmentSignedUrls,
+  fetchAttachmentSignedUrlsDetailed,
+  isNetlifyDeployPreview,
+  type AttachmentReadDiagnostic,
   isImagePath,
   isVideoPath,
   isPdfPath,
@@ -349,6 +352,7 @@ function DetailModal({
   // Both old "Files: URL" and new "FilePaths: path" note formats are handled server-side.
   const [signedEntries, setSignedEntries] = useState<AttachmentEntry[]>([])
   const [loadingAttachments, setLoadingAttachments] = useState(false)
+  const [attachmentDiagnostic, setAttachmentDiagnostic] = useState<AttachmentReadDiagnostic | null>(null)
 
   const [plannerDetails, setPlannerDetails] = useState<PlannerOwnerDetails | null>(null)
   const [plannerLoading, setPlannerLoading] = useState(true)
@@ -373,6 +377,7 @@ function DetailModal({
   const [loadingClaim, setLoadingClaim] = useState(true)
 
   useEffect(() => {
+    setAttachmentDiagnostic(null)
     // Quick client-side check: skip the server call when notes have no attachment markers
     if (!plannerDetails && (!req.notes || (!req.notes.includes('FilePaths:') && !req.notes.includes('Files:')))) {
       setSignedEntries([])
@@ -383,8 +388,13 @@ function DetailModal({
     setLoadingAttachments(true)
 
     // Get the owner's JWT from the current authenticated session
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       const jwt = data.session?.access_token
+      if (plannerDetails && isNetlifyDeployPreview(window.location.hostname)) {
+        const { attachments, ...diagnostic } = await fetchAttachmentSignedUrlsDetailed(req.id, jwt || '')
+        if (active) setAttachmentDiagnostic(diagnostic)
+        return attachments
+      }
       return jwt ? fetchAttachmentSignedUrls(req.id, jwt) : []
     }).then(entries => { if (active) setSignedEntries(entries) })
       .catch(() => { if (active) setSignedEntries([]) })
@@ -534,7 +544,7 @@ function DetailModal({
 
           {plannerLoading && <p role="status" className="text-xs text-gray-400">Checking Planner details…</p>}
           {plannerError && <p role="status" className="text-sm text-gray-400">Planner details unavailable. You can still use the request actions.</p>}
-          {plannerDetails && <PlannerOwnerSection details={plannerDetails} attachments={signedEntries} loadingPhotos={loadingAttachments} />}
+          {plannerDetails && <PlannerOwnerSection details={plannerDetails} attachments={signedEntries} loadingPhotos={loadingAttachments} diagnostic={attachmentDiagnostic} />}
 
           {/* Referral — LEAD-SRC-4B */}
           {(loadingClaim || referralClaim) && (

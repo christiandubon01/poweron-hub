@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import type { PlannerOwnerDetails } from '@/services/portal/plannerDetails'
-import type { AttachmentEntry } from '@/services/portal/portalStorageService'
+import { formatAttachmentDiagnostic, isNetlifyDeployPreview, type AttachmentEntry, type AttachmentReadDiagnostic } from '@/services/portal/portalStorageService'
 import taxonomy from '../../../netlify/functions/lib/planner-taxonomy.json'
 
 const PROVENANCE: Record<string, string> = {
@@ -51,18 +51,20 @@ function Loads({ value }: { value: unknown }) {
 function SummaryTile({ title, children }: { title: string; children: React.ReactNode }) {
   return <div className="min-w-0 rounded-lg border border-amber-800/25 bg-gray-950/60 p-3"><p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-300/80">{title}</p><div className="text-sm font-medium leading-relaxed text-gray-100">{children}</div></div>
 }
-function PlannerPhoto({ photo, entry, loading }: { photo: Record<string, unknown>; entry?: AttachmentEntry; loading: boolean }) {
+function PlannerPhoto({ photo, entry, loading, diagnostic }: { photo: Record<string, unknown>; entry?: AttachmentEntry; loading: boolean; diagnostic?: AttachmentReadDiagnostic | null }) {
   const [failed, setFailed] = useState(false)
   const category = (taxonomy.PHOTO_CATEGORIES as Record<string, {label: string}>)[text(photo.category)]?.label || 'Planner photo'
   const caption = text(photo.caption)
+  const showDiagnostic = !loading && (!entry?.signedUrl || failed) && diagnostic && typeof window !== 'undefined' && isNetlifyDeployPreview(window.location.hostname)
   return <figure className="min-w-0 self-start overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
     {entry?.signedUrl && !failed ? <a href={entry.signedUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open ${category}${caption ? `: ${caption}` : ''}`} className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400"><img src={entry.signedUrl} alt={`${category}${caption ? ` — ${caption}` : ''}; not reviewed`} onError={() => setFailed(true)} loading="lazy" className="w-full aspect-[4/3] object-cover" /></a> : <p className="px-3 pt-3 text-xs text-gray-400">{loading ? 'Loading photo…' : 'Photo preview unavailable'}</p>}
+    {showDiagnostic && <p className="px-3 pt-2 text-[10px] leading-relaxed text-gray-500">{formatAttachmentDiagnostic(diagnostic)}</p>}
     <figcaption className="p-3 space-y-1"><p className="font-medium text-gray-200">{category}</p>{caption && <p className="text-xs whitespace-pre-wrap text-gray-400">{caption}</p>}<span className="inline-block rounded-md border border-amber-800/40 bg-amber-950/40 px-2 py-1 text-[10px] font-medium text-amber-300">Not reviewed</span></figcaption>
   </figure>
 }
 /** Explicit presentation allowlist: never enumerate or dump the private snapshot. */
-export function PlannerOwnerSection({ details, attachments, loadingPhotos }: {
-  details: PlannerOwnerDetails; attachments: AttachmentEntry[]; loadingPhotos: boolean
+export function PlannerOwnerSection({ details, attachments, loadingPhotos, diagnostic }: {
+  details: PlannerOwnerDetails; attachments: AttachmentEntry[]; loadingPhotos: boolean; diagnostic?: AttachmentReadDiagnostic | null
 }) {
   const snapshot = object(details.snapshot), intent = object(snapshot.intent), service = object(snapshot.existing_service)
   const panel = object(snapshot.panel), concerns = object(panel.concerns), result = object(snapshot.result_states)
@@ -137,7 +139,7 @@ export function PlannerOwnerSection({ details, attachments, loadingPhotos }: {
       {loadingPhotos && <p role="status">Loading Planner photos…</p>}
       <div data-testid="planner-photo-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{photos.map((photo, i) => {
         const entry = attachments.find(a => a.clientPhotoId === photo.client_photo_id)
-        return <PlannerPhoto key={`${text(photo.client_photo_id) || i}/${entry?.signedUrl || ''}`} photo={photo} entry={entry} loading={loadingPhotos} />
+        return <PlannerPhoto key={`${text(photo.client_photo_id) || i}/${entry?.signedUrl || ''}`} photo={photo} entry={entry} loading={loadingPhotos} diagnostic={diagnostic} />
       })}</div>
     </Group>
   </section>

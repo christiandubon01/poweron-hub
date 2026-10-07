@@ -61,6 +61,87 @@ export async function fetchAttachmentSignedUrls(
   }
 }
 
+export type AttachmentDiagnosticResult =
+  | 'ok' | 'network_error' | 'forbidden' | 'unauthorized' | 'request_unavailable'
+  | 'server_configuration' | 'server_error' | 'invalid_response' | 'signed_url_missing'
+
+/** Bounded metadata only. Never retain provider response text, credentials or URLs here. */
+export interface AttachmentReadDiagnostic {
+  httpStatus: number | null
+  result: AttachmentDiagnosticResult
+  attachmentCount: number
+  signedUrlCount: number
+}
+export interface DetailedAttachmentRead extends AttachmentReadDiagnostic {
+  attachments: AttachmentEntry[]
+}
+
+/** Owner-only diagnostic path. The existing customer/ordinary attachment API is unchanged. */
+export async function fetchAttachmentSignedUrlsDetailed(requestId: string, jwt: string): Promise<DetailedAttachmentRead> {
+  const failure = (result: AttachmentDiagnosticResult, httpStatus: number | null = null): DetailedAttachmentRead =>
+    ({ attachments: [], httpStatus, result, attachmentCount: 0, signedUrlCount: 0 })
+  if (!jwt) return failure('unauthorized')
+  if (!requestId) return failure('request_unavailable')
+  let response: Response
+  try {
+    response = await fetch('/.netlify/functions/portal-attachment-read', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ requestId }),
+    })
+  } catch { return failure('network_error') }
+  let data: unknown
+  try { data = await response.json() } catch {
+    if (response.ok) return failure('invalid_response', response.status)
+  }
+  const body = data && typeof data === 'object' ? data as Record<string, unknown> : {}
+  if (!response.ok) {
+    // Only exact known error labels influence classification. Never return raw error text.
+    const result: AttachmentDiagnosticResult = response.status === 403 ? 'forbidden'
+      : response.status === 401 ? 'unauthorized'
+      : response.status === 404 || body.error === 'Request unavailable' ? 'request_unavailable'
+      : response.status === 500 && body.error === 'Server configuration error' ? 'server_configuration'
+      : 'server_error'
+    return failure(result, response.status)
+  }
+  if (!Array.isArray(body.attachments) || !body.attachments.every(entry => entry && typeof entry === 'object'
+    && typeof entry.displayName === 'string' && (entry.signedUrl === null || typeof entry.signedUrl === 'string'))) {
+    return failure('invalid_response', response.status)
+  }
+  const attachments: AttachmentEntry[] = body.attachments.map(entry => ({
+    displayName: entry.displayName,
+    mimeType: typeof entry.mimeType === 'string' ? entry.mimeType : null,
+    signedUrl: entry.signedUrl,
+    expiresAt: typeof entry.expiresAt === 'string' ? entry.expiresAt : null,
+    ...(typeof entry.clientPhotoId === 'string' ? { clientPhotoId: entry.clientPhotoId } : {}),
+    ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
+    ...(typeof entry.caption === 'string' ? { caption: entry.caption } : {}),
+  }))
+  const signedUrlCount = attachments.filter(entry => typeof entry.signedUrl === 'string' && entry.signedUrl.length > 0).length
+  return { attachments, httpStatus: response.status, result: signedUrlCount < attachments.length ? 'signed_url_missing' : 'ok',
+    attachmentCount: attachments.length, signedUrlCount }
+}
+
+/** The formatter deliberately accepts only safe metadata, never attachment objects. */
+export function formatAttachmentDiagnostic(diagnostic: AttachmentReadDiagnostic): string {
+  if (diagnostic.result === 'network_error') return 'Preview diagnostic: Network request failed'
+  const labels: Record<AttachmentDiagnosticResult, string> = {
+    ok: '', signed_url_missing: '', network_error: 'Network request failed', forbidden: 'Forbidden',
+    unauthorized: 'Unauthorized', request_unavailable: 'Request unavailable', server_configuration: 'Server configuration',
+    server_error: 'Server error', invalid_response: 'Invalid response',
+  }
+  const status = Number.isInteger(diagnostic.httpStatus) && diagnostic.httpStatus! >= 100 && diagnostic.httpStatus! <= 599
+    ? `HTTP ${diagnostic.httpStatus} · ` : ''
+  const safeCount = (value: number) => Number.isSafeInteger(value) && value >= 0 ? value : 0
+  const detail = diagnostic.result === 'ok' || diagnostic.result === 'signed_url_missing'
+    ? `${safeCount(diagnostic.attachmentCount)} attachments · ${safeCount(diagnostic.signedUrlCount)} signed URLs`
+    : Object.prototype.hasOwnProperty.call(labels, diagnostic.result) ? labels[diagnostic.result] : 'Invalid response'
+  return `Preview diagnostic: ${status}${detail}`
+}
+
+export function isNetlifyDeployPreview(hostname: string): boolean {
+  return hostname.includes('deploy-preview-') && hostname.endsWith('.netlify.app')
+}
+
 /**
  * Extract a portal-uploads storage path from a full public/signed URL or
  * return a bare relative path as-is.  Returns null if the input cannot be
