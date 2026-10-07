@@ -20,6 +20,21 @@ export interface BankConnectionSummary {
   lastSuccessfulSyncAt: string | null
 }
 
+/** Sanitized bank account as shown to the owner: no provider id, no balance, no token. */
+export interface BankAccountSummary {
+  id: string
+  connectionId: string
+  institutionName: string | null
+  name: string | null
+  officialName: string | null
+  mask: string | null
+  type: string | null
+  subtype: string | null
+  live: boolean
+  mapping: { id: string; financialAccountId: string; financialAccountName: string } | null
+}
+export interface CashAccountOption { id: string; displayName: string; accountType: string; ownershipContext: string }
+
 /** `unavailable` = the caller may not manage bank connections (or it is not configured); the card renders nothing. */
 export type BankConnectionLoad = 'loading' | 'ready' | 'unavailable'
 
@@ -34,6 +49,8 @@ export function useBankConnection() {
   const [load, setLoad] = useState<BankConnectionLoad>('loading')
   const [connections, setConnections] = useState<BankConnectionSummary[]>([])
   const [environment, setEnvironment] = useState<string | null>(null)
+  const [accounts, setAccounts] = useState<BankAccountSummary[]>([])
+  const [cashAccounts, setCashAccounts] = useState<CashAccountOption[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -47,7 +64,21 @@ export function useBankConnection() {
       setLoad('unavailable')
     }
   }, [])
-  useEffect(() => { void refresh() }, [refresh])
+  /** Account list is best-effort: a failure here never hides an otherwise valid connection. */
+  const refreshAccounts = useCallback(async () => {
+    try {
+      const data = await request('plaid-accounts', { method: 'GET' })
+      setAccounts(Array.isArray(data.accounts) ? data.accounts : [])
+      setCashAccounts(Array.isArray(data.cashAccounts) ? data.cashAccounts : [])
+    } catch { /* keep the last known list */ }
+  }, [])
+  useEffect(() => { void refresh(); void refreshAccounts() }, [refresh, refreshAccounts])
+
+  /** Separate, retry-safe call (never part of the connection exchange): fetch + save the bank's accounts, then reload the list. */
+  const discoverAccounts = useCallback(async (itemId: string) => {
+    await request('plaid-accounts', { method: 'POST', body: { action: 'discover', itemId } })
+    await refreshAccounts()
+  }, [refreshAccounts])
 
   const runLink = useCallback(async (body: Record<string, unknown>, onDone: (publicToken: string) => Promise<void>) => {
     setBusy(true); setMessage(null)
@@ -56,7 +87,15 @@ export function useBankConnection() {
       await openPlaidLink({
         linkToken,
         onSuccess: async publicToken => {
-          try { await onDone(publicToken); await refresh() } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+          try {
+            await onDone(publicToken)
+            const status = await request('plaid-connection-status', { method: 'GET' })
+            setConnections(Array.isArray(status.connections) ? status.connections : [])
+            const live = (status.connections as BankConnectionSummary[] | undefined)?.filter(c => c.status !== 'disconnected') ?? []
+            for (const c of live) {
+              try { await discoverAccounts(c.id) } catch (error) { setMessage(`Connected, but the bank accounts could not be loaded yet: ${(error as Error).message}`) }
+            }
+          } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
         },
         onExit: () => setBusy(false),
       })
@@ -64,7 +103,7 @@ export function useBankConnection() {
       setMessage((error as Error).message || 'Could not start the bank connection.')
       setBusy(false)
     }
-  }, [refresh])
+  }, [discoverAccounts])
 
   /** New connection. The public token goes straight to the server and is not kept. */
   const connect = useCallback(() => runLink({}, publicToken => request('plaid-exchange', { method: 'POST', body: { publicToken } })), [runLink])
@@ -72,10 +111,25 @@ export function useBankConnection() {
   const reconnect = useCallback((itemId: string) => runLink({ mode: 'update', itemId }, () => request('plaid-exchange', { method: 'POST', body: { mode: 'update_complete', itemId } })), [runLink])
   const disconnect = useCallback(async (itemId: string) => {
     setBusy(true); setMessage(null)
-    try { await request('plaid-disconnect', { method: 'POST', body: { itemId } }); await refresh() }
+    try { await request('plaid-disconnect', { method: 'POST', body: { itemId } }); await refresh(); await refreshAccounts() }
     catch (error) { setMessage((error as Error).message) }
     finally { setBusy(false) }
-  }, [refresh])
+  }, [refresh, refreshAccounts])
 
-  return { load, connections, environment, busy, message, connect, reconnect, disconnect, refresh }
+  const findAccounts = useCallback(async (itemId: string) => {
+    setBusy(true); setMessage(null)
+    try { await discoverAccounts(itemId) } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [discoverAccounts])
+  const mapAccount = useCallback(async (providerAccountId: string, financialAccountId: string) => {
+    setBusy(true); setMessage(null)
+    try { await request('plaid-accounts', { method: 'POST', body: { action: 'map', providerAccountId, financialAccountId } }); await refreshAccounts() }
+    catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [refreshAccounts])
+  const unmapAccount = useCallback(async (providerAccountId: string) => {
+    setBusy(true); setMessage(null)
+    try { await request('plaid-accounts', { method: 'POST', body: { action: 'unmap', providerAccountId } }); await refreshAccounts() }
+    catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [refreshAccounts])
+
+  return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, environment, busy, message, connect, reconnect, disconnect, refresh }
 }

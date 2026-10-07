@@ -44,7 +44,7 @@ describe('BankConnectionCard (BANK-2)', () => {
     await mount({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn()] } } })
     const row = host.querySelector('[data-testid="bank-connection-row"]')!
     expect(row.textContent).toMatch(/First Platypus Bank/); expect(row.textContent).toMatch(/Connected/); expect(row.textContent).toContain('●')
-    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Disconnect'])
+    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Disconnect', 'Find bank accounts']) // BANK-3 adds the account retry control
     expect(host.querySelector('[data-testid="bank-connect"]')).toBeNull()
   })
 
@@ -52,7 +52,7 @@ describe('BankConnectionCard (BANK-2)', () => {
     await mount({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn({ status: 'login_required' })] } } })
     const row = host.querySelector('[data-testid="bank-connection-row"]')!
     expect(row.textContent).toMatch(/Sign-in needed/)
-    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Reconnect', 'Disconnect'])
+    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Reconnect', 'Disconnect', 'Find bank accounts'])
     expect(host.innerHTML).not.toMatch(/access-|v1:|public-|link-sandbox/)
   })
 
@@ -99,5 +99,67 @@ describe('BankConnectionCard (BANK-2)', () => {
   it('uses 44px touch targets and the app theme tokens', async () => {
     await mount({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: false, connections: [] } } })
     expect(host.querySelector('[data-testid="bank-connect"]')!.className).toContain('min-h-[44px]')
+  })
+
+  describe('BANK-3 account discovery + mapping', () => {
+    const acct = (over: Record<string, unknown> = {}) => ({ id: 'a1', connectionId: 'i1', institutionName: 'Tartan Bank', name: 'Tartan Checking', officialName: null, mask: '0000', type: 'depository', subtype: 'checking', live: true, mapping: null, ...over })
+    const cash = [{ id: 'f1', displayName: 'Wells Fargo Business Checking 6960', accountType: 'checking', ownershipContext: 'business' }, { id: 'f2', displayName: 'Savings', accountType: 'savings', ownershipContext: 'business' }]
+    const base = (accounts: unknown[]) => ({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn()] } }, 'plaid-accounts': { body: { accounts, cashAccounts: cash } } })
+
+    it('shows bank accounts compactly as Bank account vs Cash OS account, with no ids, balances or raw data', async () => {
+      await mount(base([acct(), acct({ id: 'a2', name: 'Tartan Savings', mask: '1111', subtype: 'savings', mapping: { id: 'm1', financialAccountId: 'f1', financialAccountName: 'Wells Fargo Business Checking 6960' } })]))
+      const rows = [...host.querySelectorAll('[data-testid="bank-account-row"]')]
+      expect(rows).toHaveLength(2)
+      expect(rows[0].textContent).toMatch(/Bank account · Tartan Checking ••••0000/); expect(rows[0].textContent).toMatch(/Checking/); expect(rows[0].textContent).toMatch(/Not mapped/)
+      expect(rows[1].textContent).toMatch(/Cash OS account → Wells Fargo Business Checking 6960/); expect(rows[1].textContent).toMatch(/Mapped/)
+      expect([...rows[0].querySelectorAll('button')].map(b => b.textContent)).toEqual(['Map account'])
+      expect([...rows[1].querySelectorAll('button')].map(b => b.textContent)).toEqual(['Change mapping', 'Remove mapping'])
+      expect(host.textContent).not.toMatch(/\ba1\b|\bi1\b|balance|access|token|json/i)
+    })
+
+    it('mapping is an explicit owner choice: pick a Cash OS account, Save posts the ids only, and nothing is auto-selected', async () => {
+      await mount(base([acct()]))
+      await act(async () => { (host.querySelector('[data-testid="bank-account-row"] button') as HTMLButtonElement).click() })
+      const select = host.querySelector('select') as HTMLSelectElement
+      expect(select.value).toBe('')
+      expect([...select.options].map(o => o.textContent)).toContain('Wells Fargo Business Checking 6960 · Checking · Business')
+      const save = [...host.querySelectorAll('button')].find(b => b.textContent === 'Save mapping') as HTMLButtonElement
+      expect(save.disabled).toBe(true)
+      await act(async () => { select.value = 'f1'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+      await act(async () => { (([...host.querySelectorAll('button')].find(b => b.textContent === 'Save mapping')) as HTMLButtonElement).click() })
+      await flush()
+      const post = fetchMock.mock.calls.find(([u, init]) => String(u).endsWith('plaid-accounts') && init?.method === 'POST')!
+      expect(JSON.parse(post[1].body)).toEqual({ action: 'map', providerAccountId: 'a1', financialAccountId: 'f1' })
+    })
+
+    it('removing a mapping asks for confirmation and posts only the bank account id', async () => {
+      vi.stubGlobal('confirm', () => true)
+      await mount(base([acct({ mapping: { id: 'm1', financialAccountId: 'f1', financialAccountName: 'Wells Fargo Business Checking 6960' } })]))
+      await act(async () => { ([...host.querySelectorAll('button')].find(b => b.textContent === 'Remove mapping') as HTMLButtonElement).click() })
+      await flush()
+      const post = fetchMock.mock.calls.find(([u, init]) => String(u).endsWith('plaid-accounts') && init?.method === 'POST')!
+      expect(JSON.parse(post[1].body)).toEqual({ action: 'unmap', providerAccountId: 'a1' })
+    })
+
+    it('a Cash OS account already mapped elsewhere is disabled in the chooser', async () => {
+      await mount(base([acct(), acct({ id: 'a2', mask: '1111', mapping: { id: 'm1', financialAccountId: 'f1', financialAccountName: 'Wells Fargo Business Checking 6960' } })]))
+      await act(async () => { (host.querySelector('[data-testid="bank-account-row"] button') as HTMLButtonElement).click() })
+      const opt = [...(host.querySelector('select') as HTMLSelectElement).options].find(o => o.value === 'f1')!
+      expect(opt.disabled).toBe(true); expect(opt.textContent).toMatch(/already mapped/)
+    })
+
+    it('accounts that are no longer live offer no mapping controls and are not listed as connected', async () => {
+      await mount(base([acct({ live: false })]))
+      expect(host.querySelector('[data-testid="bank-account-row"]')).toBeNull()
+      expect(host.querySelector('[data-testid="bank-no-accounts"]')).not.toBeNull()
+    })
+
+    it('shows a retry control when no accounts have been loaded, and retry calls only the discover action', async () => {
+      await mount(base([]))
+      await act(async () => { ([...host.querySelectorAll('button')].find(b => b.textContent === 'Find bank accounts') as HTMLButtonElement).click() })
+      await flush()
+      const post = fetchMock.mock.calls.find(([u, init]) => String(u).endsWith('plaid-accounts') && init?.method === 'POST')!
+      expect(JSON.parse(post[1].body)).toEqual({ action: 'discover', itemId: 'i1' })
+    })
   })
 })

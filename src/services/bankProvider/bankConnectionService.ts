@@ -17,7 +17,7 @@ import { BankTokenDecryptError, decryptProviderToken, encryptProviderToken } fro
 import { PlaidApiFailure, type BankPlaidPort } from './plaidPort'
 
 export const BANK_PROVIDER = 'plaid' as const
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Plaid public tokens look like `public-sandbox-<uuid>`; bounded and character-restricted before it is ever forwarded. */
 const PUBLIC_TOKEN = /^public-[A-Za-z0-9_-]{8,190}$/
 
@@ -72,15 +72,15 @@ export interface BankConnectionDeps {
   log?: (event: SafeLogEvent) => void
 }
 
-function assertAuthority(actor: BankActor): void {
+export function assertAuthority(actor: BankActor): void {
   if (!actor?.organizationId || !actor.userId || !['owner', 'admin'].includes(actor.role)) {
     throw new BankConnectionError('forbidden', 403, 'Only owners and admins can manage bank connections.')
   }
 }
-const note = (deps: BankConnectionDeps, event: SafeLogEvent) => { try { deps.log?.(event) } catch { /* logging must never break the flow */ } }
-const contextFor = (actor: BankActor, provider: string, providerItemId: string) => ({ organizationId: actor.organizationId, provider, providerItemId })
+export const note = (deps: BankConnectionDeps, event: SafeLogEvent) => { try { deps.log?.(event) } catch { /* logging must never break the flow */ } }
+export const contextFor = (actor: BankActor, provider: string, providerItemId: string) => ({ organizationId: actor.organizationId, provider, providerItemId })
 
-async function loadCredential(deps: BankConnectionDeps, actor: BankActor, itemId: string) {
+export async function loadCredential(deps: BankConnectionDeps, actor: BankActor, itemId: string) {
   if (typeof itemId !== 'string' || !UUID.test(itemId)) throw new BankConnectionError('invalid_request', 400, 'A valid connection is required.')
   const item = await deps.repo.getItem(actor.organizationId, itemId) // organization-scoped: another org's id is simply "not found"
   if (!item) throw new BankConnectionError('not_found', 404, 'Bank connection not found.')
@@ -88,7 +88,7 @@ async function loadCredential(deps: BankConnectionDeps, actor: BankActor, itemId
   return { item, envelope }
 }
 
-function decryptFor(deps: BankConnectionDeps, actor: BankActor, item: { provider: string; providerItemId: string }, envelope: string): string {
+export function decryptFor(deps: BankConnectionDeps, actor: BankActor, item: { provider: string; providerItemId: string }, envelope: string): string {
   try {
     return decryptProviderToken(envelope, deps.key, contextFor(actor, item.provider, item.providerItemId))
   } catch (error) {

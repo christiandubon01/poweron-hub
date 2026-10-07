@@ -19,6 +19,7 @@ import { loadPlaidConfig } from '../../../src/services/bankProvider/plaidConfig'
 import { loadBankTokenEncryptionKey } from '../../../src/services/bankProvider/providerTokenCrypto'
 import { createPlaidSdkPort } from '../../../src/services/bankProvider/plaidPort'
 import { createBankConnectionRepo } from '../../../src/services/bankProvider/bankConnectionRepo'
+import { createBankAccountRepo } from '../../../src/services/bankProvider/bankAccountRepo'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 
 export const CORS_HEADERS = {
@@ -98,7 +99,7 @@ export async function resolveBankContext(event, overrides = {}) {
   return {
     ok: true,
     actor: { organizationId, userId: user.id, role: data.role },
-    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: createBankConnectionRepo(svc), key, environment: config.environment, log: safeLog },
+    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), key, environment: config.environment, log: safeLog },
   }
 }
 

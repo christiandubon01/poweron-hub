@@ -1,4 +1,5 @@
-import type { BankConnectionSummary } from './useBankConnection'
+import { useState } from 'react'
+import type { BankAccountSummary, BankConnectionSummary, CashAccountOption } from './useBankConnection'
 import { useBankConnection } from './useBankConnection'
 
 const STATUS: Record<BankConnectionSummary['status'], { label: string; color: string; glyph: string }> = {
@@ -11,12 +12,52 @@ const STATUS: Record<BankConnectionSummary['status'], { label: string; color: st
 const btn = 'min-h-[44px] rounded-lg px-4 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
 const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null)
 
+const TYPE_LABEL: Record<string, string> = { checking: 'Checking', savings: 'Savings', cash: 'Cash', credit_card: 'Credit card', loan: 'Loan', other_asset: 'Other asset', other_liability: 'Other liability' }
+const titleCase = (v: string) => v.replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+const bankKind = (a: BankAccountSummary) => titleCase(a.subtype ?? a.type ?? 'Account')
+const bankLabel = (a: BankAccountSummary) => `${a.name ?? a.officialName ?? 'Bank account'}${a.mask ? ` ••••${a.mask}` : ''}`
+const cashLabel = (c: CashAccountOption) => `${c.displayName} · ${TYPE_LABEL[c.accountType] ?? titleCase(c.accountType)} · ${c.ownershipContext === 'personal' ? 'Personal' : 'Business'}`
+
+/** One bank account row: shows the BANK side and the CASH OS side separately. Mapping is always an explicit owner choice. */
+function AccountRow({ account, cashAccounts, mappedElsewhere, busy, onMap, onUnmap }: {
+  account: BankAccountSummary; cashAccounts: CashAccountOption[]; mappedElsewhere: Set<string>; busy: boolean
+  onMap: (providerAccountId: string, financialAccountId: string) => Promise<void>; onUnmap: (providerAccountId: string) => Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [choice, setChoice] = useState('')
+  const m = account.mapping
+  return <li data-testid="bank-account-row" data-mapped={m ? 'true' : 'false'} className="py-2 text-sm">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="min-w-0">
+        <p className="truncate font-semibold"><span className="text-xs font-normal text-[var(--text-secondary)]">Bank account · </span>{bankLabel(account)}</p>
+        <p className="text-xs text-[var(--text-secondary)]">{bankKind(account)}{account.live ? '' : ' · No longer connected'}</p>
+        <p className="text-xs" data-testid="bank-account-mapping">{m
+          ? <><span className="text-[var(--text-secondary)]">Cash OS account → </span><span className="font-semibold">{m.financialAccountName}</span><span style={{ color: 'var(--fin-cash)' }}> · Mapped</span></>
+          : <span className="text-[var(--text-secondary)]">Not mapped</span>}</p>
+      </div>
+      {account.live && !editing && <div className="flex gap-2">
+        <button type="button" className={btn} disabled={busy} onClick={() => { setChoice(m?.financialAccountId ?? ''); setEditing(true) }}>{m ? 'Change mapping' : 'Map account'}</button>
+        {m && <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Remove this mapping? Your records and balances are not changed.')) void onUnmap(account.id) }}>Remove mapping</button>}
+      </div>}
+    </div>
+    {editing && <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="bank-account-map-editor">
+      <label className="text-xs text-[var(--text-secondary)]" htmlFor={`map-${account.id}`}>Cash OS account</label>
+      <select id={`map-${account.id}`} value={choice} onChange={e => setChoice(e.target.value)} className="min-h-[44px] min-w-0 flex-1 rounded-lg bg-transparent px-2 text-sm ring-1 ring-[var(--border-primary)]">
+        <option value="">Choose a Cash OS account…</option>
+        {cashAccounts.map(c => <option key={c.id} value={c.id} disabled={mappedElsewhere.has(c.id) && c.id !== m?.financialAccountId}>{cashLabel(c)}{mappedElsewhere.has(c.id) && c.id !== m?.financialAccountId ? ' (already mapped)' : ''}</option>)}
+      </select>
+      <button type="button" className={btn} disabled={busy || !choice || choice === m?.financialAccountId} onClick={() => void onMap(account.id, choice).then(() => setEditing(false))}>Save mapping</button>
+      <button type="button" className={btn} disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+    </div>}
+  </li>
+}
+
 /**
  * Minimal bank connection surface (Sandbox). It renders nothing when the caller cannot manage bank connections or the feature is
  * not configured. Connecting a bank does not change any balance, project, obligation, debt or Outlook number.
  */
 export default function BankConnectionCard() {
-  const { load, connections, environment, busy, message, connect, reconnect, disconnect } = useBankConnection()
+  const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, environment, busy, message, connect, reconnect, disconnect } = useBankConnection()
   if (load !== 'ready') return null
   const active = connections.filter(c => c.status !== 'disconnected')
   return <section data-testid="bank-connection-card" aria-label="Bank connection" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
@@ -35,6 +76,16 @@ export default function BankConnectionCard() {
         <div className="flex gap-2">
           {(c.status === 'login_required' || c.status === 'error') && <button type="button" className={btn} disabled={busy} onClick={() => void reconnect(c.id)}>Reconnect</button>}
           <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Disconnect this bank? Your history and records are kept.')) void disconnect(c.id) }}>Disconnect</button>
+        </div>
+        <div className="w-full">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Accounts</p>
+          {(() => {
+            const mine = accounts.filter(a => a.connectionId === c.id && a.live)
+            const mappedElsewhere = new Set(accounts.filter(a => a.live && a.mapping).map(a => a.mapping!.financialAccountId))
+            return mine.length === 0
+              ? <div className="flex flex-wrap items-center gap-2 py-1"><p className="text-xs text-[var(--text-secondary)]" data-testid="bank-no-accounts">No bank accounts loaded yet.</p><button type="button" className={btn} disabled={busy} onClick={() => void findAccounts(c.id)}>Find bank accounts</button></div>
+              : <ul className="divide-y divide-[var(--border-primary)]" data-testid="bank-account-list">{mine.map(a => <AccountRow key={a.id} account={a} cashAccounts={cashAccounts} mappedElsewhere={mappedElsewhere} busy={busy} onMap={mapAccount} onUnmap={unmapAccount} />)}</ul>
+          })()}
         </div>
       </div>
     })}</div>
