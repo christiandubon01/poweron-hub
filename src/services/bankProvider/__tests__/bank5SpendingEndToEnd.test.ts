@@ -456,3 +456,70 @@ describe('BANK-5 static guarantees', () => {
     expect(browser.filter(f => /bankProvider\/spending|spendingRepo|spendingService/.test(readFileSync(f, 'utf8')))).toEqual([])
   })
 })
+
+describe.runIf(!!PGliteCtor)('BANK-5D account scope, diagnostics and read-only rendering on real PostgreSQL', () => {
+  let w: Awaited<ReturnType<typeof build>>
+  const t: Record<string, string> = {}
+  let unmappedAcct = ''
+  const insertUnmapped = async (name: string, dollars: number, date: string) => (await w.q(
+    `INSERT INTO public.financial_provider_transactions (organization_id, provider_item_ref, provider_account_ref, provider_transaction_id, pending, provider_amount, provider_amount_minor, currency, transaction_date, name, merchant_name, provider_category)
+     VALUES ($1,$2,$3,$4,false,$5,$6,'USD',$7,$8,NULL,NULL) RETURNING id`, [ORG, w.ids.item, unmappedAcct, `ptx-${Math.random().toString(36).slice(2)}`, dollars, Math.round(dollars * 100), date, name]))[0].id
+  beforeAll(async () => {
+    w = await build()
+    unmappedAcct = (await w.q(`INSERT INTO public.financial_provider_accounts (organization_id, provider_item_ref, provider_account_id, name, mask, currency, status) VALUES ($1,$2,'acc-2','Plaid Credit Card','3333','USD','active') RETURNING id`, [ORG, w.ids.item]))[0].id
+    t.mapped1 = await w.tx('CHEVRON 0098', 62.1, '2026-10-03')
+    t.mapped2 = await w.tx('ZZQ HOLDINGS', 40, '2026-10-04')
+    t.old = await w.tx('CHEVRON OLD', 20, '2026-05-01') // outside the 90-day period (and outside the 30-day summary)
+    t.u1 = await insertUnmapped('KFC', 12, '2026-10-02')
+    t.u2 = await insertUnmapped('UNITED AIRLINES', 500, '2026-10-01')
+  }, 180_000)
+  afterAll(async () => { await w?.db?.close?.() })
+  const explore = (q: Record<string, unknown> = {}) => getExplorer(w.deps, owner, { limit: 200, ...q })
+
+  it('the default view is MAPPED accounts only; "all" shows every connected account; unmapped evidence is never deleted', async () => {
+    const mapped = await explore(), all = await explore({ accounts: 'all' })
+    expect(mapped.accounts).toBe('mapped'); expect(all.accounts).toBe('all')
+    expect(mapped.rows.map(r => r.id).sort()).toEqual([t.mapped1, t.mapped2].sort())
+    expect(all.rows.map(r => r.id).sort()).toEqual([t.mapped1, t.mapped2, t.u1, t.u2].sort())
+    expect(mapped.analytics.unassigned.totalMinor).toBe(6210 + 4000)
+    expect(all.analytics.unassigned.totalMinor).toBe(6210 + 4000 + 1200 + 50000)
+    expect(all.rows.filter(r => !r.account.mapped).every(r => r.account.mappedTo === null)).toBe(true)
+    expect((await w.q(`SELECT count(*)::int n FROM public.financial_provider_transactions WHERE provider_account_ref = $1`, [unmappedAcct]))[0].n).toBe(2)
+    expect(mapped.viewCounts.all).toBe(2); expect(all.viewCounts.all).toBe(4)
+  })
+
+  it('discloses what the active view leaves out: unmapped rows in the period, and evidence older than the period', async () => {
+    const mapped = await explore()
+    expect(mapped.meta).toMatchObject({ hiddenUnmapped: 2, olderThanPeriod: 1, evidenceRows: 5 })
+    const all = await explore({ accounts: 'all' })
+    expect(all.meta).toMatchObject({ hiddenUnmapped: 0, olderThanPeriod: 1 })
+    expect((await explore({ accounts: 'bogus' })).accounts).toBe('mapped') // an unknown value falls back to the safe default
+  })
+
+  it('exposes known-bill pipeline diagnostics so "Known Bills = 0" can be told apart from a broken pipeline', async () => {
+    const e = await explore()
+    expect(e.meta.activeObligations).toBe(1) // the seeded QuickBooks Online obligation
+    expect(e.meta.billCandidates).toBeGreaterThan(0) // its monthly occurrence falls in the evidence range, so candidates exist
+    expect(e.analytics.knownBills.count).toBe(0) // none of this evidence resembles it: healthy pipeline, genuinely no match
+  })
+
+  it('rendering/filtering/analysing in EVERY scope and view is read-only: no repo write is called, no canonical or evidence row changes', async () => {
+    const before = await w.canonical()
+    const interpretations = async () => (await w.q(`SELECT count(*)::int n FROM public.financial_provider_interpretations`))[0].n
+    const writes = { replaceDecision: vi.fn(), insertDecision: vi.fn(), markUndone: vi.fn() }
+    const deps = { ...w.deps, repo: { ...w.repo, ...writes } }
+    for (const accounts of ['mapped', 'all'] as const) for (const view of ['all', 'known_bills', 'unassigned', 'repeated_spending', 'needs_review'] as const) {
+      await getExplorer(deps, owner, { accounts, view, limit: 200 })
+    }
+    expect(writes.replaceDecision).not.toHaveBeenCalled(); expect(writes.insertDecision).not.toHaveBeenCalled(); expect(writes.markUndone).not.toHaveBeenCalled()
+    expect(await w.canonical()).toBe(before)
+    expect(await interpretations()).toBe(0)
+  })
+
+  it('an owner decision on an unmapped transaction still works through the same atomic path and still changes nothing canonical', async () => {
+    const before = await w.canonical()
+    expect(await applyDecision(w.deps, owner, { action: 'set_relationship', transactionId: t.u2, kind: 'personal' })).toEqual({ outcome: 'created' })
+    expect(await w.canonical()).toBe(before)
+    expect((await explore({ accounts: 'all' })).rows.find(r => r.id === t.u2)).toMatchObject({ relationship: { kind: 'personal', state: 'confirmed' }, unassigned: false })
+  })
+})

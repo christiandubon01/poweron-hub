@@ -47,9 +47,9 @@ export function detectRecurring(rows: Array<Pick<ExplorerRow, 'id' | 'date' | 'a
   return out
 }
 
-export interface BucketTotal { key: BucketKey; label: string; totalMinor: number; count: number; previousMinor: number; deltaMinor: number; confirmedMinor: number; suggestedMinor: number; merchants: number; recurringMerchants: number }
+export interface BucketTotal { key: BucketKey; label: string; totalMinor: number; count: number; previousMinor: number; deltaMinor: number; confirmedMinor: number; suggestedMinor: number; merchants: number; repeatedMerchants: number }
 export interface Observation { id: string; basis: 'deterministic'; text: string; amountMinor: number | null; bucket: BucketKey | null; txIds: string[] }
-export interface LeakSuggestion { id: string; basis: 'heuristic'; kind: 'possible_untracked_subscription' | 'duplicate_looking_recurring' | 'project_like_materials_unassigned' | 'bank_finance_fees' | 'growing_category' | 'repeated_unassigned_merchant'; title: string; detail: string; amountMinor: number; txIds: string[] }
+export interface LeakSuggestion { id: string; basis: 'heuristic'; kind: 'possible_untracked_subscription' | 'repeated_spending_pattern' | 'duplicate_looking_recurring' | 'project_like_materials_unassigned' | 'bank_finance_fees' | 'growing_category' | 'repeated_unassigned_merchant'; title: string; detail: string; amountMinor: number; txIds: string[] }
 
 export interface SpendingAnalytics {
   asOf: string
@@ -59,11 +59,13 @@ export interface SpendingAnalytics {
   personal: { totalMinor: number; count: number }
   transfers: { totalMinor: number; count: number }
   pending: { totalMinor: number; count: number }
-  review: { needsReviewCount: number; recurringUnknownCount: number }
+  review: { needsReviewCount: number; repeatedPatternCount: number }
+  /** Spending nothing has classified yet. Visible and reviewable, but NEVER counted as money bleed / discretionary. */
+  unclassified: { totalMinor: number; count: number }
   observations: Observation[]
   suggestions: LeakSuggestion[]
   /** Shaped for a future Outlook widget ("Money Bleeding - 30 days"); nothing consumes it yet. */
-  moneyBleed: { windowDays: number; currentMinor: number; previousMinor: number; deltaMinor: number; topBuckets: Array<{ key: BucketKey; label: string; totalMinor: number }> }
+  moneyBleed: { windowDays: number; currentMinor: number; /** unknown spending kept apart from the bleed totals */ unclassifiedMinor: number; previousMinor: number; deltaMinor: number; topBuckets: Array<{ key: BucketKey; label: string; totalMinor: number }> }
 }
 
 const effBucket = (r: ExplorerRow): BucketKey => (r.bucket.key ?? 'other_needs_review') as BucketKey
@@ -80,7 +82,7 @@ export function analyze(rows: ExplorerRow[], asOf: string, windowDays = 30): Spe
   const byBucket = new Map<BucketKey, BucketTotal>()
   const slot = (key: BucketKey): BucketTotal => {
     let b = byBucket.get(key)
-    if (!b) { b = { key, label: bucketLabel(key), totalMinor: 0, count: 0, previousMinor: 0, deltaMinor: 0, confirmedMinor: 0, suggestedMinor: 0, merchants: 0, recurringMerchants: 0 }; byBucket.set(key, b) }
+    if (!b) { b = { key, label: bucketLabel(key), totalMinor: 0, count: 0, previousMinor: 0, deltaMinor: 0, confirmedMinor: 0, suggestedMinor: 0, merchants: 0, repeatedMerchants: 0 }; byBucket.set(key, b) }
     return b
   }
   const merchants = new Map<BucketKey, Set<string>>(), recurringM = new Map<BucketKey, Set<string>>()
@@ -89,10 +91,10 @@ export function analyze(rows: ExplorerRow[], asOf: string, windowDays = 30): Spe
     b.totalMinor += r.amountMinor; b.count += 1
     if (r.bucket.state === 'confirmed') b.confirmedMinor += r.amountMinor; else b.suggestedMinor += r.amountMinor
     merchants.set(k, (merchants.get(k) ?? new Set()).add(r.merchantKey))
-    if (r.recurringUnknown) recurringM.set(k, (recurringM.get(k) ?? new Set()).add(r.merchantKey))
+    if (r.repeatedPattern) recurringM.set(k, (recurringM.get(k) ?? new Set()).add(r.merchantKey))
   }
   for (const r of leak.filter(prev)) slot(effBucket(r)).previousMinor += r.amountMinor
-  for (const b of byBucket.values()) { b.deltaMinor = b.totalMinor - b.previousMinor; b.merchants = merchants.get(b.key)?.size ?? 0; b.recurringMerchants = recurringM.get(b.key)?.size ?? 0 }
+  for (const b of byBucket.values()) { b.deltaMinor = b.totalMinor - b.previousMinor; b.merchants = merchants.get(b.key)?.size ?? 0; b.repeatedMerchants = recurringM.get(b.key)?.size ?? 0 }
   const bucketRows = [...byBucket.values()].filter(b => b.totalMinor > 0 || b.previousMinor > 0).sort((a, b) => b.totalMinor - a.totalMinor || a.key.localeCompare(b.key))
 
   const leakCur = leak.filter(cur), leakPrev = leak.filter(prev)
@@ -107,29 +109,42 @@ export function analyze(rows: ExplorerRow[], asOf: string, windowDays = 30): Spe
     observations.push({
       id: `bucket:${b.key}`, basis: 'deterministic', bucket: b.key, amountMinor: b.totalMinor,
       txIds: leakCur.filter(r => effBucket(r) === b.key).map(r => r.id).slice(0, 25),
-      text: `${b.label} ${money(b.totalMinor)} in ${windowDays} days · ${b.merchants} merchant${b.merchants === 1 ? '' : 's'}${b.recurringMerchants ? ` · ${b.recurringMerchants} appear recurring` : ''}${b.previousMinor || d ? ` · ${d >= 0 ? '+' : '-'}${money(d)} vs previous ${windowDays} days` : ''}`,
+      text: `${b.label} ${money(b.totalMinor)} in ${windowDays} days · ${b.merchants} merchant${b.merchants === 1 ? '' : 's'}${b.repeatedMerchants ? ` · ${b.repeatedMerchants} repeat on a schedule` : ''}${b.previousMinor || d ? ` · ${d >= 0 ? '+' : '-'}${money(d)} vs previous ${windowDays} days` : ''}`,
     })
   }
 
   const suggestions: LeakSuggestion[] = []
-  const recurringLeak = new Map<string, ExplorerRow[]>()
-  for (const r of leakCur.filter(x => x.recurringUnknown)) recurringLeak.set(r.merchantKey, [...(recurringLeak.get(r.merchantKey) ?? []), r])
-  for (const [key, list] of [...recurringLeak].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const p = list[0].recurring
+  // A repeating merchant is a SPENDING PATTERN. Only a pattern whose context supports a bill/subscription reading (software/insurance bucket or a
+  // matched bill-type relationship) may raise a subscription-style signal; everything else is summarised once per bucket, never per merchant.
+  const patternRows = leakCur.filter(x => x.repeatedPattern)
+  const group = (list: ExplorerRow[]) => { const m = new Map<string, ExplorerRow[]>(); for (const r of list) m.set(r.merchantKey, [...(m.get(r.merchantKey) ?? []), r]); return m }
+  const obligationLike = group(patternRows.filter(r => r.pattern?.kind === 'obligation_like'))
+  for (const [key, list] of [...obligationLike].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const p = list[0].pattern
     suggestions.push({ id: `sub:${key}`, basis: 'heuristic', kind: 'possible_untracked_subscription', amountMinor: sum(list), txIds: list.map(r => r.id).slice(0, 25),
-      title: `Possible untracked recurring expense: ${list[0].merchant}`, detail: `${money(list[0].amountMinor)} ${p?.cadence ?? 'recurring'} pattern, not tied to any known bill.` })
+      title: `Possible untracked recurring bill: ${list[0].merchant}`, detail: `${money(list[0].amountMinor)} ${p?.cadence ?? 'recurring'} charge in ${bucketLabel(effBucket(list[0])).toLowerCase()}, not tied to any known bill.` })
   }
-  const recurringBuckets = new Map<BucketKey, string[]>()
-  for (const [key, list] of recurringLeak) recurringBuckets.set(effBucket(list[0]), [...(recurringBuckets.get(effBucket(list[0])) ?? []), key])
-  for (const [bucket, keys] of [...recurringBuckets].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const sorted = keys.sort()
-    for (let i = 0; i < sorted.length; i++) for (let j = i + 1; j < sorted.length; j++) {
-      const a = recurringLeak.get(sorted[i])![0], b = recurringLeak.get(sorted[j])![0]
-      const similarName = sorted[i].split(' ')[0] === sorted[j].split(' ')[0]
-      const similarAmount = Math.abs(a.amountMinor - b.amountMinor) <= Math.max(100, a.amountMinor * 0.05)
-      if (similarName || similarAmount) suggestions.push({ id: `dup:${sorted[i]}|${sorted[j]}`, basis: 'heuristic', kind: 'duplicate_looking_recurring', amountMinor: a.amountMinor + b.amountMinor, txIds: [a.id, b.id],
-        title: `Two recurring ${bucketLabel(bucket).toLowerCase()} charges look alike`, detail: `${a.merchant} and ${b.merchant} recur on a similar schedule${similarName ? ' with similar names' : ' for a similar amount'}. Confirm both are intended.` })
-    }
+  const spendingByBucket = new Map<BucketKey, ExplorerRow[]>()
+  for (const r of patternRows.filter(x => x.pattern?.kind === 'spending_pattern')) spendingByBucket.set(effBucket(r), [...(spendingByBucket.get(effBucket(r)) ?? []), r])
+  for (const [bucket, list] of [...spendingByBucket].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const merchantCount = new Set(list.map(r => r.merchantKey)).size
+    suggestions.push({ id: `pattern:${bucket}`, basis: 'heuristic', kind: 'repeated_spending_pattern', amountMinor: sum(list), txIds: list.map(r => r.id).slice(0, 25),
+      title: `${bucketLabel(bucket)}: ${merchantCount} merchant${merchantCount === 1 ? '' : 's'} repeat on a schedule`, detail: `${money(sum(list))} in ${windowDays} days. A repeated spending pattern, not necessarily a bill: review whether it is intended.` })
+  }
+  // Duplicate-looking: only where the SAME kind of bill-like charge appears under similarly named merchants (same bucket, same cadence, same first word).
+  // Equal amounts alone never count, and one signal covers a whole cluster instead of one per pair.
+  const clusters = new Map<string, Set<string>>()
+  for (const [key, list] of obligationLike) {
+    const first = key.split(' ')[0]
+    if (first.length < 3) continue
+    const id = `${effBucket(list[0])}|${list[0].pattern?.cadence}|${first}`
+    clusters.set(id, (clusters.get(id) ?? new Set()).add(key))
+  }
+  for (const [id, keys] of [...clusters].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (keys.size < 2) continue
+    const rowsIn = [...keys].sort().flatMap(k => obligationLike.get(k)!)
+    suggestions.push({ id: `dup:${id}`, basis: 'heuristic', kind: 'duplicate_looking_recurring', amountMinor: sum(rowsIn), txIds: rowsIn.map(r => r.id).slice(0, 25),
+      title: `${keys.size} similarly named recurring charges`, detail: `${[...keys].sort().map(k => obligationLike.get(k)![0].merchant).join(', ')} repeat on the same schedule with similar names. Confirm each is intended.` })
   }
   const mats = leakCur.filter(r => effBucket(r) === 'materials')
   if (mats.length) suggestions.push({ id: 'materials-unassigned', basis: 'heuristic', kind: 'project_like_materials_unassigned', amountMinor: sum(mats), txIds: mats.map(r => r.id).slice(0, 25),
@@ -145,7 +160,7 @@ export function analyze(rows: ExplorerRow[], asOf: string, windowDays = 30): Spe
       title: `${b.label} is up ${money(b.deltaMinor)}`, detail: `${money(b.totalMinor)} this period versus ${money(b.previousMinor)} in the previous ${windowDays} days.` })
   }
   const perMerchant = new Map<string, ExplorerRow[]>()
-  for (const r of leakCur) if (!r.recurringUnknown) perMerchant.set(r.merchantKey, [...(perMerchant.get(r.merchantKey) ?? []), r])
+  for (const r of leakCur) if (!r.repeatedPattern) perMerchant.set(r.merchantKey, [...(perMerchant.get(r.merchantKey) ?? []), r])
   for (const [key, list] of [...perMerchant].sort((a, b) => a[0].localeCompare(b[0]))) {
     if (list.length >= 3) suggestions.push({ id: `rep:${key}`, basis: 'heuristic', kind: 'repeated_unassigned_merchant', amountMinor: sum(list), txIds: list.map(r => r.id).slice(0, 25),
       title: `${list[0].merchant}: ${list.length} unassigned purchases`, detail: `${money(sum(list))} in ${windowDays} days with nothing assigned. Review whether these belong to a project or a known bill.` })
@@ -161,9 +176,10 @@ export function analyze(rows: ExplorerRow[], asOf: string, windowDays = 30): Spe
     personal: { totalMinor: sum(personal), count: personal.length },
     transfers: { totalMinor: sum(transfers), count: transfers.length },
     pending: { totalMinor: sum(pend), count: pend.length },
-    review: { needsReviewCount: outflow.filter(r => r.review === 'needs_review' || r.review === 'suggested').length, recurringUnknownCount: leak.filter(r => r.recurringUnknown).length },
+    review: { needsReviewCount: outflow.filter(r => r.review === 'needs_review' || r.review === 'suggested').length, repeatedPatternCount: leak.filter(r => r.repeatedPattern).length },
+    unclassified: { totalMinor: sum(leakCur.filter(r => effBucket(r) === 'other_needs_review')), count: leakCur.filter(r => effBucket(r) === 'other_needs_review').length },
     observations, suggestions,
-    moneyBleed: { windowDays, currentMinor: sum(discretionaryCur), previousMinor: sum(discretionaryPrev), deltaMinor: sum(discretionaryCur) - sum(discretionaryPrev),
+    moneyBleed: { windowDays, currentMinor: sum(discretionaryCur), unclassifiedMinor: sum(leakCur.filter(r => effBucket(r) === 'other_needs_review')), previousMinor: sum(discretionaryPrev), deltaMinor: sum(discretionaryCur) - sum(discretionaryPrev),
       topBuckets: [...topDiscretionary].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 4).map(([key, totalMinor]) => ({ key, label: bucketLabel(key), totalMinor })) },
   }
 }

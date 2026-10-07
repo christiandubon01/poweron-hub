@@ -81,7 +81,7 @@ export interface ExplorerRow {
   amountMinor: number
   direction: Direction
   pending: boolean
-  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null }
+  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; /** true only when the owner explicitly mapped this provider account to a Cash OS account */ mapped: boolean }
   bucket: { key: BucketKey | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
   relationship: {
     kind: RelationshipKind | 'unknown'
@@ -95,7 +95,11 @@ export interface ExplorerRow {
   scope: { value: 'business' | 'personal' | 'unclear'; source: 'owner' | 'account' | 'none' }
   /** Counted as unassigned spending (the money-bleed population). */
   unassigned: boolean
-  /** Part of a recurring pattern that is not tied to any known item. */
-  recurringUnknown: boolean
-  recurring: { cadence: 'weekly' | 'biweekly' | 'monthly'; occurrences: number } | null
+  /** Unassigned AND part of a repeated pattern of the same merchant (cadence + amount similarity). A repeated spending pattern is NOT a recurring obligation. */
+  repeatedPattern: boolean
+  /**
+   * The deterministic cadence detector's finding. kind 'obligation_like' only when the bucket/relationship context reasonably supports a
+   * bill or subscription (a matched known bill/debt/payroll, or a software/insurance bucket); otherwise 'spending_pattern' (habit).
+   */
+  pattern: { cadence: 'weekly' | 'biweekly' | 'monthly'; occurrences: number; kind: 'obligation_like' | 'spending_pattern' } | null
 }

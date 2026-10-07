@@ -34,7 +34,7 @@ export const BUCKETS = [
   { key: 'personal_owner', label: 'Personal / Owner', discretionary: false, hint: 'Owner personal spending' },
   { key: 'taxes', label: 'Taxes', discretionary: false, hint: 'Income, payroll and sales taxes' },
   { key: 'transfers', label: 'Transfers', discretionary: false, hint: 'Moving money between accounts' },
-  { key: 'other_needs_review', label: 'Other / Needs Review', discretionary: true, hint: 'Not classified yet' },
+  { key: 'other_needs_review', label: 'Other / Needs Review', discretionary: false, hint: 'Not classified yet (unknown is not waste)' },
 ] as const satisfies readonly BucketDef[]
 
 export type BucketKey = (typeof BUCKETS)[number]['key']
@@ -42,7 +42,10 @@ export const BUCKET_KEYS: readonly string[] = BUCKETS.map(b => b.key)
 export const OTHER_BUCKET: BucketKey = 'other_needs_review'
 export const bucketLabel = (key: string | null | undefined): string => BUCKETS.find(b => b.key === key)?.label ?? 'Other / Needs Review'
 export const isBucketKey = (v: unknown): v is BucketKey => typeof v === 'string' && BUCKET_KEYS.includes(v)
-export const isDiscretionary = (key: string): boolean => BUCKETS.find(b => b.key === key)?.discretionary ?? true
+/** Unknown / unclassified spending is never discretionary: it stays visible for review but is not labelled leakage. */
+export const isDiscretionary = (key: string): boolean => BUCKETS.find(b => b.key === key)?.discretionary ?? false
+/** Buckets where a repeating charge reasonably looks like a bill or subscription. */
+export const SUBSCRIPTION_BUCKETS: readonly string[] = ['software_subscriptions', 'insurance']
 
 export const RELATIONSHIP_KINDS = ['obligation', 'project', 'debt', 'payroll', 'transfer', 'overhead', 'personal'] as const
 export type RelationshipKind = (typeof RELATIONSHIP_KINDS)[number]

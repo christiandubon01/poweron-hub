@@ -311,7 +311,7 @@ describe('BANK-5 money-bleed analytics', () => {
   it('aggregates unassigned spending by bucket for the current window, with previous-period comparison', () => {
     const { analytics: a } = data()
     const sw = a.unassigned.byBucket.find(b => b.key === 'software_subscriptions')!
-    expect(sw).toMatchObject({ totalMinor: 1999 + 5499 + 1599, count: 3, previousMinor: 1999 + 1199, merchants: 3, recurringMerchants: 1 })
+    expect(sw).toMatchObject({ totalMinor: 1999 + 5499 + 1599, count: 3, previousMinor: 1999 + 1199, merchants: 3, repeatedMerchants: 1 })
     expect(sw.deltaMinor).toBe(sw.totalMinor - sw.previousMinor)
     expect(a.unassigned.byBucket.find(b => b.key === 'materials')).toMatchObject({ totalMinor: 28642 + 12000 + 21758, count: 3 })
     expect(a.unassigned.totalMinor).toBe(a.unassigned.byBucket.reduce((n, b) => n + b.totalMinor, 0))
@@ -329,7 +329,7 @@ describe('BANK-5 money-bleed analytics', () => {
     const { analytics: a } = data()
     expect(a.observations.every(o => o.basis === 'deterministic')).toBe(true); expect(a.suggestions.every(s => s.basis === 'heuristic')).toBe(true)
     const sw = a.observations.find(o => o.id === 'bucket:software_subscriptions')!
-    expect(sw.text).toMatch(/Software \/ Subscriptions \$91 in 30 days · 3 merchants · 1 appear recurring · \+\$59 vs previous 30 days/)
+    expect(sw.text).toMatch(/Software \/ Subscriptions \$91 in 30 days · 3 merchants · 1 repeat on a schedule · \+\$59 vs previous 30 days/)
     expect(sw.txIds.length).toBe(3)
     for (const s of a.suggestions) expect(s.txIds.length).toBeGreaterThan(0)
   })

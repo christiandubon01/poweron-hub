@@ -17,7 +17,7 @@ import { BankConnectionError, UUID, assertAuthority, note, type BankActor } from
 import { generateRecurrenceDates } from '../../../finance/recurrence'
 import { addDays } from './analytics'
 import { CONFIRMED_INTERPRETATION_CONTRACT } from './contract'
-import { buildRows, filterRows, viewCounts, type ExplorerQuery, type ExplorerView, EXPLORER_VIEWS } from './explorer'
+import { buildRows, filterRows, viewCounts, type AccountScope, type ExplorerQuery, type ExplorerView, EXPLORER_VIEWS } from './explorer'
 import { BUCKETS, isBucketKey, isRelationshipKind, RELATIONSHIP_KINDS, type BucketKey, type Confidence, type RelationshipKind } from './taxonomy'
 import type { AccountContext, Decision, DebtOption, EvidenceTx, KnownBillCandidate, ProjectOption } from './types'
 
@@ -101,12 +101,12 @@ export function buildBillCandidates(ctx: Pick<SpendingContext, 'obligations' | '
   return out
 }
 
-export function explorerFromContext(ctx: SpendingContext, asOf: string) {
+export function explorerFromContext(ctx: SpendingContext, asOf: string, accountScope: AccountScope = 'all') {
   const dates = ctx.txs.map(t => t.date).sort()
   const start = dates.length ? addDays(dates[0], -7) : asOf, end = dates.length ? addDays(dates[dates.length - 1], 7) : asOf
   const bills = buildBillCandidates(ctx, start, end)
   const built = buildRows({
-    asOf, txs: ctx.txs, accounts: ctx.accounts, decisions: ctx.decisions, bills, debts: ctx.debts, projects: ctx.projects,
+    asOf, accountScope, txs: ctx.txs, accounts: ctx.accounts, decisions: ctx.decisions, bills, debts: ctx.debts, projects: ctx.projects,
     obligationLabels: new Map(ctx.obligations.map(o => [o.id, o.name])), commitmentLabels: new Map(ctx.commitments.map(c => [c.id, c.title])),
   })
   return { ...built, bills }
@@ -123,6 +123,7 @@ export function parseQuery(raw: Record<string, unknown>): ExplorerQuery {
   if (typeof raw.to === 'string' && ISO.test(raw.to)) q.to = raw.to
   if (typeof raw.account === 'string' && UUID.test(raw.account)) q.account = raw.account
   if (typeof raw.bucket === 'string' && isBucketKey(raw.bucket)) q.bucket = raw.bucket
+  if (raw.accounts === 'all' || raw.accounts === 'mapped') q.accounts = raw.accounts
   if (raw.scope === 'business' || raw.scope === 'personal' || raw.scope === 'unclear') q.scope = raw.scope
   if (typeof raw.search === 'string') q.search = raw.search.slice(0, 60)
   if (typeof raw.project === 'string' && raw.project.length <= 64) q.project = raw.project
@@ -141,8 +142,9 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
   assertAuthority(actor)
   const asOf = today(deps)
   const ctx = await deps.repo.loadContext(actor.organizationId, addDays(asOf, -200))
-  const { rows, analytics, bills } = explorerFromContext(ctx, asOf)
   const q = parseQuery(rawQuery)
+  const accounts = q.accounts ?? 'mapped' // the default business view is the owner's MAPPED accounts; 'all' is an explicit choice
+  const { rows, analytics, bills, outOfScopeDates } = explorerFromContext(ctx, asOf, accounts)
   const base = { from: q.from ?? addDays(asOf, -89), ...q }
   const filtered = filterRows(rows, base)
   const page = filtered.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 100))
@@ -158,7 +160,16 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
       commitments: ctx.commitments.filter(c => c.status === 'scheduled').map(c => ({ id: c.id, label: c.title, amountMinor: c.amountMinor, expectedDate: c.expectedDate })),
       debts: ctx.debts, projects: ctx.projects,
     },
-    meta: { billCandidates: bills.length, evidenceRows: ctx.txs.length },
+    accounts,
+    meta: {
+      // Diagnostics for known-bill matching: a healthy pipeline with zero matches means the evidence simply does not resemble the bills.
+      billCandidates: bills.length, activeObligations: ctx.obligations.filter(o => o.status === 'active').length, scheduledCommitments: ctx.commitments.filter(c => c.status === 'scheduled').length,
+      evidenceRows: ctx.txs.length,
+      // Evidence the active view does not show, so nothing is silently hidden.
+      hiddenUnmapped: outOfScopeDates.filter(d => d >= base.from && (!q.to || d <= q.to)).length,
+      olderThanPeriod: rows.filter(r => r.date < base.from).length + outOfScopeDates.filter(d => d < base.from).length,
+      periodFrom: base.from,
+    },
     contract: { confirmedMeans: CONFIRMED_INTERPRETATION_CONTRACT.confirmedMeans, isCanonicalAdoption: CONFIRMED_INTERPRETATION_CONTRACT.isCanonicalAdoption, text: CONFIRMED_INTERPRETATION_CONTRACT.ownerText },
   }
 }

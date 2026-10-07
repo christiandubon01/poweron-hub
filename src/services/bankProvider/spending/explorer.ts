@@ -7,11 +7,11 @@
 import { analyze, detectRecurring, type SpendingAnalytics } from './analytics'
 import { classifyAll, confidenceAtLeast, directionOf } from './classifier'
 import { merchantKey, merchantLabel } from './merchant'
-import { RELATIONSHIP_LABELS, bucketLabel, isBucketKey, type BucketKey, type Confidence, type RelationshipKind, type ReviewState } from './taxonomy'
+import { RELATIONSHIP_LABELS, SUBSCRIPTION_BUCKETS, bucketLabel, isBucketKey, type BucketKey, type Confidence, type RelationshipKind, type ReviewState } from './taxonomy'
 import type { AccountContext, Decision, DebtOption, EvidenceTx, ExplorerRow, KnownBillCandidate, ProjectOption, RelationshipTarget } from './types'
 
-export type ExplorerView = 'all' | 'known_bills' | 'unassigned' | 'recurring_unknown' | 'needs_review'
-export const EXPLORER_VIEWS: readonly ExplorerView[] = ['all', 'known_bills', 'unassigned', 'recurring_unknown', 'needs_review']
+export type ExplorerView = 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
+export const EXPLORER_VIEWS: readonly ExplorerView[] = ['all', 'known_bills', 'unassigned', 'repeated_spending', 'needs_review']
 
 export interface ExplorerQuery {
   view?: ExplorerView
@@ -21,6 +21,8 @@ export interface ExplorerQuery {
   account?: string
   bucket?: string
   scope?: 'business' | 'personal' | 'unclear'
+  /** which provider accounts the view covers (service-level; the filter itself is applied when rows are built) */
+  accounts?: AccountScope
   search?: string
   project?: string
   minMinor?: number
@@ -32,8 +34,13 @@ export interface ExplorerQuery {
   offset?: number
 }
 
+/** 'mapped' (default for the owner's business view) = only provider accounts the owner explicitly mapped to a Cash OS account. 'all' = every connected account. */
+export type AccountScope = 'mapped' | 'all'
+
 export interface ExplorerInput {
   asOf: string
+  /** Engine default is 'all' (pure); the service passes 'mapped' unless the owner asks for all connected accounts. */
+  accountScope?: AccountScope
   windowDays?: number
   txs: EvidenceTx[]
   accounts: AccountContext[]
@@ -47,7 +54,7 @@ export interface ExplorerInput {
 
 const KNOWN_MONEY = new Set<RelationshipKind>(['obligation', 'debt', 'payroll', 'transfer'])
 
-export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytics: SpendingAnalytics } {
+export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytics: SpendingAnalytics; outOfScopeDates: string[] } {
   const accounts = new Map(input.accounts.map(a => [a.providerAccountRef, a]))
   const live = input.txs.filter(t => !t.removed)
   const suggestions = classifyAll({ txs: live, accounts, decisions: input.decisions, bills: input.bills, debts: input.debts, projects: input.projects })
@@ -95,24 +102,33 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     return {
       id: tx.id, date: tx.date, name: (tx.name ?? tx.merchantName ?? 'Unnamed transaction').slice(0, 120), merchant: merchantLabel(tx.name, tx.merchantName), merchantKey: merchantKey(tx.name, tx.merchantName),
       amountMinor: tx.amountMinor, direction, pending: tx.pending,
-      account: { ref: tx.providerAccountRef, label: acct?.financialAccountName ?? acct?.label ?? 'Bank account', mask: acct?.mask ?? null, ownership: acct?.ownership ?? null, mappedTo: acct?.financialAccountName ?? null },
-      bucket, relationship, review, scope, unassigned: false, recurringUnknown: false, recurring: null,
+      account: { ref: tx.providerAccountRef, label: acct?.financialAccountName ?? acct?.label ?? 'Bank account', mask: acct?.mask ?? null, ownership: acct?.ownership ?? null, mappedTo: acct?.financialAccountName ?? null, mapped: !!acct?.financialAccountId },
+      bucket, relationship, review, scope, unassigned: false, repeatedPattern: false, pattern: null,
     }
   })
 
-  const recurring = detectRecurring(base.filter(r => r.review !== 'ignored'))
-  for (const r of base) {
+  // Classification above ran over ALL evidence (so a transfer between a mapped and an unmapped account can still be paired). Everything that
+  // produces totals, patterns and signals runs over the SCOPED rows only; evidence outside the scope is preserved and reported, never deleted.
+  const inScope = (input.accountScope ?? 'all') === 'all' ? base : base.filter(r => r.account.mapped)
+  const outOfScopeDates = (input.accountScope ?? 'all') === 'all' ? [] : base.filter(r => !r.account.mapped).map(r => r.date)
+  const recurring = detectRecurring(inScope.filter(r => r.review !== 'ignored'))
+  for (const r of inScope) {
     const rel = r.relationship
     const resolved = rel.state === 'confirmed'
       || (rel.state === 'suggested' && rel.kind !== 'unknown' && (rel.kind === 'transfer' ? confidenceAtLeast(rel.confidence, 'possible') : KNOWN_MONEY.has(rel.kind as RelationshipKind) && rel.confidence === 'high'))
       || (r.bucket.state === 'confirmed' && (r.bucket.key === 'personal_owner' || r.bucket.key === 'transfers'))
     r.unassigned = r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && !resolved
-    const pattern = recurring.get(r.merchantKey)
-    if (pattern && r.direction === 'money_out') r.recurring = { cadence: pattern.cadence, occurrences: pattern.occurrences }
-    r.recurringUnknown = r.unassigned && !!pattern
+    const found = recurring.get(r.merchantKey)
+    if (found && r.direction === 'money_out') {
+      // A repeating merchant is a SPENDING PATTERN unless the context supports a bill/subscription reading.
+      const billLike = (['obligation', 'debt', 'payroll'] as string[]).includes(rel.kind) && rel.state !== 'none'
+        || (!!r.bucket.key && SUBSCRIPTION_BUCKETS.includes(r.bucket.key) && confidenceAtLeast(r.bucket.confidence, 'possible'))
+      r.pattern = { cadence: found.cadence, occurrences: found.occurrences, kind: billLike ? 'obligation_like' : 'spending_pattern' }
+    }
+    r.repeatedPattern = r.unassigned && !!r.pattern
   }
-  base.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
-  return { rows: base, analytics: analyze(base, input.asOf, input.windowDays ?? 30) }
+  inScope.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
+  return { rows: inScope, analytics: analyze(inScope, input.asOf, input.windowDays ?? 30), outOfScopeDates }
 }
 
 export function viewCounts(rows: ExplorerRow[]): Record<ExplorerView, number> {
@@ -125,7 +141,7 @@ export function inView(r: ExplorerRow, view: ExplorerView): boolean {
   switch (view) {
     case 'known_bills': return r.direction === 'money_out' && ['obligation', 'debt', 'payroll'].includes(r.relationship.kind) && r.relationship.state !== 'none' && r.review !== 'ignored'
     case 'unassigned': return r.unassigned
-    case 'recurring_unknown': return r.recurringUnknown
+    case 'repeated_spending': return r.repeatedPattern
     case 'needs_review': return r.direction === 'money_out' && r.review !== 'confirmed' && r.review !== 'ignored'
     default: return true
   }

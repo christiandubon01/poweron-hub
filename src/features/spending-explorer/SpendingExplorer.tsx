@@ -10,7 +10,7 @@ const CONF: Record<string, string> = { high: 'High', possible: 'Possible', low: 
 
 const VIEWS: Array<{ key: ExplorerView; label: string }> = [
   { key: 'all', label: 'All' }, { key: 'known_bills', label: 'Known Bills' }, { key: 'unassigned', label: 'Unassigned Spending' },
-  { key: 'recurring_unknown', label: 'Recurring Unknown' }, { key: 'needs_review', label: 'Needs Review' },
+  { key: 'repeated_spending', label: 'Repeated Spending' }, { key: 'needs_review', label: 'Needs Review' },
 ]
 const REL_KINDS: Array<{ key: string; label: string }> = [
   { key: 'obligation', label: 'Known bill' }, { key: 'project', label: 'Project' }, { key: 'debt', label: 'Debt payment' }, { key: 'payroll', label: 'Payroll' },
@@ -48,6 +48,7 @@ function Signals({ a }: { a: Analytics }) {
   return <div className="mt-3">
     <button type="button" className="min-h-[44px] text-sm font-semibold underline-offset-2 hover:underline" aria-expanded={open} onClick={() => setOpen(o => !o)} data-testid="spending-signals-toggle">{open ? 'Hide' : 'Show'} money-bleed signals ({n})</button>
     {open && <div className="mt-1 space-y-3" data-testid="spending-signals">
+      {a.unclassified.count > 0 && <p className="text-xs text-[var(--text-secondary)]" data-testid="spending-unclassified-note">{usd0(a.unclassified.totalMinor)} across {a.unclassified.count} transaction{a.unclassified.count === 1 ? '' : 's'} is not classified yet. It stays in review and is not counted as wasteful spending.</p>}
       {a.suggestions.length > 0 && <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Possible issues <span className="font-normal normal-case">(a heuristic: check before acting)</span></p>
         <ul className="mt-1 space-y-1">{a.suggestions.map(s => <li key={s.id} className="rounded-lg border border-[var(--border-primary)] p-2 text-sm"><p className="font-semibold">{s.title}</p><p className="text-xs text-[var(--text-secondary)]">{s.detail}</p></li>)}</ul></div>}
       {a.observations.length > 0 && <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Measured <span className="font-normal normal-case">(straight from your bank evidence)</span></p>
@@ -129,7 +130,7 @@ function Row({ row, options, busy, onDecide }: { row: ExplorerRow; options: Opti
           {row.review === 'ignored' ? <Chip>Ignored</Chip> : <>
             {row.bucket.label && <Chip tone={row.bucket.state === 'confirmed' ? 'ok' : 'muted'}>{row.bucket.state === 'confirmed' ? '✓ ' : ''}{row.bucket.label}{row.bucket.state === 'suggested' ? ` · suggested` : ''}</Chip>}
             <Chip tone={row.relationship.state === 'confirmed' ? 'ok' : 'muted'}>{row.relationship.state === 'none' ? (out ? 'Unassigned' : row.relationship.label) : `${row.relationship.state === 'confirmed' ? '✓ ' : ''}${row.relationship.label}${row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}${row.relationship.state === 'suggested' ? ' · suggested' : ''}`}</Chip>
-            {row.recurringUnknown && <Chip tone="warn">Recurring</Chip>}
+            {row.pattern && out && (row.pattern.kind === 'obligation_like' ? <Chip tone="warn">Looks like a recurring bill</Chip> : <Chip>Repeats {row.pattern.cadence}</Chip>)}
           </>}
         </span>
       </span>
@@ -148,15 +149,17 @@ export default function SpendingExplorer() {
   const [showFilters, setShowFilters] = useState(false)
   if (load !== 'ready' || !data || data.viewCounts.all === 0) return null
   const a = data.analytics
-  const active = (['bucket', 'account', 'scope', 'review', 'confidence', 'project', 'search', 'min', 'max'] as const).filter(k => filters[k]).length + (filters.days !== DEFAULT_FILTERS.days ? 1 : 0)
+  const active = (['bucket', 'account', 'scope', 'review', 'confidence', 'project', 'search', 'min', 'max'] as const).filter(k => filters[k]).length + (filters.days !== DEFAULT_FILTERS.days ? 1 : 0) + (filters.accounts !== DEFAULT_FILTERS.accounts ? 1 : 0)
   return <section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Spending explorer · bank evidence</h3>
       <span className="text-xs text-[var(--text-secondary)]">Suggestions only. Nothing here changes your balances, ledger or reports.</span>
     </div>
+    <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-3"><Snapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>
 
-    <div className="mt-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Spending views">
+    <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
+    <div className="mt-1 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Spending views">
       {VIEWS.map(v => <button key={v.key} type="button" role="tab" aria-selected={filters.view === v.key} data-testid={`spending-view-${v.key}`} onClick={() => update({ view: v.key })}
         className={`${btn} shrink-0 ${filters.view === v.key ? 'bg-white/10' : ''}`}>{v.label} <span className="text-[var(--text-secondary)]">{data.viewCounts[v.key]}</span></button>)}
     </div>
@@ -164,6 +167,9 @@ export default function SpendingExplorer() {
       <button type="button" className={btn} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">Filters{active ? ` (${active})` : ''}</button>
       {active > 0 && <button type="button" className={btn} onClick={reset}>Clear</button>}
     </div>
+    {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
+    {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
+    {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}
     {showFilters && <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-testid="spending-filters">
       <label className="text-xs">Period<select className={`${field} mt-1 w-full`} value={filters.days} onChange={e => update({ days: Number(e.target.value) as 30 | 60 | 90 })}><option value={30}>Last 30 days</option><option value={60}>Last 60 days</option><option value={90}>Last 90 days</option></select></label>
       <label className="text-xs">Account<select className={`${field} mt-1 w-full`} value={filters.account} onChange={e => update({ account: e.target.value })}><option value="">All accounts</option>{data.options.accounts.map(x => <option key={x.ref} value={x.ref}>{x.label}{x.mask ? ` ••••${x.mask}` : ''}</option>)}</select></label>

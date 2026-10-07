@@ -10,25 +10,26 @@ import { authedJsonHeaders } from '@/services/authedFetch'
 
 const URL_BASE = '/.netlify/functions/plaid-spending'
 
-export type ExplorerView = 'all' | 'known_bills' | 'unassigned' | 'recurring_unknown' | 'needs_review'
+export type ExplorerView = 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
 export type Confidence = 'high' | 'possible' | 'low'
 export interface Target { type: string | null; id: string | null; label: string | null }
 export interface ExplorerRow {
   id: string; date: string; name: string; merchant: string; amountMinor: number; direction: 'money_out' | 'money_in' | 'zero'; pending: boolean
-  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null }
+  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; mapped: boolean }
   bucket: { key: string | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
   relationship: { kind: string; label: string; target: Target | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
   review: 'suggested' | 'confirmed' | 'needs_review' | 'ignored'
   scope: { value: 'business' | 'personal' | 'unclear'; source: 'owner' | 'account' | 'none' }
-  unassigned: boolean; recurringUnknown: boolean; recurring: { cadence: string; occurrences: number } | null
+  unassigned: boolean; repeatedPattern: boolean; pattern: { cadence: string; occurrences: number; kind: 'obligation_like' | 'spending_pattern' } | null
 }
-export interface BucketTotal { key: string; label: string; totalMinor: number; count: number; previousMinor: number; deltaMinor: number; merchants: number; recurringMerchants: number }
+export interface BucketTotal { key: string; label: string; totalMinor: number; count: number; previousMinor: number; deltaMinor: number; merchants: number; repeatedMerchants: number }
 export interface Analytics {
   asOf: string; windowDays: number
   unassigned: { totalMinor: number; count: number; previousMinor: number; deltaMinor: number; byBucket: BucketTotal[] }
   knownBills: { totalMinor: number; count: number; confirmedCount: number; suggestedCount: number }
   pending: { totalMinor: number; count: number }
-  review: { needsReviewCount: number; recurringUnknownCount: number }
+  review: { needsReviewCount: number; repeatedPatternCount: number }
+  unclassified: { totalMinor: number; count: number }
   observations: Array<{ id: string; basis: 'deterministic'; text: string }>
   suggestions: Array<{ id: string; basis: 'heuristic'; title: string; detail: string }>
 }
@@ -40,12 +41,14 @@ export interface Options {
   debts: Array<{ id: string; label: string }>
   projects: Array<{ id: string; name: string }>
 }
-export interface ExplorerData { asOf: string; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
+export type AccountScope = 'mapped' | 'all'
+export interface ExplorerMeta { billCandidates: number; activeObligations: number; scheduledCommitments: number; evidenceRows: number; hiddenUnmapped: number; olderThanPeriod: number; periodFrom: string }
+export interface ExplorerData { asOf: string; accounts: AccountScope; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
 
 export interface Filters {
-  view: ExplorerView; days: 30 | 60 | 90; bucket: string; account: string; scope: string; review: string; confidence: string; project: string; search: string; min: string; max: string
+  view: ExplorerView; accounts: AccountScope; days: 30 | 60 | 90; bucket: string; account: string; scope: string; review: string; confidence: string; project: string; search: string; min: string; max: string
 }
-export const DEFAULT_FILTERS: Filters = { view: 'unassigned', days: 90, bucket: '', account: '', scope: '', review: '', confidence: '', project: '', search: '', min: '', max: '' }
+export const DEFAULT_FILTERS: Filters = { view: 'unassigned', accounts: 'mapped', days: 90, bucket: '', account: '', scope: '', review: '', confidence: '', project: '', search: '', min: '', max: '' }
 
 export type DecisionBody =
   | { action: 'set_bucket'; transactionId: string; bucket: string }
@@ -58,7 +61,7 @@ const isoDaysAgo = (asOf: string, days: number): string => new Date(Date.parse(`
 const PAGE = 100
 
 export function queryString(f: Filters, asOf: string | null, offset = 0): string {
-  const p = new URLSearchParams({ view: f.view, limit: String(PAGE), offset: String(offset) })
+  const p = new URLSearchParams({ view: f.view, limit: String(PAGE), offset: String(offset), accounts: f.accounts })
   if (asOf) p.set('from', isoDaysAgo(asOf, f.days))
   for (const k of ['bucket', 'account', 'scope', 'review', 'confidence', 'project', 'search'] as const) if (f[k]) p.set(k, f[k])
   const min = Number(f.min), max = Number(f.max)
