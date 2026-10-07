@@ -1,5 +1,6 @@
 'use strict';
 const {runtime}=require('./planner-runtime.cjs');
+const {buildPlannerOwnerEmail}=require('./planner-owner-email.cjs');
 async function runMaintenance({env=process.env,backend=runtime(env),fetcher=fetch,onStage=()=>{}}={}) {
   onStage('orphan_discovery');
   const paths=await backend.rpc('panel_planner_orphan_paths',{});
@@ -22,12 +23,11 @@ async function runMaintenance({env=process.env,backend=runtime(env),fetcher=fetc
       if(!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))throw new Error('configuration');
       const tracking=(event.tracking_base_url||'https://app.poweronsolutionsllc.com')+'/portal/track/'+event.request_id;
       const brand=event.display_name||event.site_label||'your service provider';
-      const proposed={
+      const proposed=owner ? {from:env.PANEL_PLANNER_FROM_EMAIL,to:[recipient],
+        ...buildPlannerOwnerEmail(event,brand)} : {
         from:env.PANEL_PLANNER_FROM_EMAIL,to:[recipient],
-        subject:owner ? 'New Panel Planner service request' : 'We received your request — '+brand,
-        text:owner ? ['New Panel Planner request',event.request_id,event.name,event.phone||'',event.email||'',
-          event.address||'',event.city||'',event.description||'',tracking].join('\n') :
-          ['Hi '+event.name+',','Your service request is saved.',tracking,
+        subject:'We received your request — '+brand,
+        text:['Hi '+event.name+',','Your service request is saved.',tracking,
             'Optional photo delivery is tracked separately.',brand].join('\n')
       };
       // Freeze exact provider payload before first attempt; config/contact changes cannot alter replays.

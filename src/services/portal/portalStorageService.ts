@@ -16,6 +16,10 @@
  * Attachment entry returned by portal-attachment-read.
  */
 export interface AttachmentEntry {
+  /** Present only for registered Planner photos in authenticated owner mode. */
+  clientPhotoId?: string
+  category?: string
+  caption?: string
   displayName: string
   mimeType: string | null
   signedUrl: string | null

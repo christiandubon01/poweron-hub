@@ -31,6 +31,8 @@ import {
   dismissPortalRequest,
   type PortalRequest,
 } from '@/services/portal/portalService'
+import { getPlannerOwnerDetails, type PlannerOwnerDetails } from '@/services/portal/plannerDetails'
+import { PlannerOwnerSection } from './PlannerOwnerSection'
 import { isHunterTenantAuthorityError } from '@/services/hunter/resolveHunterTenantId'
 import {
   fetchReferralClaimForRequest,
@@ -69,74 +71,92 @@ const TYPE_LABELS: Record<string, string> = {
 // the portal-uploads bucket was made private.
 
 // ── Mini map component ────────────────────────────────────────────────────────
-function loadGoogleMaps(cb: () => void) {
-  void loadV15rGoogleMapsScript().then(cb).catch(() => {})
-}
-
-function MiniMap({ address, city }: { address: string | null; city: string | null }) {
+export function MiniMap({ address, city }: { address: string | null; city: string | null }) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstance = useRef<any>(null)
+  const [visible, setVisible] = useState(false)
 
   useEffect(() => {
     if (!GOOGLE_MAPS_BROWSER_KEY || (!address && !city)) return
 
+    let active = true, located = false, tilesLoaded = false
+    let listener: any
+    setVisible(false)
+    const timeout = setTimeout(() => { active = false; setVisible(false) }, 10_000)
+    const reveal = () => {
+      if (active && located && tilesLoaded) { clearTimeout(timeout); setVisible(true) }
+    }
     const init = () => {
-      if (!mapRef.current || mapInstance.current) return
-      const google = (window as any).google
-      if (!google?.maps) return
+      try {
+        if (!active || !mapRef.current || mapInstance.current) return
+        const google = (window as any).google
+        if (!google?.maps) return
 
-      mapInstance.current = new google.maps.Map(mapRef.current, {
-        center: { lat: 33.7225, lng: -116.3736 },
-        zoom: 12,
-        disableDefaultUI: true,
-        zoomControl: false,
-        styles: [
-          { elementType: 'geometry', stylers: [{ color: '#0a1208' }] },
-          { elementType: 'labels.text.fill', stylers: [{ color: '#6ccb3f' }] },
-          { elementType: 'labels.text.stroke', stylers: [{ color: '#0a1208' }] },
-          { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1a2e1a' }] },
-          { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#041208' }] },
-          { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-        ],
-      })
-
-      const query = [address, city, 'CA'].filter(Boolean).join(', ')
-      const geocoder = new google.maps.Geocoder()
-      geocoder.geocode({ address: query }, (results: any, status: any) => {
-        if (status !== 'OK' || !results[0]) return
-        const pos = results[0].geometry.location
-        mapInstance.current.setCenter(pos)
-        new google.maps.Marker({
-          position: pos,
-          map: mapInstance.current,
-          icon: {
-            url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
-              '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">' +
-              '<path d="M14 0C6.268 0 0 6.268 0 14c0 8.75 14 22 14 22s14-13.25 14-22C28 6.268 21.732 0 14 0z" fill="#ffd222" stroke="#0a1208" stroke-width="1.5"/>' +
-              '<circle cx="14" cy="14" r="5" fill="#0a1208"/>' +
-              '</svg>'
-            )}`,
-            scaledSize: new google.maps.Size(28, 36),
-            anchor: new google.maps.Point(14, 36),
-          },
+        mapInstance.current = new google.maps.Map(mapRef.current, {
+          center: { lat: 33.7225, lng: -116.3736 },
+          zoom: 12,
+          disableDefaultUI: true,
+          zoomControl: false,
+          styles: [
+            { elementType: 'geometry', stylers: [{ color: '#0a1208' }] },
+            { elementType: 'labels.text.fill', stylers: [{ color: '#6ccb3f' }] },
+            { elementType: 'labels.text.stroke', stylers: [{ color: '#0a1208' }] },
+            { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1a2e1a' }] },
+            { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#041208' }] },
+            { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+          ],
         })
-      })
+
+        listener = mapInstance.current.addListener('tilesloaded', () => { tilesLoaded = true; reveal() })
+
+        const query = [address, city, 'CA'].filter(Boolean).join(', ')
+        const geocoder = new google.maps.Geocoder()
+        geocoder.geocode({ address: query }, (results: any, status: any) => {
+          if (!active || status !== 'OK' || !results[0]) return
+          const pos = results[0].geometry.location
+          mapInstance.current.setCenter(pos)
+          located = true
+          reveal()
+          new google.maps.Marker({
+            position: pos,
+            map: mapInstance.current,
+            icon: {
+              url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">' +
+                '<path d="M14 0C6.268 0 0 6.268 0 14c0 8.75 14 22 14 22s14-13.25 14-22C28 6.268 21.732 0 14 0z" fill="#ffd222" stroke="#0a1208" stroke-width="1.5"/>' +
+                '<circle cx="14" cy="14" r="5" fill="#0a1208"/>' +
+                '</svg>'
+              )}`,
+              scaledSize: new google.maps.Size(28, 36),
+              anchor: new google.maps.Point(14, 36),
+            },
+          })
+        })
+      } catch { clearTimeout(timeout); setVisible(false) }
     }
 
     if ((window as any).google?.maps) {
       init()
     } else {
-      loadGoogleMaps(() => setTimeout(init, 100))
+      void loadV15rGoogleMapsScript().then(init).catch(() => { if (active) { clearTimeout(timeout); setVisible(false) } })
+    }
+    return () => {
+      active = false
+      clearTimeout(timeout)
+      listener?.remove()
+      mapInstance.current = null
     }
   }, [address, city])
 
   if (!GOOGLE_MAPS_BROWSER_KEY || (!address && !city)) return null
 
   return (
-    <div
-      ref={mapRef}
-      style={{ height: 180, width: '100%', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}
-    />
+    <div data-testid="portal-mini-map" aria-hidden={!visible} style={{ height: visible ? 180 : 0, overflow: 'hidden' }}>
+      <div
+        ref={mapRef}
+        style={{ height: 180, width: '100%', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}
+      />
+    </div>
   )
 }
 
@@ -330,26 +350,47 @@ function DetailModal({
   const [signedEntries, setSignedEntries] = useState<AttachmentEntry[]>([])
   const [loadingAttachments, setLoadingAttachments] = useState(false)
 
+  const [plannerDetails, setPlannerDetails] = useState<PlannerOwnerDetails | null>(null)
+  const [plannerLoading, setPlannerLoading] = useState(true)
+  const [plannerError, setPlannerError] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    setPlannerDetails(null)
+    setPlannerLoading(true)
+    setPlannerError(false)
+    // Existence probe through the owner-safe RPC: null means an ordinary request.
+    // No description heuristics or browser reads of private Planner tables.
+    getPlannerOwnerDetails(req.id).then(details => {
+      if (active) setPlannerDetails(details)
+    }).catch(() => { if (active) setPlannerError(true) })
+      .finally(() => { if (active) setPlannerLoading(false) })
+    return () => { active = false }
+  }, [req.id])
+
   // LEAD-SRC-4B: referral claim for this portal request
   const [referralClaim, setReferralClaim] = useState<ReferralClaim | null>(null)
   const [loadingClaim, setLoadingClaim] = useState(true)
 
   useEffect(() => {
     // Quick client-side check: skip the server call when notes have no attachment markers
-    if (!req.notes || (!req.notes.includes('FilePaths:') && !req.notes.includes('Files:'))) {
+    if (!plannerDetails && (!req.notes || (!req.notes.includes('FilePaths:') && !req.notes.includes('Files:')))) {
       setSignedEntries([])
       return
     }
+    let active = true
+    setSignedEntries([])
     setLoadingAttachments(true)
 
     // Get the owner's JWT from the current authenticated session
     supabase.auth.getSession().then(({ data }) => {
-      const jwt = data.session?.access_token ?? undefined
-      return fetchAttachmentSignedUrls(req.id, jwt)
-    }).then(setSignedEntries)
-      .catch(() => setSignedEntries([]))
-      .finally(() => setLoadingAttachments(false))
-  }, [req.id, req.notes])
+      const jwt = data.session?.access_token
+      return jwt ? fetchAttachmentSignedUrls(req.id, jwt) : []
+    }).then(entries => { if (active) setSignedEntries(entries) })
+      .catch(() => { if (active) setSignedEntries([]) })
+      .finally(() => { if (active) setLoadingAttachments(false) })
+    return () => { active = false }
+  }, [req.id, req.notes, plannerDetails])
 
   useEffect(() => {
     setLoadingClaim(true)
@@ -371,12 +412,13 @@ function DetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4"
       style={{ background: 'rgba(0,0,0,.75)', backdropFilter: 'blur(8px)' }}
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-amber-700/40 bg-gray-950"
+        role="dialog" aria-modal="true" aria-label={`Portal request from ${req.name}`}
+        className="w-full max-w-[920px] max-h-[90vh] overflow-y-auto rounded-2xl border border-amber-700/40 bg-gray-950"
         style={{ boxShadow: '0 40px 100px rgba(0,0,0,.6)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -401,7 +443,7 @@ function DetailModal({
               Submitted {new Date(req.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors ml-4 flex-shrink-0">
+          <button type="button" aria-label="Close request details" onClick={onClose} className="text-gray-500 hover:text-white transition-colors ml-4 flex-shrink-0">
             <X size={18} />
           </button>
         </div>
@@ -490,6 +532,10 @@ function DetailModal({
             </div>
           )}
 
+          {plannerLoading && <p role="status" className="text-xs text-gray-400">Checking Planner details…</p>}
+          {plannerError && <p role="status" className="text-sm text-gray-400">Planner details unavailable. You can still use the request actions.</p>}
+          {plannerDetails && <PlannerOwnerSection details={plannerDetails} attachments={signedEntries} loadingPhotos={loadingAttachments} />}
+
           {/* Referral — LEAD-SRC-4B */}
           {(loadingClaim || referralClaim) && (
             <div>
@@ -503,7 +549,7 @@ function DetailModal({
           )}
 
           {/* Photos / Videos — signed short-lived URLs from private storage */}
-          {(loadingAttachments || mediaEntries.length > 0) && (
+          {!plannerDetails && (loadingAttachments || mediaEntries.length > 0) && (
             <div>
               <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">
                 Photos / Videos {!loadingAttachments && `(${mediaEntries.length})`}

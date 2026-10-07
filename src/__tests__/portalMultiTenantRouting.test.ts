@@ -201,7 +201,8 @@ describe('portal site routing — Panel Planner, recovery, owner access, HUNTER,
     const to=id=>sent.find(s=>s.text.includes(id)).to[0]
     expect(to(a.request_id)).toBe('poweron-owner@example.com')   // documented Power On-only fallback
     expect(to(a2.request_id)).toBe('owner-a2@example.test');expect(to(b.request_id)).toBe('owner-b@example.test')
-    expect(sent.find(s=>s.text.includes(b.request_id)).text).toContain('https://track.beta-power.example/portal/track/'+b.request_id)
+    // Owner alerts open the authenticated Hub; per-site tracking stays customer-facing.
+    expect(sent.find(s=>s.text.includes(b.request_id)).text).toContain('Open in Power On Hub → https://app.poweronsolutionsllc.com/')
     // A non-legacy site without its own recipient must NOT fall back to the Power On address.
     const lone={...forReq(b.request_id),owner_email:null};const sent2=[]
     const r=await runMaintenance({env,backend:{...backend,rpc:async(n,args)=>n==='claim_panel_planner_notifications'?[lone]:backend.rpc(n,args)},fetcher:async(_u,o)=>{sent2.push(o);return new Response('{"id":"m"}')}})
