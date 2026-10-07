@@ -88,8 +88,8 @@ describe('BANK-1 migration contract', () => {
     expect(interpretation).toMatch(/NO project-payment or\s+-- payroll-paid target/)
   })
 
-  it('has no Plaid-specific table, endpoint or SDK dependency', () => {
+  it('has no Plaid-specific table or endpoint (the Plaid SDK arrived later, in BANK-2, and only server-side)', () => {
     expect(code).not.toMatch(/plaid_/i)
-    expect(readFileSync('package.json', 'utf8')).not.toMatch(/"plaid"|react-plaid-link/)
+    expect(readFileSync('package.json', 'utf8')).not.toMatch(/react-plaid-link/)
   })
 })
