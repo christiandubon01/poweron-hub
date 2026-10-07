@@ -362,13 +362,20 @@ describe('Plaid SDK adapter (no network)', () => {
   }
   const axiosError = (code: string, type: string, status = 400) => Object.assign(new Error('axios secret-detail ' + SECRET_ACCESS), { response: { status, data: { error_code: code, error_type: type, error_message: 'detail ' + SECRET_ACCESS } } })
 
-  it('collects Transactions CONSENT only (not products, no days_requested): nothing is initialized or billed until BANK-4; no webhook', async () => {
+  it('initializes Transactions at Link via products=[transactions] with days_requested=90; no consent-only field, no other product, no webhook', async () => {
     const { port, seen } = make()
     await port.createLinkToken({ clientUserId: 'org.user' })
     const req = seen.linkTokenCreate[0] as Record<string, any>
-    expect(req).toMatchObject({ client_name: 'Power On Hub', country_codes: ['US'], language: 'en', additional_consented_products: ['transactions'], user: { client_user_id: 'org.user' } })
-    expect(req.products).toBeUndefined(); expect(req.required_if_supported_products).toBeUndefined(); expect(req.optional_products).toBeUndefined(); expect(req.transactions).toBeUndefined()
+    expect(req).toMatchObject({ client_name: 'Power On Hub', country_codes: ['US'], language: 'en', products: ['transactions'], transactions: { days_requested: 90 }, user: { client_user_id: 'org.user' } })
+    expect(req.products).toEqual(['transactions'])
+    expect(req.additional_consented_products).toBeUndefined(); expect(req.required_if_supported_products).toBeUndefined(); expect(req.optional_products).toBeUndefined()
     expect(req.access_token).toBeUndefined(); expect(req.webhook).toBeUndefined(); expect(req.redirect_uri).toBeUndefined()
+  })
+  it('makes NO transaction-data call while creating a Link token or exchanging (no /transactions/sync, /get or /refresh)', async () => {
+    const { port, seen } = make()
+    await port.createLinkToken({ clientUserId: 'org.user' })
+    await port.exchangePublicToken(PUBLIC)
+    expect(Object.keys(seen).filter((k) => /transactions/i.test(k))).toEqual([])
   })
   it('update mode passes the access token and NO products (per Plaid docs)', async () => {
     const { port, seen } = make()

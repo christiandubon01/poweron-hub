@@ -64,7 +64,7 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
       // Update mode is triggered by the Item's access token and carries NO products (per Plaid docs).
       const request = accessToken
         ? { ...base, access_token: accessToken }
-        : { ...base, additional_consented_products: [Products.Transactions] } // consent only: Transactions is not initialized or billed until BANK-4 calls it
+        : { ...base, products: [Products.Transactions], transactions: { days_requested: config.transactionsDaysRequested } } // initializes Transactions at Link; NO transaction data is retrieved until BANK-4
       const { data } = await call(() => api.linkTokenCreate(request))
       return { linkToken: data.link_token, expiration: data.expiration }
     },

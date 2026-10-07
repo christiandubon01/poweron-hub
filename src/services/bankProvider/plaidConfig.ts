@@ -24,9 +24,13 @@ export interface PlaidConfig {
   clientName: string
   countryCodes: ['US']
   language: 'en'
-  /** Consent only (BANK-2R): Transactions is NOT initialized or billed at Link. Plaid bills additional_consented_products when an endpoint is first called (BANK-4). */
-  consentedProducts: ['transactions']
-  /** Locked owner decision: 90-day history. Applied by BANK-4 on the FIRST /transactions/sync (options.days_requested); Plaid fixes it once Transactions is added to an Item. */
+  /**
+   * Transactions is initialized at Link (a new Item needs at least one entry in `products`, and Transactions is the only product Cash OS needs).
+   * BANK-2 still RETRIEVES no transaction data: /transactions/sync is BANK-4. Production Transactions is subscription-billed per Item, so
+   * Plaid Production must NOT be enabled without a separate owner-approved production-enablement checkpoint (current pricing/product access).
+   */
+  products: ['transactions']
+  /** Locked owner decision: 90-day history, set at Link initialization (transactions.days_requested in /link/token/create); Plaid fixes it once Transactions is added to an Item. */
   transactionsDaysRequested: 90
 }
 
@@ -51,5 +55,5 @@ export function loadPlaidConfig(env: Record<string, string | undefined>): PlaidC
   const secret = (env[PLAID_SECRET_VAR] ?? '').trim()
   if (!secret) throw new PlaidConfigError(PLAID_SECRET_VAR, 'missing')
   return { environment: 'sandbox', clientId, secret, clientName: 'Power On Hub', countryCodes: ['US'], language: 'en',
-    consentedProducts: ['transactions'], transactionsDaysRequested: 90 }
+    products: ['transactions'], transactionsDaysRequested: 90 }
 }
