@@ -69,3 +69,22 @@ Attachment-read now preserves that exact environment/local allowlist and additio
 All subsequent JWT/org checks, attachment context, registered-only projection, path validation, private bucket, service-role use, five-minute signing and safe response metadata remain unchanged. The R3 diagnostic remains preview-only. No Supabase/Storage investigation or configuration changes, production activity, notifications or scheduler activation occur. Owner retest must confirm real photos load after the preview rebuild.
 
 R4 validation: 529 focused tests across twelve files, TypeScript and whitespace checks pass. Tests include matching canonical/preview/hashed origins, malformed and mismatched authorities, all three explicit environment origins, localhost, OPTIONS, rejection before downstream requests and unchanged owner authorization/signing boundaries.
+
+## Final owner approval and diagnostic cleanup
+
+Starting commit: `f267e4242b786034350ef513a45a2902f2bec751`.
+
+Owner final review passed for the Portal presentation, wider layout, all three private signed photos in Safari, and preserved Convert to Lead / Dismiss actions. Owner also approved the delivered Planner email alongside the normal Portal lead alert. These approvals close the earlier owner runtime-review gates.
+
+Owner-supplied controlled live email evidence (recorded only; no delivery or production query performed during cleanup):
+
+- Request: `b509937c-185b-45b6-b08d-ae0e94bb24a7`
+- Event: `2aad2104-cde2-4c9e-bef5-966ad8b2f39f`
+- Provider message: `01a118bf-e557-7d56-805b-84157926f4be`
+- Event state: `sent`; attempts: `1`; Resend status: `delivered`
+
+The temporary R3 detailed helper, diagnostic classifications/formatter, preview-host gate, state, props and diagnostic UI are removed. Owner photo reads use the original authenticated signed-read API on all hosts. Normal failures retain the compact “Photo preview unavailable” fallback. Replacement coverage checks safe signed reads, failure handling and absence of diagnostics in preview/production presentation.
+
+The confirmed R4 exact same-site Netlify origin repair and all associated security tests remain untouched. Approved Planner content/layout/photo interactions/map fallback, ordinary requests/conversion, email HTML/text/CTA, customer tracking, frozen payload/idempotency and disabled-by-default scheduler remain unchanged. No production deployment, Supabase/Storage/configuration changes, notifications, maintenance or website changes occur during cleanup. PR #3 remains draft and unmerged; merge and deployment are subsequent steps requiring separate instruction.
+
+Final cleanup validation: 515 focused tests across twelve files pass (temporary diagnostic-only tests replaced with signed-read/fallback regressions); TypeScript and whitespace checks pass.

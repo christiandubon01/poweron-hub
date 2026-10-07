@@ -7,11 +7,11 @@ import { PortalInbox } from '../PortalInbox'
 import { PlannerOwnerSection } from '../PlannerOwnerSection'
 import payload from '@/__tests__/fixtures/planner-payload-v1.json'
 
-const mocks = vi.hoisted(() => ({ requests: vi.fn(), convert: vi.fn(), dismiss: vi.fn(), details: vi.fn(), attachments: vi.fn(), detailed: vi.fn(), session: vi.fn() }))
+const mocks = vi.hoisted(() => ({ requests: vi.fn(), convert: vi.fn(), dismiss: vi.fn(), details: vi.fn(), attachments: vi.fn(), session: vi.fn() }))
 vi.mock('@/lib/supabase', () => ({ supabase: { auth: { getSession: mocks.session } } }))
 vi.mock('@/services/portal/portalService', () => ({ fetchNewPortalRequests: mocks.requests, convertToLead: mocks.convert, dismissPortalRequest: mocks.dismiss }))
 vi.mock('@/services/portal/plannerDetails', () => ({ getPlannerOwnerDetails: mocks.details }))
-vi.mock('@/services/portal/portalStorageService', async original => ({ ...await original<object>(), fetchAttachmentSignedUrls: mocks.attachments, fetchAttachmentSignedUrlsDetailed: mocks.detailed }))
+vi.mock('@/services/portal/portalStorageService', async original => ({ ...await original<object>(), fetchAttachmentSignedUrls: mocks.attachments }))
 vi.mock('@/services/referral/referralService', () => ({ fetchReferralClaimForRequest: async () => null }))
 vi.mock('@/utils/googleMapsLoader', () => ({ GOOGLE_MAPS_BROWSER_KEY: '', loadV15rGoogleMapsScript: vi.fn() }))
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
@@ -35,10 +35,8 @@ async function render(element: React.ReactNode) { await act(async () => root.ren
 async function open() { await render(<PortalInbox />); await act(async () => { Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Owner test'))!.click() }); await flush() }
 const button = (name: string) => Array.from(host.querySelectorAll('button')).find(b => b.textContent === name)!
 beforeEach(() => {
-  window.location.href='http://localhost:3000/'
   vi.clearAllMocks(); host=document.createElement('div');document.body.appendChild(host);root=createRoot(host)
   mocks.requests.mockResolvedValue([req]);mocks.details.mockResolvedValue(null);mocks.attachments.mockResolvedValue([])
-  mocks.detailed.mockResolvedValue({attachments:[],httpStatus:500,result:'server_configuration',attachmentCount:0,signedUrlCount:0})
   mocks.session.mockResolvedValue({data:{session:{access_token:'owner-jwt'}}});mocks.convert.mockResolvedValue('lead-one');mocks.dismiss.mockResolvedValue(undefined)
 })
 afterEach(() => { act(() => root.unmount());host.remove() })
@@ -130,42 +128,19 @@ describe('Current Portal Inbox Planner presentation', () => {
     expect(host.textContent).toContain('Panel label close-up');expect(host.textContent).toContain('Not reviewed')
     expect(host.querySelector('figure')!.className).not.toMatch(/h-\d|aspect-/)
   })
-  it('uses the authenticated detailed read only for owner Planner details on deploy-preview hosts',async()=>{
-    window.location.href='https://deploy-preview-3--incomparable-croissant-a86c81.netlify.app/'
+  it.each(['https://deploy-preview-3--incomparable-croissant-a86c81.netlify.app/','https://app.poweronsolutionsllc.com/'])('uses authenticated photo reads and plain unavailable fallback on %s',async origin=>{
+    window.location.href=origin
     mocks.details.mockResolvedValue(details());await open()
-    expect(mocks.detailed).toHaveBeenCalledWith(req.id,'owner-jwt')
-    expect(host.textContent).toContain('Preview diagnostic: HTTP 500 · Server configuration')
-    expect(host.textContent).not.toContain('owner-jwt')
-  })
-  it('does not show diagnostic text or use the detailed read on the production app',async()=>{
-    window.location.href='https://app.poweronsolutionsllc.com/'
-    mocks.details.mockResolvedValue(details());await open()
-    expect(mocks.detailed).not.toHaveBeenCalled();expect(host.textContent).not.toContain('Preview diagnostic:')
     expect(mocks.attachments).toHaveBeenCalledWith(req.id,'owner-jwt')
+    expect(host.textContent).toContain('Photo preview unavailable')
+    for(const text of ['Preview diagnostic:','HTTP 403','server_configuration','owner-jwt'])expect(host.textContent).not.toContain(text)
   })
-  it('keeps ordinary Portal attachments on the compatible public helper even in deploy previews',async()=>{
-    window.location.href='https://deploy-preview-3--incomparable-croissant-a86c81.netlify.app/'
-    mocks.requests.mockResolvedValue([{...req,notes:'FilePaths: test/path.png'}]);await open()
-    expect(mocks.attachments).toHaveBeenCalledWith(req.id,'owner-jwt');expect(mocks.detailed).not.toHaveBeenCalled()
-    expect(host.textContent).not.toContain('Preview diagnostic:')
-  })
-  it('shows signed URL counts only when the signed thumbnail itself fails',async()=>{
-    window.location.href='https://deploy-preview-3--incomparable-croissant-a86c81.netlify.app/'
-    await render(<PlannerOwnerSection details={details() as any} attachments={[{clientPhotoId:'photo-one',signedUrl:'https://signed.example/photo?token=PRIVATE_TOKEN',displayName:'Attachment',mimeType:'image/png',expiresAt:null}]} loadingPhotos={false} diagnostic={{httpStatus:200,result:'ok',attachmentCount:3,signedUrlCount:3}} />)
-    expect(host.textContent).not.toContain('Preview diagnostic:')
-    await act(async()=>host.querySelector('img')!.dispatchEvent(new Event('error')))
-    expect(host.textContent).toContain('Preview diagnostic: HTTP 200 · 3 attachments · 3 signed URLs')
-    expect(host.textContent).not.toContain('PRIVATE_TOKEN');expect(host.textContent).not.toContain('https://signed.example')
-  })
-  it('does not leak even supplied diagnostic metadata into the production presentation',async()=>{
-    window.location.href='https://app.poweronsolutionsllc.com/'
-    await render(<PlannerOwnerSection details={details() as any} attachments={[]} loadingPhotos={false} diagnostic={{httpStatus:403,result:'forbidden',attachmentCount:0,signedUrlCount:0}} />)
-    expect(host.textContent).not.toContain('Preview diagnostic:')
-  })
-  it('leaves customer tracking on the original attachment API without owner diagnostic UI',()=>{
-    const customer=readFileSync('src/views/PortalTrackView.tsx','utf8')
-    expect(customer).toContain('fetchAttachmentSignedUrls')
-    expect(customer).not.toContain('fetchAttachmentSignedUrlsDetailed');expect(customer).not.toContain('Preview diagnostic:')
+  it('removes the temporary diagnostic helpers and customer tracking stays unchanged',()=>{
+    for(const file of ['src/services/portal/portalStorageService.ts','src/components/hunter/PortalInbox.tsx','src/components/hunter/PlannerOwnerSection.tsx','src/views/PortalTrackView.tsx']) {
+      const source=readFileSync(file,'utf8')
+      for(const text of ['Preview diagnostic:','fetchAttachmentSignedUrlsDetailed','formatAttachmentDiagnostic','isNetlifyDeployPreview'])expect(source).not.toContain(text)
+    }
+    expect(readFileSync('src/views/PortalTrackView.tsx','utf8')).toContain('fetchAttachmentSignedUrls')
   })
   it('uses the current Sales Intelligence Leads → HunterPanel → PortalInbox wiring', () => {
     expect(readFileSync('src/components/salesIntel/tabs/LeadsTab.tsx','utf8')).toContain('<HunterPanel')
