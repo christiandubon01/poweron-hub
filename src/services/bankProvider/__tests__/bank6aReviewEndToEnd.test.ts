@@ -168,8 +168,10 @@ describe.runIf(!!PGliteCtor)('BANK-6A review queue and safe batch approval (real
     const ids = [...Object.values(t), '00000000-0000-4000-8000-0000000000ff']
     const out = await applyDecision(w.deps, owner, { action: 'confirm_batch', transactionIds: ids }) as any
     const byId = new Map(out.results.map((r: any) => [r.id, r]))
-    for (const [name, bucket] of [['hd', 'materials'], ['chev', 'fuel_vehicle'], ['sbux', 'meals'], ['fee', 'bank_finance_fees']] as const) expect(byId.get(t[name]), name).toMatchObject({ result: 'confirmed', bucket })
+    expect(byId.get(t.fee), 'fee').toMatchObject({ result: 'confirmed', bucket: 'bank_finance_fees' })
     const reason = (id: string) => (byId.get(id) as any)
+    // BANK-6B: a mixed-purpose merchant (Home Depot, a gas station, a coffee shop) is never approved on a suggestion alone
+    for (const name of ['hd', 'chev', 'sbux']) expect(reason(t[name]), name).toMatchObject({ result: 'skipped', reason: 'mixed_purpose' })
     expect(reason(t.gusto)).toMatchObject({ result: 'skipped', reason: 'needs_individual_review' }) // payroll is never a bulk decision
     expect(reason(t.card)).toMatchObject({ result: 'skipped', reason: 'not_high_confidence' })
     expect(reason(t.draw)).toMatchObject({ result: 'skipped', reason: 'not_high_confidence' })
@@ -178,11 +180,15 @@ describe.runIf(!!PGliteCtor)('BANK-6A review queue and safe batch approval (real
     expect(reason(t.dep)).toMatchObject({ result: 'skipped', reason: 'money_in' })
     expect(reason(t.refund)).toMatchObject({ result: 'skipped', reason: 'money_in' })
     expect(reason('00000000-0000-4000-8000-0000000000ff')).toMatchObject({ result: 'skipped', reason: 'not_found' })
-    expect(out).toMatchObject({ confirmed: 4, unchanged: 0 })
-    // persisted as audited, rule-sourced, owner-decided interpretations only
+    expect(out).toMatchObject({ confirmed: 1, unchanged: 0 })
+    // the owner picks the category for the mixed-purpose merchants: an explicit owner decision
+    const picked = await applyDecision(w.deps, owner, { action: 'confirm_batch', transactionIds: [t.hd, t.chev, t.sbux], categoryOverrides: { [t.hd]: 'materials', [t.chev]: 'fuel_vehicle', [t.sbux]: 'meals' } }) as any
+    expect(picked).toMatchObject({ confirmed: 3, skipped: 0 })
     const rows = await w.q(`SELECT kind, status, source, category, decided_by IS NOT NULL AS decided, suggestion_basis->>'mode' AS mode FROM public.financial_provider_interpretations ORDER BY category`)
     expect(rows).toHaveLength(4)
-    expect(rows.every(r => r.kind === 'category' && r.status === 'confirmed' && r.source === 'rule' && r.decided && r.mode === 'suggestion_batch')).toBe(true)
+    expect(rows.every(r => r.kind === 'category' && r.status === 'confirmed' && r.decided)).toBe(true)
+    expect(rows.filter(r => r.source === 'rule').map(r => r.category)).toEqual(['bank_finance_fees'])
+    expect(rows.filter(r => r.source === 'owner').map(r => r.mode)).toEqual(['owner_batch_override', 'owner_batch_override', 'owner_batch_override'])
     expect(await w.canonical()).toBe(baseline) // ledger, balances, accounts, obligations, projects, evidence, mappings: byte-identical
   })
 
@@ -217,7 +223,7 @@ describe.runIf(!!PGliteCtor)('BANK-6A review queue and safe batch approval (real
     expect(await applyDecision(w.deps, owner, { action: 'set_bucket', transactionId: t.hd, bucket: 'tools_equipment' })).toEqual({ outcome: 'changed' })
     const { history } = await getTransactionHistory(w.deps, owner, t.hd)
     expect(history.map(h => [h.label, h.status])).toEqual([['Materials', 'undone'], ['Tools & Equipment', 'confirmed']])
-    expect(history[0]).toMatchObject({ undoReason: 'changed_by_owner', source: 'rule' }); expect(history[0].undoneAt).toBeTruthy()
+    expect(history[0]).toMatchObject({ undoReason: 'changed_by_owner', source: 'owner' }); expect(history[0].undoneAt).toBeTruthy()
     expect(history[1].source).toBe('owner')
     expect(JSON.stringify(history)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/) // no user or record ids in the trail
     expect(await applyDecision(w.deps, owner, { action: 'undo', transactionId: t.hd, dimension: 'bucket' })).toEqual({ outcome: 'undone' })
@@ -266,7 +272,7 @@ describe.runIf(!!PGliteCtor)('BANK-6A endpoint', () => {
   const ids: string[] = []
   beforeAll(async () => {
     w = await build()
-    for (let i = 0; i < 3; i++) ids.push(await w.tx('CHEVRON 00' + i, 20 + i, '2026-10-0' + (i + 1)))
+    for (let i = 0; i < 3; i++) ids.push(await w.tx('NETLIFY', 20 + i, '2026-10-0' + (i + 1)))
   }, 180_000)
   afterAll(async () => { await w?.db?.close?.() })
   const ev = (method: string, body?: unknown, qs?: Record<string, string>) => ({ httpMethod: method, headers: { authorization: 'Bearer t' }, body: body === undefined ? undefined : JSON.stringify(body), queryStringParameters: qs })
@@ -283,7 +289,7 @@ describe.runIf(!!PGliteCtor)('BANK-6A endpoint', () => {
     expect(JSON.parse(res.body)).toMatchObject({ confirmed: 3, skipped: 0 })
     const got = JSON.parse((await owned()(ev('GET', undefined, { view: 'review_queue' }))).body)
     expect(got.rows).toEqual([]); expect(got.reviewCounts).toEqual({ reviewed: 3, unreviewed: 0, excluded: 0 })
-    expect(got.options.batchBuckets).toContain('materials'); expect(got.options.batchBuckets).not.toContain('payroll_people'); expect(got.options.maxBatch).toBe(50)
+    expect(got.options.batchBuckets).toContain('materials'); expect(got.options.batchBuckets).not.toContain('payroll_people'); expect(got.options.maxBatch).toBe(100)
     const hist = await owned()(ev('GET', undefined, { history: ids[0] }))
     expect(hist.statusCode).toBe(200)
     expect(JSON.parse(hist.body).history).toHaveLength(1)
@@ -297,8 +303,8 @@ describe.runIf(!!PGliteCtor)('BANK-6A endpoint', () => {
     }
     expect((await handlerFor({ org_id: ORG_B, role: 'owner', is_active: true })(ev('GET', undefined, { history: ids[0] }))).statusCode).toBe(404)
     expect((await owned()(ev('POST', { action: 'confirm_batch', transactionIds: [] }))).statusCode).toBe(400)
-    expect((await owned()(ev('POST', { action: 'confirm_batch', transactionIds: Array.from({ length: 51 }, (_, i) => `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`) }))).statusCode).toBe(400)
-    expect(((await owned()(ev('POST', { action: 'confirm_batch', transactionIds: ids, padding: 'x'.repeat(9000) }))) as any).statusCode).toBe(400) // oversized body
+    expect((await owned()(ev('POST', { action: 'confirm_batch', transactionIds: Array.from({ length: 101 }, (_, i) => `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`) }))).statusCode).toBe(400)
+    expect(((await owned()(ev('POST', { action: 'confirm_batch', transactionIds: ids, padding: 'x'.repeat(20000) }))) as any).statusCode).toBe(400) // oversized body
     expect((await w.q(`SELECT count(*)::int n FROM public.financial_provider_interpretations`))[0].n).toBe(before)
   })
 })
@@ -312,7 +318,7 @@ describe.runIf(!!PGliteCtor)('BANK-6A category overrides in batch approval (real
   beforeAll(async () => {
     w = await build()
     t.autozone = await w.tx('AUTOZONE #4421', 11.95, '2026-10-02'); t.chev = await w.tx('CHEVRON 0098', 62.1, '2026-10-03'); t.hd = await w.tx('THE HOME DEPOT #6', 120, '2026-10-01')
-    t.mystery = await w.tx('ZZQ HOLDINGS', 40, '2026-10-04'); t.pend = await w.tx('CHEVRON 0099', 30, '2026-10-05', { pending: true }); t.dep = await w.tx('MOBILE DEPOSIT', -2500, '2026-10-02')
+    t.mystery = await w.tx('ZZQ HOLDINGS', 40, '2026-10-04'); t.pend = await w.tx('CHEVRON 0099', 30, '2026-10-05', { pending: true }); t.dep = await w.tx('MOBILE DEPOSIT', -2500, '2026-10-02'); t.net = await w.tx('NETLIFY', 19, '2026-10-02')
     t.gusto = await w.tx('GUSTO PAYROLL 4412', 4200, '2026-10-04'); t.sbux = await w.tx('STARBUCKS 77', 6, '2026-10-03')
     baseline = await w.canonical()
   }, 180_000)
@@ -344,15 +350,16 @@ describe.runIf(!!PGliteCtor)('BANK-6A category overrides in batch approval (real
   })
 
   it('a valid override saves the OWNER\'s category (AutoZone work strap -> Tools & Equipment), keeps the original suggestion in the audit basis, and leaves other rows on the normal rule', async () => {
-    const out = await batch([t.autozone, t.chev], { [t.autozone]: 'tools_equipment' })
+    const out = await batch([t.autozone, t.chev, t.net], { [t.autozone]: 'tools_equipment', [t.chev]: 'fuel_vehicle' })
     const by = new Map(out.results.map((r: any) => [r.id, r]))
     expect(by.get(t.autozone)).toMatchObject({ result: 'confirmed', bucket: 'tools_equipment', overridden: true })
-    expect(by.get(t.chev)).toMatchObject({ result: 'confirmed', bucket: 'fuel_vehicle' })
+    expect(by.get(t.chev)).toMatchObject({ result: 'confirmed', bucket: 'fuel_vehicle', overridden: true })
+    expect(by.get(t.net)).toMatchObject({ result: 'confirmed', bucket: 'software_subscriptions' })
     const saved = await rows()
-    const az = saved.find(r => r.tx === t.autozone), ch = saved.find(r => r.tx === t.chev)
+    const az = saved.find(r => r.tx === t.autozone), ch = saved.find(r => r.tx === t.net)
     expect(az).toMatchObject({ category: 'tools_equipment', source: 'owner', status: 'confirmed' })
     expect(az.basis).toMatchObject({ mode: 'owner_batch_override', suggested: 'fuel_vehicle', suggestedConfidence: 'high' })
-    expect(ch).toMatchObject({ category: 'fuel_vehicle', source: 'rule' }) // not overridden: still a rule-sourced suggestion approval
+    expect(ch).toMatchObject({ category: 'software_subscriptions', source: 'rule' }) // not overridden: still a rule-sourced suggestion approval
     expect((await getExplorer(w.deps, owner, { limit: 200 })).rows.find(r => r.id === t.autozone)).toMatchObject({ bucket: { key: 'tools_equipment', state: 'confirmed' }, review: 'confirmed' })
     const { history } = await getTransactionHistory(w.deps, owner, t.autozone)
     expect(history.map(h => [h.label, h.status, h.source])).toEqual([['Tools & Equipment', 'confirmed', 'owner']])
@@ -373,8 +380,8 @@ describe.runIf(!!PGliteCtor)('BANK-6A category overrides in batch approval (real
     expect(reason(t.dep)).toMatchObject({ result: 'skipped', reason: 'money_in' })
     expect(reason(t.gusto)).toMatchObject({ result: 'skipped', reason: 'relationship_suggested' }) // a payroll suggestion stays an individual decision
     expect(reason(t.chev)).toMatchObject({ result: 'skipped', reason: 'already_decided' }) // confirmed earlier: an override cannot silently replace it
-    expect(reason(t.hd)).toMatchObject({ result: 'confirmed', bucket: 'materials' }) // no override: the normal rule
-    expect((await rows()).length).toBe(before + 1)
+    expect(reason(t.hd)).toMatchObject({ result: 'skipped', reason: 'mixed_purpose' }) // no override: a mixed-purpose merchant is not approved on a suggestion
+    expect((await rows()).length).toBe(before)
   })
 
   it('an override may categorize a row that had no suggestion (still the owner\'s explicit choice, and still audited)', async () => {

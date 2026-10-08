@@ -8,7 +8,7 @@
  */
 import { BankConnectionError } from '../bankConnectionService'
 import type { Decision, DebtOption, EvidenceTx, ProjectOption } from './types'
-import type { NewDecision, SpendingContext, SpendingRepo } from './spendingService'
+import type { MerchantRule, NewDecision, SpendingContext, SpendingRepo } from './spendingService'
 
 type Svc = { from: (table: string) => any; rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: any; error: any }> }
 const PAGE = 1000
@@ -95,8 +95,17 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
         const p = await svc.from('projects').select('id, name, status').eq('org_id', organizationId).neq('status', 'canceled').limit(500)
         if (!p.error) projects = (p.data ?? []).filter((x: any) => typeof x.name === 'string' && x.name.trim()).map((x: any) => ({ id: String(x.id), name: x.name }))
       } catch { projects = [] }
+      // BANK-6B: remembered merchant rules. Before migration 157 the table does not exist: Smart Review still works, rules are simply unavailable.
+      let merchantRules: MerchantRule[] = [], rulesAvailable = true
+      {
+        const r = await svc.from('financial_provider_merchant_rules').select('id, merchant_key, merchant_label, category, updated_at').eq('organization_id', organizationId).eq('status', 'active').limit(2000)
+        if (r.error) {
+          if (r.error.code === '42P01' || r.error.code === 'PGRST205' || /financial_provider_merchant_rules/.test(String(r.error.message ?? ''))) rulesAvailable = false
+          else failed()
+        } else merchantRules = (r.data ?? []).map((m: any) => ({ id: m.id, merchantKey: m.merchant_key, merchantLabel: m.merchant_label ?? null, category: m.category, updatedAt: m.updated_at ?? null }))
+      }
       return {
-        txs, accounts, decisions: decs, debts, projects,
+        txs, accounts, decisions: decs, debts, projects, merchantRules, rulesAvailable,
         obligations: (obl.data ?? []).map((o: any) => ({ id: o.id, name: o.name, amountMinor: Number(o.amount_minor), amountType: o.amount_type, estimatedMinMinor: o.estimated_min_minor ?? null, estimatedMaxMinor: o.estimated_max_minor ?? null,
           recurrenceKind: o.recurrence_kind, recurrenceInterval: o.recurrence_interval, anchorDate: o.anchor_date, startDate: o.start_date, endDate: o.end_date ?? null, status: o.status, accountId: o.account_id ?? null })),
         occurrences: (occ.data ?? []).map((o: any) => ({ obligationId: o.obligation_id, scheduledDate: o.scheduled_date, overrideDate: o.override_date ?? null, overrideAmountMinor: o.override_amount_minor ?? null, status: o.status, reconciliationState: o.reconciliation_state })),
@@ -160,6 +169,26 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
         failed()
       }
       return { id: data.id }
+    },
+    /** One active rule per (organization, merchant): saving again replaces its category. The previous row is never deleted (revoked rows stay as history). */
+    async upsertMerchantRule(organizationId, actorUserId, rule) {
+      const now = new Date().toISOString()
+      const fail = (error: any): never => {
+        if (error?.code === '42P01' || error?.code === 'PGRST205') throw new BankConnectionError('conflict', 409, 'Remembering a category is not available yet.')
+        return failed()
+      }
+      const upd = await svc.from('financial_provider_merchant_rules').update({ merchant_label: rule.merchantLabel, category: rule.category, status: 'active', revoked_at: null, updated_by: actorUserId, updated_at: now })
+        .eq('organization_id', organizationId).eq('merchant_key', rule.merchantKey).select('id')
+      if (upd.error) fail(upd.error)
+      if ((upd.data ?? []).length) return
+      const ins = await svc.from('financial_provider_merchant_rules').insert({ organization_id: organizationId, merchant_key: rule.merchantKey, merchant_label: rule.merchantLabel, category: rule.category, created_by: actorUserId, updated_by: actorUserId })
+      if (ins.error) fail(ins.error)
+    },
+    async revokeMerchantRule(organizationId, actorUserId, merchantKey) {
+      const { data, error } = await svc.from('financial_provider_merchant_rules').update({ status: 'revoked', revoked_at: new Date().toISOString(), updated_by: actorUserId, updated_at: new Date().toISOString() })
+        .eq('organization_id', organizationId).eq('merchant_key', merchantKey).eq('status', 'active').select('id')
+      if (error) failed()
+      return (data ?? []).length > 0
     },
     async markUndone(organizationId, decisionId, actorUserId, reason) {
       const { error } = await svc.from('financial_provider_interpretations').update({ status: 'undone', undone_by: actorUserId, undone_at: new Date().toISOString(), undo_reason: reason })

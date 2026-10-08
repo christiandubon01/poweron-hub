@@ -18,6 +18,7 @@ import { BankConnectionError, UUID, assertAuthority, note, type BankActor } from
 import { generateRecurrenceDates } from '../../../finance/recurrence'
 import { addDays } from './analytics'
 import { CONFIRMED_INTERPRETATION_CONTRACT } from './contract'
+import { buildSmartReview } from './smartReview'
 import { buildRows, filterRows, viewCounts, type AccountScope, type ExplorerQuery, type ExplorerView, EXPLORER_VIEWS } from './explorer'
 import { BATCH_APPROVABLE_BUCKETS, BUCKETS, bucketFitsDirection, bucketLabel, isBucketKey, isRelationshipKind, RELATIONSHIP_KINDS, type BucketKey, type Confidence, type RelationshipKind } from './taxonomy'
 import type { AccountContext, Decision, DebtOption, EvidenceTx, KnownBillCandidate, ProjectOption } from './types'
@@ -39,7 +40,11 @@ export interface SpendingContext {
   commitments: CommitmentRow[]
   debts: DebtOption[]
   projects: ProjectOption[]
+  /** BANK-6B: active owner-approved merchant rules. Absent / rulesAvailable false before migration 157. */
+  merchantRules?: MerchantRule[]
+  rulesAvailable?: boolean
 }
+export interface MerchantRule { id: string; merchantKey: string; merchantLabel: string | null; category: string; updatedAt: string | null }
 
 export interface NewDecision {
   organizationId: string
@@ -74,6 +79,9 @@ export interface SpendingRepo {
   replaceDecision(row: NewDecision): Promise<{ outcome: 'created' | 'changed' | 'unchanged'; id: string }>
   /** Insert-only (a REJECTED suggestion is never an active decision, so nothing is replaced). */
   insertDecision(row: NewDecision): Promise<{ id: string }>
+  /** BANK-6B: remember / forget a merchant's category. Suggestions only: neither writes an interpretation, a decision or any canonical record. */
+  upsertMerchantRule(organizationId: string, actorUserId: string, rule: { merchantKey: string; merchantLabel: string; category: string }): Promise<void>
+  revokeMerchantRule(organizationId: string, actorUserId: string, merchantKey: string): Promise<boolean>
   markUndone(organizationId: string, decisionId: string, actorUserId: string, reason: string): Promise<void>
 }
 export interface HistoryEntry { kind: string; status: string; category: string | null; source: string; confidence: string | null; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
@@ -105,12 +113,16 @@ export function buildBillCandidates(ctx: Pick<SpendingContext, 'obligations' | '
   return out
 }
 
+export const ownerRulesOf = (ctx: Pick<SpendingContext, 'merchantRules'>): Map<string, BucketKey> =>
+  new Map((ctx.merchantRules ?? []).filter(r => isBucketKey(r.category) && BATCH_APPROVABLE_BUCKETS.includes(r.category)).map(r => [r.merchantKey, r.category as BucketKey]))
+
 export function explorerFromContext(ctx: SpendingContext, asOf: string, accountScope: AccountScope = 'all', activeEnvironment?: 'sandbox' | 'production') {
   const dates = ctx.txs.map(t => t.date).sort()
   const start = dates.length ? addDays(dates[0], -7) : asOf, end = dates.length ? addDays(dates[dates.length - 1], 7) : asOf
   const bills = buildBillCandidates(ctx, start, end)
   const built = buildRows({
     asOf, accountScope, activeEnvironment, txs: ctx.txs, accounts: ctx.accounts, decisions: ctx.decisions, bills, debts: ctx.debts, projects: ctx.projects,
+    ownerRules: ownerRulesOf(ctx),
     obligationLabels: new Map(ctx.obligations.map(o => [o.id, o.name])), commitmentLabels: new Map(ctx.commitments.map(c => [c.id, c.title])),
   })
   return { ...built, bills }
@@ -172,6 +184,7 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
     options: {
       buckets: BUCKETS.map(b => ({ key: b.key, label: b.label, hint: b.hint, flow: (b as { flow?: 'in' }).flow ?? 'out' })),
       batchBuckets: BATCH_APPROVABLE_BUCKETS, maxBatch: MAX_BATCH,
+      merchantRules: (ctx.merchantRules ?? []).map(r => ({ merchantKey: r.merchantKey, label: r.merchantLabel ?? r.merchantKey, category: r.category, categoryLabel: bucketLabel(r.category) })), rulesAvailable: ctx.rulesAvailable === true,
       relationships: RELATIONSHIP_KINDS,
       accounts: ctx.accounts.map(a => ({ ref: a.providerAccountRef, label: a.financialAccountName ?? a.label, mask: a.mask, ownership: a.ownership })),
       obligations: ctx.obligations.filter(o => o.status === 'active').map(o => ({ id: o.id, label: o.name, amountMinor: o.amountMinor })),
@@ -200,7 +213,8 @@ export type DecisionInput =
   | { action: 'accept_suggestion' | 'reject_suggestion'; transactionId?: unknown; dimension?: unknown }
   | { action: 'undo'; transactionId?: unknown; dimension?: unknown }
   | { action: 'ignore' | 'unignore'; transactionId?: unknown }
-  | { action: 'confirm_batch'; transactionIds?: unknown; categoryOverrides?: unknown }
+  | { action: 'confirm_batch'; transactionIds?: unknown; categoryOverrides?: unknown; rememberTransactionIds?: unknown }
+  | { action: 'forget_rule'; merchantKey?: unknown }
 
 const bad = (m: string) => new BankConnectionError('invalid_request', 400, m)
 const requireId = (v: unknown, what: string): string => { if (typeof v !== 'string' || !UUID.test(v)) throw bad(`A valid ${what} is required.`); return v }
@@ -235,8 +249,8 @@ async function relationshipRow(deps: SpendingDeps, actor: BankActor, txId: strin
   return row
 }
 
-export const MAX_BATCH = 50
-export type BatchSkipReason = 'not_found' | 'pending' | 'money_in' | 'no_suggestion' | 'not_high_confidence' | 'needs_individual_review' | 'relationship_suggested' | 'already_decided' | 'failed'
+export const MAX_BATCH = 100
+export type BatchSkipReason = 'not_found' | 'pending' | 'money_in' | 'no_suggestion' | 'not_high_confidence' | 'needs_individual_review' | 'mixed_purpose' | 'relationship_suggested' | 'already_decided' | 'failed'
 export interface BatchItemResult { id: string; result: 'confirmed' | 'unchanged' | 'skipped'; reason?: BatchSkipReason; bucket?: string; overridden?: boolean }
 
 /**
@@ -251,7 +265,7 @@ export interface BatchItemResult { id: string; result: 'confirmed' | 'unchanged'
  * the row must still be a posted, undecided money-out transaction with no competing relationship suggestion. It is saved as the OWNER's decision
  * (not a rule's), with the original suggestion kept in the audit basis. A malformed or disallowed override refuses the whole request unchanged.
  */
-async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknown, rawOverrides: unknown) {
+async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknown, rawOverrides: unknown, rawRemember: unknown) {
   if (!Array.isArray(rawIds) || rawIds.length === 0) throw bad('Select at least one transaction.')
   const ids = [...new Set(rawIds)]
   if (ids.length > MAX_BATCH) throw bad(`Approve at most ${MAX_BATCH} transactions at a time.`)
@@ -266,6 +280,13 @@ async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknow
       if (!isBucketKey(bucket) || !BATCH_APPROVABLE_BUCKETS.includes(bucket)) throw bad('Choose an everyday expense category. Payroll, personal, transfers and owner draws are decided one at a time.')
       overrides.set(id, bucket)
     }
+  }
+  // BANK-6B: transactions whose merchant the owner asked to REMEMBER. Only ids selected in this same request count; the merchant and the category are
+  // derived here from the saved decision, never taken from the browser.
+  const remember = new Set<string>()
+  if (rawRemember !== undefined && rawRemember !== null) {
+    if (!Array.isArray(rawRemember) || rawRemember.length > ids.length) throw bad('Remembered merchants were not understood.')
+    for (const id of rawRemember) { requireId(id, 'transaction'); if (!ids.includes(id)) throw bad('A merchant was marked to remember for a transaction that is not selected.'); remember.add(id) }
   }
   const org = actor.organizationId
   const ctx = await deps.repo.loadContext(org, addDays(today(deps), -200)) // organization-scoped: another organization's ids are simply not found
@@ -292,6 +313,8 @@ async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknow
     if (row.bucket.confidence !== 'high') { skip('not_high_confidence'); continue }
     if (!BATCH_APPROVABLE_BUCKETS.includes(row.bucket.key)) { skip('needs_individual_review'); continue }
     if (row.relationship.state === 'suggested') { skip('relationship_suggested'); continue }
+    // A mixed-purpose merchant (retail, grocery, fuel, food, Apple...) never goes through on a suggestion alone: the owner must pick the category.
+    if (row.bucket.mixed) { skip('mixed_purpose'); continue }
     try {
       const base = { source: 'rule' as const, confidence: 'high' as Confidence, basis: { mode: 'suggestion_batch', reasons: row.bucket.reasons, confidence: 'high' } }
       const out = await deps.repo.replaceDecision({ ...fresh(actor, id, 'category', { category: row.bucket.key }), ...base })
@@ -299,8 +322,64 @@ async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknow
     } catch { skip('failed') }
   }
   const confirmed = results.filter(r => r.result === 'confirmed').length
-  logNote(deps, { event: 'spending.batch', organizationId: org, outcome: `confirmed=${confirmed}/${results.length}` })
-  return { outcome: 'batch', confirmed, unchanged: results.filter(r => r.result === 'unchanged').length, skipped: results.filter(r => r.result === 'skipped').length, results }
+  // Remember AFTER the decisions are saved. A rule failure never undoes an approval; it is reported so the owner knows nothing was remembered.
+  const rules = await rememberMerchants(deps, actor, remember, results, rows, ctx)
+  logNote(deps, { event: 'spending.batch', organizationId: org, outcome: `confirmed=${confirmed}/${results.length} rules=${rules.saved.length}` })
+  return { outcome: 'batch', confirmed, unchanged: results.filter(r => r.result === 'unchanged').length, skipped: results.filter(r => r.result === 'skipped').length, results, rules }
+}
+
+async function rememberMerchants(deps: SpendingDeps, actor: BankActor, remember: Set<string>, results: BatchItemResult[], rows: Map<string, ReturnType<typeof explorerFromContext>['rows'][number]>, ctx: SpendingContext) {
+  const out = { saved: [] as Array<{ merchantKey: string; label: string; category: string }>, skipped: [] as Array<{ merchantKey: string; reason: 'unknown_merchant' | 'conflicting_categories' | 'unavailable' | 'failed' }> }
+  if (!remember.size) return out
+  const decided = new Map<string, Set<string>>()
+  const labels = new Map<string, string>()
+  for (const r of results) {
+    const row = rows.get(r.id)
+    if (!row || r.result === 'skipped' || !r.bucket) continue
+    decided.set(row.merchantKey, new Set([...(decided.get(row.merchantKey) ?? []), r.bucket]))
+    labels.set(row.merchantKey, row.merchant)
+  }
+  const wanted = new Set([...remember].map(id => rows.get(id)?.merchantKey).filter((k): k is string => !!k))
+  for (const key of wanted) {
+    const cats = decided.get(key)
+    if (!cats) continue // nothing under this merchant was actually approved
+    if (key === 'UNKNOWN MERCHANT' || key.length < 3) { out.skipped.push({ merchantKey: key, reason: 'unknown_merchant' }); continue }
+    if (cats.size !== 1) { out.skipped.push({ merchantKey: key, reason: 'conflicting_categories' }); continue }
+    const category = [...cats][0]
+    if (!BATCH_APPROVABLE_BUCKETS.includes(category)) { out.skipped.push({ merchantKey: key, reason: 'failed' }); continue }
+    if (ctx.rulesAvailable === false) { out.skipped.push({ merchantKey: key, reason: 'unavailable' }); continue }
+    try { await deps.repo.upsertMerchantRule(actor.organizationId, actor.userId, { merchantKey: key, merchantLabel: (labels.get(key) ?? key).slice(0, 80), category }); out.saved.push({ merchantKey: key, label: labels.get(key) ?? key, category }) } catch { out.skipped.push({ merchantKey: key, reason: 'failed' }) }
+  }
+  return out
+}
+
+/** Forget a remembered category. Earlier approvals are untouched; only future suggestions stop using the rule. */
+async function forgetRule(deps: SpendingDeps, actor: BankActor, rawKey: unknown) {
+  if (typeof rawKey !== 'string' || !rawKey.trim() || rawKey.length > 80) throw bad('Choose the merchant to forget.')
+  const done = await deps.repo.revokeMerchantRule(actor.organizationId, actor.userId, rawKey)
+  logNote(deps, { event: 'spending.rule_forgotten', organizationId: actor.organizationId, outcome: done ? 'revoked' : 'nothing_to_forget' })
+  return { outcome: done ? 'forgotten' : 'nothing_to_forget' }
+}
+
+/** BANK-6B Smart Review: the same unreviewed transactions, grouped by merchant + suggested category, with exceptions kept out of bulk approval. Read-only. */
+export async function getSmartReview(deps: SpendingDeps, actor: BankActor, rawQuery: Record<string, unknown> = {}) {
+  assertAuthority(actor)
+  const asOf = today(deps)
+  const ctx = await deps.repo.loadContext(actor.organizationId, addDays(asOf, -200))
+  const q = parseQuery(rawQuery)
+  const environment = deps.environment ?? 'sandbox'
+  const accounts = q.accounts ?? 'mapped'
+  const { rows } = explorerFromContext(ctx, asOf, accounts, environment)
+  const from = q.from ?? addDays(asOf, -89)
+  const inWindow = rows.filter(r => r.date >= from && (!q.to || r.date <= q.to))
+  const built = buildSmartReview(inWindow, ctx.txs, { activeRuleKeys: new Set((ctx.merchantRules ?? []).map(r => r.merchantKey)) })
+  return {
+    asOf, window: { from, to: q.to ?? asOf }, accounts, environment, ...built,
+    rulesAvailable: ctx.rulesAvailable === true, maxBatch: MAX_BATCH,
+    merchantRules: (ctx.merchantRules ?? []).map(r => ({ merchantKey: r.merchantKey, label: r.merchantLabel ?? r.merchantKey, category: r.category, categoryLabel: bucketLabel(r.category) })),
+    options: { buckets: BUCKETS.map(b => ({ key: b.key, label: b.label, hint: b.hint, flow: (b as { flow?: 'in' }).flow ?? 'out' })), batchBuckets: BATCH_APPROVABLE_BUCKETS },
+    draftScope: createHash('sha256').update(`${actor.organizationId}:${actor.userId}:review-draft`).digest('hex').slice(0, 16),
+  }
 }
 
 /** The audit trail of one transaction for the owner: what was decided, by rule or by the owner, and what was later undone. */
@@ -331,7 +410,8 @@ export async function applyDecision(deps: SpendingDeps, actor: BankActor, input:
 async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: DecisionInput) {
   assertAuthority(actor)
   const org = actor.organizationId
-  if (input.action === 'confirm_batch') return confirmBatch(deps, actor, input.transactionIds, input.categoryOverrides)
+  if (input.action === 'confirm_batch') return confirmBatch(deps, actor, input.transactionIds, input.categoryOverrides, input.rememberTransactionIds)
+  if (input.action === 'forget_rule') return forgetRule(deps, actor, input.merchantKey)
   const txId = requireId((input as { transactionId?: unknown }).transactionId, 'transaction')
   const ev = await deps.repo.getEvidence(org, txId) // organization-scoped: another organization's id is simply "not found"
   if (!ev || ev.removed) throw new BankConnectionError('not_found', 404, 'Transaction not found.')

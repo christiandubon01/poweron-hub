@@ -432,7 +432,7 @@ describe('BANK-5 static guarantees', () => {
   it('the spending code writes ONLY interpretation rows and never touches the ledger, accounts, obligations, projects, payroll, debt or Outlook', () => {
     const repo = read('../spending/spendingRepo.ts')
     const writes = [...repo.matchAll(/from\('([a-z_]+)'\)\s*\.(insert|update|upsert|delete)/g)].map(m => `${m[1]}:${m[2]}`)
-    expect([...new Set(writes)].sort()).toEqual(['financial_provider_interpretations:insert', 'financial_provider_interpretations:update'])
+    expect([...new Set(writes)].sort()).toEqual(['financial_provider_interpretations:insert', 'financial_provider_interpretations:update', 'financial_provider_merchant_rules:insert', 'financial_provider_merchant_rules:update']) // BANK-6B adds only the owner's remembered-merchant preference table
     expect(repo).not.toMatch(/\.delete\(|\.upsert\(/)
     expect([...repo.matchAll(/\.rpc\('([a-z_]+)'/g)].map(m => m[1])).toEqual(['financial_provider_replace_interpretation']) // the ONE atomic function, nothing else
     for (const f of ['../spending/spendingService.ts', '../spending/classifier.ts', '../spending/analytics.ts', '../spending/explorer.ts', '../../../../netlify/functions/bank/plaid-spending.ts']) {

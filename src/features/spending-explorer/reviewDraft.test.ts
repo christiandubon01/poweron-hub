@@ -60,4 +60,11 @@ describe('review draft storage', () => {
       expect(loadDraft(SCOPE, NOW)).toBeNull(); expect(() => clearDraft(SCOPE)).not.toThrow()
     } finally { Object.defineProperty(window, 'localStorage', real) }
   })
+  it('remember is optional, validated, limited to saved ids, and absent in older drafts', () => {
+    const a = '00000000-0000-4000-8000-000000000001', b = '00000000-0000-4000-8000-000000000002'
+    saveDraft('abcdef0123456789', { ids: [a], off: [], overrides: {}, remember: [a, b, 'x'] }, 1000, 'smart')
+    expect(loadDraft('abcdef0123456789', 1001, 'smart')!.remember).toEqual([a])
+    saveDraft('abcdef0123456789', { ids: [a], off: [], overrides: {} }, 1000)
+    expect(loadDraft('abcdef0123456789', 1001)!.remember).toBeUndefined()
+  })
 })

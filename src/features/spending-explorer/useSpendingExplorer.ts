@@ -16,7 +16,7 @@ export interface Target { type: string | null; id: string | null; label: string 
 export interface ExplorerRow {
   id: string; date: string; name: string; merchant: string; amountMinor: number; direction: 'money_out' | 'money_in' | 'zero'; pending: boolean
   account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; mapped: boolean; environment: 'sandbox' | 'production' | null }
-  bucket: { key: string | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
+  bucket: { key: string | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[]; basis?: string; mixed?: boolean }
   relationship: { kind: string; label: string; target: Target | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
   review: 'suggested' | 'confirmed' | 'needs_review' | 'ignored'
   scope: { value: 'business' | 'personal' | 'unclear'; source: 'owner' | 'account' | 'none' }
@@ -61,7 +61,7 @@ export type DecisionBody =
   | { action: 'accept_suggestion' | 'reject_suggestion'; transactionId: string; dimension: 'bucket' | 'relationship' }
   | { action: 'undo'; transactionId: string; dimension: 'bucket' | 'relationship' | 'ignore' }
   | { action: 'ignore' | 'unignore'; transactionId: string }
-  | { action: 'confirm_batch'; transactionIds: string[]; categoryOverrides?: Record<string, string> }
+  | { action: 'confirm_batch'; transactionIds: string[]; categoryOverrides?: Record<string, string>; rememberTransactionIds?: string[] }
 
 const isoDaysAgo = (asOf: string, days: number): string => new Date(Date.parse(`${asOf}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10)
 const PAGE = 100

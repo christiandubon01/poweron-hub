@@ -37,7 +37,13 @@ const MERCHANT_RULES: Array<{ bucket: BucketKey; pattern: RegExp; label: string 
   { bucket: 'taxes', pattern: re('IRS', 'EFTPS', 'FRANCHISE TAX', 'CDTFA', 'SALES TAX', 'TAX PAYMENT', 'EDD'), label: 'tax payment' },
   { bucket: 'personal_owner', pattern: re('NETFLIX', 'SPOTIFY', 'HULU', 'DISNEY PLUS', 'HBO MAX', 'PELOTON'), label: 'consumer subscription' },
 ]
-const FEE_RULE = re('OVERDRAFT', 'NSF', 'SERVICE FEE', 'MONTHLY FEE', 'MAINTENANCE FEE', 'WIRE FEE', 'FOREIGN TRANSACTION FEE', 'INTEREST CHARGE', 'FINANCE CHARGE', 'ANNUAL FEE', 'LATE FEE', 'RETURNED ITEM')
+const FEE_RULE = re('OVERDRAFT', 'NSF', 'ATM FEE', 'ATM WITHDRAWAL FEE', 'NON WF ATM', 'NON WELLS FARGO ATM', 'INTERNATIONAL TRANSACTION FEE', 'INTL TRANSACTION FEE', 'STOP PAYMENT FEE', 'PAPER STATEMENT FEE', 'SERVICE FEE', 'MONTHLY FEE', 'MAINTENANCE FEE', 'WIRE FEE', 'FOREIGN TRANSACTION FEE', 'INTEREST CHARGE', 'FINANCE CHARGE', 'ANNUAL FEE', 'LATE FEE', 'RETURNED ITEM')
+/** Probably business software, but only the owner can verify: suggested as "possible", never in bulk without a choice. */
+const POSSIBLE_SOFTWARE = re('OLLAMA', 'ELEVENLABS', 'ELEVEN LABS')
+/** Merchants that serve more than one purpose (home/business, personal/business): the owner picks the category, a merchant name never decides. */
+const MIXED_MERCHANT = re('APPLE', 'APPLE COM', 'ITUNES', 'AMAZON', 'AMZN', 'WALMART', 'TARGET', 'COSTCO', 'VONS', 'SAFEWAY', 'RALPHS', 'ALBERTSONS', 'TRADER JOE S', 'WHOLE FOODS', 'HOME DEPOT', 'LOWES', 'LOWE S', 'ACE HARDWARE', 'HARBOR FREIGHT', 'AUTOZONE', 'O REILLY', 'SEVEN ELEVEN', 'PAYPAL', 'VENMO', 'CASH APP', 'SQUARE', 'GOOGLE')
+/** Buckets that describe a kind of merchant (food, fuel) rather than a business purpose: the same place can be business or personal. */
+const MIXED_BUCKETS = new Set<BucketKey>(['meals', 'fuel_vehicle'])
 const PAYROLL_PROCESSORS = re('GUSTO', 'ADP', 'PAYCHEX', 'PAYLOCITY', 'TRINET', 'JUSTWORKS', 'QUICKBOOKS PAYROLL', 'INTUIT PAYROLL')
 const PAYROLL_GENERIC = re('PAYROLL')
 const TRANSFER_KEYWORD = re('TRANSFER', 'XFER', 'ONLINE TRANSFER', 'ACH TRANSFER', 'WIRE TRANSFER')
@@ -70,6 +76,7 @@ const PFC_DETAILED: Array<{ prefix: string; bucket: BucketKey; strong: boolean }
   { prefix: 'MEDICAL', bucket: 'personal_owner', strong: false },
   { prefix: 'FOOD_AND_DRINK', bucket: 'meals', strong: false },
 ]
+const FEE_WORDS = re('FEE', 'FEES', 'CHARGE', 'OVERDRAFT', 'NSF', 'INTEREST', 'PENALTY')
 const HIGH_PLAID = new Set(['VERY_HIGH', 'HIGH'])
 
 function bucketFromProvider(tx: EvidenceTx): BucketSuggestion | null {
@@ -78,6 +85,11 @@ function bucketFromProvider(tx: EvidenceTx): BucketSuggestion | null {
   const detailed = (c.detailed ?? '').toUpperCase(), primary = c.primary.toUpperCase()
   const hit = PFC_DETAILED.find(p => detailed.startsWith(p.prefix) || (!detailed && primary.startsWith(p.prefix)))
   if (!hit) return null
+  // BANK-6B: a provider "bank fees" label alone is not evidence of a fee (Plaid labelled a plain Apple purchase that way). Without fee wording
+  // in the description it is shown only as a LOW-confidence hint the owner must check.
+  if (hit.bucket === 'bank_finance_fees' && !FEE_WORDS.test(searchText(tx.name, tx.merchantName))) {
+    return { bucket: hit.bucket, confidence: 'low', basis: 'provider_category', reasons: ['The bank labelled this as a fee, but the description does not mention a fee, so check it before approving.'] }
+  }
   const sure = hit.strong && HIGH_PLAID.has((c.confidence ?? '').toUpperCase())
   return {
     bucket: hit.bucket, confidence: sure ? 'high' : 'possible', basis: 'provider_category',
@@ -92,6 +104,8 @@ export interface ClassifierInput {
   bills: KnownBillCandidate[]
   debts: DebtOption[]
   projects: ProjectOption[]
+  /** BANK-6B: active owner-approved merchant rules (merchantKey -> everyday category). They only improve suggestions. */
+  ownerRules?: Map<string, BucketKey>
 }
 
 /** Owner-confirmed bucket decisions grouped by merchant: the ONLY learned signal, and it only ever informs a bucket. */
@@ -110,7 +124,20 @@ export function buildMerchantHistory(txs: EvidenceTx[], decisions: Decision[]): 
   return history
 }
 
-function bucketFor(tx: EvidenceTx, history: Map<string, Map<BucketKey, number>>): BucketSuggestion | null {
+export const isMixedMerchant = (text: string): boolean => MIXED_MERCHANT.test(text)
+
+/** The bucket suggested by the provider's own category alone (used only to flag a disagreement; never a decision). */
+export const providerBucketOf = (tx: EvidenceTx): BucketKey | null => bucketFromProvider(tx)?.bucket ?? null
+
+function bucketFor(tx: EvidenceTx, history: Map<string, Map<BucketKey, number>>, ownerRules: Map<string, BucketKey> = new Map()): BucketSuggestion | null {
+  const s = bucketForUnflagged(tx, history, ownerRules)
+  if (!s) return s
+  // A remembered rule may PREFILL the category, but it never lifts the mixed-purpose requirement: the owner still confirms the category for the group.
+  const mixed = MIXED_BUCKETS.has(s.bucket) || MIXED_MERCHANT.test(searchText(tx.name, tx.merchantName))
+  return mixed ? { ...s, mixed: true } : s
+}
+
+function bucketForUnflagged(tx: EvidenceTx, history: Map<string, Map<BucketKey, number>>, ownerRules: Map<string, BucketKey>): BucketSuggestion | null {
   const text = searchText(tx.name, tx.merchantName)
   const key = merchantKey(tx.name, tx.merchantName)
   const learned = history.get(key)
@@ -132,7 +159,18 @@ function bucketFor(tx: EvidenceTx, history: Map<string, Map<BucketKey, number>>)
   else if (FEE_RULE.test(text)) fromRules = { bucket: 'bank_finance_fees', confidence: 'high', basis: 'fee_rule', reasons: ['The description reads like a bank or finance fee.'] }
   else if (PAYROLL_PROCESSORS.test(text)) fromRules = { bucket: 'payroll_people', confidence: 'high', basis: 'payroll', reasons: ['The merchant is a payroll provider.'] }
   else if (rule) fromRules = { bucket: rule.bucket, confidence: 'high', basis: 'merchant_rule', reasons: [`The merchant looks like a ${rule.label}.`] }
+  else if (POSSIBLE_SOFTWARE.test(text)) fromRules = { bucket: 'software_subscriptions', confidence: 'possible', basis: 'merchant_rule', reasons: ['This looks like a software or AI service, which is usually a business subscription. Confirm it is yours for the business.'] }
+  else if (/\bAPPLE\b/.test(text) && !MERCHANT_RULES.some(r => r.pattern.test(text))) fromRules = { bucket: 'software_subscriptions', confidence: 'possible', basis: 'merchant_rule', reasons: ['Apple sells hardware, apps and services, so the purpose is unclear. It could be software, equipment or personal.'] }
   else if (PAYROLL_GENERIC.test(text)) fromRules = { bucket: 'payroll_people', confidence: 'possible', basis: 'payroll', reasons: ['The description mentions payroll.'] }
+  // BANK-6B precedence: an explicit decision on the transaction (handled by the caller) > a REMEMBERED OWNER RULE > implicit owner history > curated rule >
+  // provider category. A remembered rule only improves the suggestion: it never approves anything, and it never overrides text that signals an owner
+  // draw, payroll or a fee (those are always individual decisions).
+  const remembered = ownerRules.get(key)
+  if (remembered && !OWNER_DRAW.test(text) && !FEE_RULE.test(text) && !PAYROLL_PROCESSORS.test(text) && !PAYROLL_GENERIC.test(text)) {
+    return { bucket: remembered, basis: 'owner_rule', confidence: 'high', reasons: [`You asked to remember ${bucketLabel(remembered)} for ${key.toLowerCase()}. This is only a suggestion: each transaction still needs your approval.`] }
+  }
+  // Fee wording, payroll processors and owner-draw text describe WHAT the money was; a merchant's earlier decisions do not outrank them.
+  if (fromHistory && fromRules && (fromRules.basis === 'fee_rule' || fromRules.basis === 'payroll' || OWNER_DRAW.test(text))) return fromRules
   if (fromHistory) {
     // The owner's own decisions win a disagreement. When the owner and a curated rule AGREE, the suggestion is as strong as it gets.
     if (fromRules && fromRules.bucket === fromHistory.bucket) return { ...fromHistory, confidence: 'high', reasons: [...fromHistory.reasons, ...fromRules.reasons] }
@@ -322,7 +360,7 @@ export function classifyAll(input: ClassifierInput): Map<string, TxSuggestion> {
 
   const out = new Map<string, TxSuggestion>()
   for (const tx of live) {
-    let bucket: BucketSuggestion | null = tx.amountMinor > 0 ? bucketFor(tx, history) : tx.amountMinor < 0 ? inflowBucketFor(tx) : null
+    let bucket: BucketSuggestion | null = tx.amountMinor > 0 ? bucketFor(tx, history, input.ownerRules) : tx.amountMinor < 0 ? inflowBucketFor(tx) : null
     const relationship = relationships.get(tx.id) ?? null
     if (relationship?.kind === 'transfer') bucket = { bucket: 'transfers', confidence: relationship.confidence, basis: 'transfer', reasons: ['It looks like a movement between accounts.'] }
     else if (relationship?.kind === 'payroll' && !bucket) bucket = { bucket: 'payroll_people', confidence: relationship.confidence, basis: 'payroll', reasons: ['It looks like payroll.'] }

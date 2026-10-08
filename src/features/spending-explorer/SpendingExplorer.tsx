@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
+import SmartReview from './SmartReview'
 import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
 const btn = 'min-h-[44px] rounded-lg px-3 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
@@ -8,7 +9,7 @@ const usd0 = (minor: number) => `$${Math.round(Math.abs(minor) / 100).toLocaleSt
 const usd2 = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 const SKIP_TEXT: Record<string, string> = {
-  pending: 'still pending', money_in: 'money coming in', no_suggestion: 'nothing recognised', not_high_confidence: 'not a confident match', needs_individual_review: 'needs your individual decision',
+  pending: 'still pending', money_in: 'money coming in', no_suggestion: 'nothing recognised', not_high_confidence: 'not a confident match', needs_individual_review: 'needs your individual decision', mixed_purpose: 'needs you to pick the category',
   relationship_suggested: 'also suggests a bill, payroll, transfer or project', already_decided: 'already decided', not_found: 'not found', failed: 'could not be saved',
 }
 export const batchSummary = (r: BatchResult): string => {
@@ -29,7 +30,7 @@ const REL_KINDS: Array<{ key: string; label: string }> = [
 ]
 
 /** Mirrors the SERVER's batch rule only so the checkboxes appear on the right rows. The server re-decides everything when the owner confirms. */
-const isBatchApprovable = (r: ExplorerRow, batchBuckets: string[]) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high'
+const isBatchApprovable = (r: ExplorerRow, batchBuckets: string[]) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high' && !r.bucket.mixed
   && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
 
 const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}${usd2(r.amountMinor)}`
@@ -228,8 +229,9 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
  * no bank evidence exists. Everything here is a SUGGESTION until the owner confirms it, and confirming changes no balance, ledger or report.
  */
 export default function SpendingExplorer() {
-  const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore } = useSpendingExplorer()
+  const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore, refresh } = useSpendingExplorer()
   const [showFilters, setShowFilters] = useState(false)
+  const [mode, setMode] = useState<'explorer' | 'smart'>('explorer')
   // The review DRAFT. `selection` holds a snapshot of each row (display only), `off` the ones unchecked, `overrides` the owner's category corrections.
   // Nothing here is a decision: the server re-validates every id and category when the owner confirms.
   const [selection, setSelection] = useState<Map<string, ExplorerRow>>(new Map())
@@ -242,7 +244,7 @@ export default function SpendingExplorer() {
   const restored = useRef(false)
   const scope = data?.draftScope ?? null
   const batchBuckets = data?.options.batchBuckets ?? []
-  const maxBatch = data?.options.maxBatch ?? 50
+  const maxBatch = data?.options.maxBatch ?? 100
 
   // Reload safety: restore the saved draft ONCE per page load, re-selecting only rows that are still eligible bank evidence. Ids not on the loaded page wait
   // (they are shown as a note) and are dropped once the whole unfiltered queue is loaded without them. A restored draft never carries an approval.
@@ -344,6 +346,11 @@ export default function SpendingExplorer() {
     <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-3"><Snapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>
 
+    <div className="mt-4 flex gap-2" role="group" aria-label="Review mode">
+      <button type="button" aria-pressed={mode === 'explorer'} className={`${btn} ${mode === 'explorer' ? 'bg-white/10' : ''}`} onClick={() => setMode('explorer')} data-testid="spending-mode-explorer">Explorer</button>
+      <button type="button" aria-pressed={mode === 'smart'} className={`${btn} ${mode === 'smart' ? 'bg-white/10' : ''}`} onClick={() => setMode('smart')} data-testid="spending-mode-smart">Smart Review</button>
+    </div>
+    {mode === 'smart' ? <SmartReview onChanged={() => void refresh()} /> : <>
     <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-1 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Spending views">
       {VIEWS.map(v => <button key={v.key} type="button" role="tab" aria-selected={filters.view === v.key} data-testid={`spending-view-${v.key}`} onClick={() => update({ view: v.key })}
@@ -401,5 +408,6 @@ export default function SpendingExplorer() {
             <button type="button" className={`${btn} bg-white/10`} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
           </div>}
     </div>}
+    </>}
   </section>
 }

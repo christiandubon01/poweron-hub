@@ -68,7 +68,12 @@ export interface BucketSuggestion {
   confidence: Confidence
   reasons: string[]
   /** How it was derived, for the explanation only. */
-  basis: 'owner_history' | 'merchant_rule' | 'provider_category' | 'fee_rule' | 'transfer' | 'payroll' | 'relationship'
+  basis: 'owner_rule' | 'owner_history' | 'merchant_rule' | 'provider_category' | 'fee_rule' | 'transfer' | 'payroll' | 'relationship'
+  /**
+   * BANK-6B: the merchant is one that serves more than one purpose (retail, grocery, fuel, food, Apple...). Such a suggestion is never approved
+   * in bulk unless the owner explicitly picks the category (or has remembered a rule for the merchant).
+   */
+  mixed?: boolean
 }
 export interface RelationshipTarget { type: 'obligation' | 'commitment' | 'debt_account' | 'project' | 'counterpart_tx' | null; id: string | null; label: string | null }
 export interface RelationshipSuggestion { kind: RelationshipKind; target: RelationshipTarget; confidence: Confidence; reasons: string[] }
@@ -84,7 +89,7 @@ export interface ExplorerRow {
   direction: Direction
   pending: boolean
   account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; /** true only when the owner explicitly mapped this provider account to a Cash OS account */ mapped: boolean; environment: 'sandbox' | 'production' | null }
-  bucket: { key: BucketKey | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
+  bucket: { key: BucketKey | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[]; /** how a SUGGESTION was derived (absent for confirmed/none) */ basis?: BucketSuggestion['basis']; /** mixed-purpose merchant: needs an explicit category before bulk approval */ mixed?: boolean }
   relationship: {
     kind: RelationshipKind | 'unknown'
     label: string

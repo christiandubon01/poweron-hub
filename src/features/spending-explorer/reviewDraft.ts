@@ -17,47 +17,51 @@ const SCOPE = /^[0-9a-f]{16}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const BUCKET = /^[a-z][a-z_]{1,39}$/
 
-export interface ReviewDraft { ids: string[]; off: string[]; overrides: Record<string, string> }
+/** `remember` (Smart Review only): one selected id per merchant group whose "Remember this category" choice is still pending. It is a draft choice, never a rule. */
+export interface ReviewDraft { ids: string[]; off: string[]; overrides: Record<string, string>; remember?: string[] }
 
-export const draftKey = (scope: string): string => `poweron.spending.review.draft.v${VERSION}:${scope}`
+/** `ns` keeps the Smart Review draft separate from the Explorer's own draft (they never overwrite each other). */
+export const draftKey = (scope: string, ns = ''): string => `poweron.spending.review${ns ? `.${ns}` : ''}.draft.v${VERSION}:${scope}`
 
 function store(): Storage | null {
   try { return typeof window === 'undefined' ? null : window.localStorage } catch { return null }
 }
 
-export function clearDraft(scope: string): void {
-  try { if (SCOPE.test(scope)) store()?.removeItem(draftKey(scope)) } catch { /* storage may be blocked */ }
+export function clearDraft(scope: string, ns = ''): void {
+  try { if (SCOPE.test(scope)) store()?.removeItem(draftKey(scope, ns)) } catch { /* storage may be blocked */ }
 }
 
-export function saveDraft(scope: string, draft: ReviewDraft, now = Date.now()): void {
+export function saveDraft(scope: string, draft: ReviewDraft, now = Date.now(), ns = ''): void {
   if (!SCOPE.test(scope)) return
   const ids = [...new Set(draft.ids)].filter(id => UUID.test(id)).slice(0, DRAFT_MAX_IDS)
-  if (ids.length === 0) { clearDraft(scope); return }
+  if (ids.length === 0) { clearDraft(scope, ns); return }
   const keep = new Set(ids)
   const body = {
     v: VERSION, at: now, ids,
     off: [...new Set(draft.off)].filter(id => keep.has(id)),
     overrides: Object.fromEntries(Object.entries(draft.overrides).filter(([id, b]) => keep.has(id) && BUCKET.test(b))),
+    ...((draft.remember ?? []).some(id => keep.has(id)) ? { remember: [...new Set(draft.remember)].filter(id => keep.has(id)) } : {}),
   }
-  try { store()?.setItem(draftKey(scope), JSON.stringify(body)) } catch { /* a full or blocked store only costs the convenience */ }
+  try { store()?.setItem(draftKey(scope, ns), JSON.stringify(body)) } catch { /* a full or blocked store only costs the convenience */ }
 }
 
 /** Returns a validated draft, or null (and removes the stored copy) when it is missing, expired, from the future, or malformed. */
-export function loadDraft(scope: string, now = Date.now()): ReviewDraft | null {
+export function loadDraft(scope: string, now = Date.now(), ns = ''): ReviewDraft | null {
   if (!SCOPE.test(scope)) return null
   try {
-    const raw = store()?.getItem(draftKey(scope))
+    const raw = store()?.getItem(draftKey(scope, ns))
     if (!raw) return null
-    const v = JSON.parse(raw) as { v?: unknown; at?: unknown; ids?: unknown; off?: unknown; overrides?: unknown }
-    if (v.v !== VERSION || typeof v.at !== 'number' || now - v.at > DRAFT_MAX_AGE_MS || now < v.at || !Array.isArray(v.ids)) { clearDraft(scope); return null }
+    const v = JSON.parse(raw) as { v?: unknown; at?: unknown; ids?: unknown; off?: unknown; overrides?: unknown; remember?: unknown }
+    if (v.v !== VERSION || typeof v.at !== 'number' || now - v.at > DRAFT_MAX_AGE_MS || now < v.at || !Array.isArray(v.ids)) { clearDraft(scope, ns); return null }
     const ids = [...new Set(v.ids.filter((x): x is string => typeof x === 'string' && UUID.test(x)))].slice(0, DRAFT_MAX_IDS)
-    if (ids.length === 0) { clearDraft(scope); return null }
+    if (ids.length === 0) { clearDraft(scope, ns); return null }
     const keep = new Set(ids)
     const off = Array.isArray(v.off) ? v.off.filter((x): x is string => typeof x === 'string' && keep.has(x)) : []
     const overrides: Record<string, string> = {}
     if (v.overrides && typeof v.overrides === 'object' && !Array.isArray(v.overrides)) {
       for (const [id, b] of Object.entries(v.overrides as Record<string, unknown>)) if (keep.has(id) && typeof b === 'string' && BUCKET.test(b)) overrides[id] = b
     }
-    return { ids, off, overrides }
-  } catch { clearDraft(scope); return null }
+    const remember = Array.isArray(v.remember) ? [...new Set(v.remember.filter((x): x is string => typeof x === 'string' && keep.has(x)))] : []
+    return remember.length ? { ids, off, overrides, remember } : { ids, off, overrides }
+  } catch { clearDraft(scope, ns); return null }
 }

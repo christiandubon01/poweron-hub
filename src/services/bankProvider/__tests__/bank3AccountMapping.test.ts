@@ -304,7 +304,7 @@ describe('BANK-3 static guarantees', () => {
   })
   it('19/16. BANK-3 needs no migration, and migration 154\'s disconnect function never touches provider accounts or mappings', () => {
     const nums = readdirSync(new URL('../../../../supabase/migrations/', import.meta.url)).map(f => parseInt(f, 10)).filter(n => n >= 153)
-    expect(Math.max(...nums)).toBeLessThanOrEqual(156) // BANK-5 added 155 and BANK-6P added 156; BANK-3 itself needed none
+    expect(Math.max(...nums)).toBeLessThanOrEqual(157) // BANK-5 added 155, BANK-6P added 156 and BANK-6B added 157; BANK-3 itself needed none
     const sql = readFileSync(new URL('../../../../supabase/migrations/154_bank_provider_credentials.sql', import.meta.url), 'utf8')
     const fn = sql.match(/FUNCTION public\.financial_provider_disconnect_item[\s\S]*?\$\$;/)[0]
     expect(fn).not.toMatch(/financial_provider_accounts|financial_provider_account_mappings|DELETE/i)

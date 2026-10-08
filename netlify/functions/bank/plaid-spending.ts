@@ -8,15 +8,15 @@
  * transaction, changes a balance or include_in_cash, marks a bill or debt paid, records a project payment, or touches payroll or Outlook.
  * Organization and role come from the authenticated profile only (a body organizationId is ignored). Owner/admin only.
  */
-import { applyDecision, getExplorer, getTransactionHistory } from '../../../src/services/bankProvider/spending/spendingService'
+import { applyDecision, getExplorer, getSmartReview, getTransactionHistory } from '../../../src/services/bankProvider/spending/spendingService'
 import { createSpendingRepo } from '../../../src/services/bankProvider/spending/spendingRepo'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 import { corsPreflight, errorResponse, jsonResponse, parseJsonBody, resolveOwnerContext, safeLog } from './plaidAuth'
 
-const ACTIONS = new Set(['confirm_batch', 'set_bucket', 'set_relationship', 'accept_suggestion', 'reject_suggestion', 'undo', 'ignore', 'unignore'])
+const ACTIONS = new Set(['confirm_batch', 'set_bucket', 'set_relationship', 'accept_suggestion', 'reject_suggestion', 'undo', 'ignore', 'unignore', 'forget_rule'])
 
-// a batch carries up to 50 ids (~2 KB); every other action is tiny
-const body_limit = (event) => (String(event.body || '').includes('confirm_batch') ? 8192 : 4096)
+// a batch carries up to 100 ids plus category choices and remembered-merchant ids (~12 KB); every other action is tiny
+const body_limit = (event) => (String(event.body || '').includes('confirm_batch') ? 16384 : 4096)
 
 export function buildHandler(overrides = {}) {
   return async (event) => {
@@ -31,6 +31,7 @@ export function buildHandler(overrides = {}) {
       if (event.httpMethod === 'GET') {
         const q = event.queryStringParameters ?? {}
         if (typeof q.history === 'string') return jsonResponse(200, await getTransactionHistory(deps, auth.actor, q.history)) // the audit trail of ONE transaction
+        if (q.smart === '1') return jsonResponse(200, await getSmartReview(deps, auth.actor, q)) // BANK-6B: grouped review, read-only
         return jsonResponse(200, await getExplorer(deps, auth.actor, q))
       }
       const body = parseJsonBody(event, body_limit(event))

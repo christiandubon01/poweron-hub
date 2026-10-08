@@ -52,6 +52,8 @@ export interface ExplorerInput {
   commitmentLabels: Map<string, string>
   debts: DebtOption[]
   projects: ProjectOption[]
+  /** BANK-6B: active owner-approved merchant rules (merchantKey -> category). Suggestions only. */
+  ownerRules?: Map<string, BucketKey>
 }
 
 const KNOWN_MONEY = new Set<RelationshipKind>(['obligation', 'debt', 'payroll', 'transfer'])
@@ -59,7 +61,7 @@ const KNOWN_MONEY = new Set<RelationshipKind>(['obligation', 'debt', 'payroll', 
 export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytics: SpendingAnalytics; outOfScopeDates: string[] } {
   const accounts = new Map(input.accounts.map(a => [a.providerAccountRef, a]))
   const live = input.txs.filter(t => !t.removed)
-  const suggestions = classifyAll({ txs: live, accounts, decisions: input.decisions, bills: input.bills, debts: input.debts, projects: input.projects })
+  const suggestions = classifyAll({ txs: live, accounts, decisions: input.decisions, bills: input.bills, debts: input.debts, projects: input.projects, ownerRules: input.ownerRules })
   const confirmedBy = new Map<string, { bucket?: Decision; rel?: Decision; ignored?: Decision }>()
   for (const d of input.decisions) {
     if (d.status !== 'confirmed') continue
@@ -87,7 +89,7 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     const bucketConfirmed = dec.bucket?.category && isBucketKey(dec.bucket.category) ? (dec.bucket.category as BucketKey) : null
     const bucket: ExplorerRow['bucket'] = bucketConfirmed
       ? { key: bucketConfirmed, label: bucketLabel(bucketConfirmed), state: 'confirmed', confidence: dec.bucket!.confidence ?? 'high', reasons: ['You confirmed this.'] }
-      : sug.bucket ? { key: sug.bucket.bucket, label: bucketLabel(sug.bucket.bucket), state: 'suggested', confidence: sug.bucket.confidence, reasons: sug.bucket.reasons }
+      : sug.bucket ? { key: sug.bucket.bucket, label: bucketLabel(sug.bucket.bucket), state: 'suggested', confidence: sug.bucket.confidence, reasons: sug.bucket.reasons, basis: sug.bucket.basis, ...(sug.bucket.mixed ? { mixed: true } : {}) }
       : { key: direction === 'money_out' ? 'other_needs_review' : null, label: direction === 'money_out' ? bucketLabel('other_needs_review') : null, state: 'none', confidence: null, reasons: direction === 'money_out' ? ['Nothing recognised this transaction yet.'] : [] }
     const relationship: ExplorerRow['relationship'] = dec.rel
       ? { kind: dec.rel.kind as RelationshipKind, label: RELATIONSHIP_LABELS[dec.rel.kind as RelationshipKind], target: targetOf(dec.rel), state: 'confirmed', confidence: dec.rel.confidence ?? 'high', reasons: ['You confirmed this.'] }
