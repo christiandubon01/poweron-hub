@@ -29,20 +29,34 @@ const REL_KINDS: Array<{ key: string; label: string }> = [
 
 const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}${usd2(r.amountMinor)}`
 
-/** The selection, made reviewable: exactly what will be approved, one line each, with merchant, date, signed amount, suggested category and account. */
-function SelectedReview({ rows, busy, onRemove }: { rows: ExplorerRow[]; busy: boolean; onRemove: (row: ExplorerRow) => void }) {
-  return <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-selected-list" aria-label="Selected transactions">{rows.map(r => <li key={r.id} data-testid="spending-selected-item" className="flex items-start gap-2 py-2"
-    style={{ background: 'color-mix(in srgb, var(--fin-cash) 10%, transparent)' }}>
-    <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6 cursor-pointer" style={{ accentColor: 'var(--fin-cash)' }} checked disabled={busy} onChange={() => onRemove(r)} aria-label={`Remove ${r.merchant} from the selection`} data-testid="spending-selected-remove" /></label>
-    <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold">{r.merchant}</p>
-        <p className="text-xs text-[var(--text-secondary)]">{shortDate(r.date)} · {r.account.mappedTo ?? r.account.label}{r.account.mask ? ` ••••${r.account.mask}` : ''}</p>
-        <p className="mt-1"><Chip tone="muted">{r.bucket.label ?? 'Uncategorized'} · suggested</Chip></p>
-      </div>
-      <span className="shrink-0 text-sm font-semibold">{signed(r)}</span>
+/**
+ * The selection, made reviewable: exactly what will be approved, one line each, with merchant, date, signed amount, suggested category and account.
+ * The WHOLE line is the control (a tap anywhere on it removes it from the selection, and a "Remove" label says so), and each category can be removed
+ * in one explicit tap. Removing only changes the selection: nothing is approved or saved.
+ */
+function SelectedReview({ rows, categories, busy, onRemove, onRemoveCategory }: {
+  rows: ExplorerRow[]; categories: Array<{ key: string; label: string; count: number }>; busy: boolean
+  onRemove: (row: ExplorerRow) => void; onRemoveCategory: (key: string) => void
+}) {
+  return <div className="mt-2" data-testid="spending-selected-review">
+    <p className="text-xs text-[var(--text-secondary)]">Tap a transaction to remove it from the selection. Removing never approves or saves anything, and the transaction stays in the review queue.</p>
+    <div className="mt-2 flex flex-wrap gap-2" data-testid="spending-selected-categories" aria-label="Remove a whole category from the selection">
+      {categories.map(c => <button key={c.key} type="button" className={btn} disabled={busy} onClick={() => onRemoveCategory(c.key)} aria-label={`Remove all ${c.label} (${c.count}) from the selection`} data-testid="spending-remove-category">Remove all {c.label} ({c.count})</button>)}
     </div>
-  </li>)}</ul>
+    <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-selected-list" aria-label="Selected transactions">{rows.map(r => <li key={r.id} data-testid="spending-selected-item" style={{ background: 'color-mix(in srgb, var(--fin-cash) 10%, transparent)' }}>
+      <label className={`flex min-h-[56px] w-full items-start gap-2 py-2 ${busy ? 'opacity-60' : 'cursor-pointer'}`}>
+        <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={{ accentColor: 'var(--fin-cash)' }} checked disabled={busy} onChange={() => onRemove(r)} aria-label={`Remove ${r.merchant} from the selection`} data-testid="spending-selected-remove" /></span>
+        <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold">{r.merchant}</span>
+            <span className="block text-xs text-[var(--text-secondary)]">{shortDate(r.date)} · {r.account.mappedTo ?? r.account.label}{r.account.mask ? ` ••••${r.account.mask}` : ''}</span>
+            <span className="mt-1 block"><Chip tone="muted">{r.bucket.label ?? 'Uncategorized'} · suggested</Chip></span>
+          </span>
+          <span className="shrink-0 text-right"><span className="block text-sm font-semibold">{signed(r)}</span><span className="block text-xs underline">Remove</span></span>
+        </span>
+      </label>
+    </li>)}</ul>
+  </div>
 }
 
 /** Glance state: where the unassigned money went, as tappable bars. Selecting a bucket drills into its transactions. */
@@ -213,13 +227,21 @@ export default function SpendingExplorer() {
   // A selected row that has since been decided or changed (and is on the current page) drops out; one not on the current page keeps its snapshot.
   const chosen = [...selection.values()].map(snap => freshById.get(snap.id) ?? snap).filter(r => !freshById.has(r.id) || approvable(r)).sort((x, y) => y.date.localeCompare(x.date) || x.id.localeCompare(y.id))
   const chosenIds = new Set(chosen.map(r => r.id))
+  const categories = [...chosen.reduce((m, r) => { const key = r.bucket.key ?? r.bucket.label ?? 'uncategorized'; const e = m.get(key) ?? { key, label: r.bucket.label ?? 'Uncategorized', count: 0 }; e.count += 1; return m.set(key, e) }, new Map<string, { key: string; label: string; count: number }>()).values()].sort((x, y) => y.count - x.count || x.label.localeCompare(y.label))
   const totalOutMinor = chosen.reduce((n, r) => n + Math.abs(r.amountMinor), 0)
   const breakdown = [...chosen.reduce((m, r) => { const k = r.bucket.label ?? 'Uncategorized'; const e = m.get(k) ?? { label: k, count: 0, totalMinor: 0 }; e.count += 1; e.totalMinor += Math.abs(r.amountMinor); return m.set(k, e) }, new Map<string, { label: string; count: number; totalMinor: number }>()).values()].sort((x, y) => y.totalMinor - x.totalMinor || x.label.localeCompare(y.label))
+  const commitSelection = (next: Map<string, ExplorerRow>) => { setSelection(next); if (next.size === 0) { setReviewing(false); setConfirming(false) } }
   const toggle = (row: ExplorerRow) => {
     setConfirming(false); setBatchNote(null) // any change to the selection voids a confirmation that was already showing
-    if (selection.has(row.id)) { const n = new Map(selection); n.delete(row.id); setSelection(n) }
+    if (selection.has(row.id)) { const n = new Map(selection); n.delete(row.id); commitSelection(n) }
     else if (selection.size >= maxBatch) setBatchNote(`You can select up to ${maxBatch} at a time.`)
-    else setSelection(new Map(selection).set(row.id, row))
+    else commitSelection(new Map(selection).set(row.id, row))
+  }
+  /** Explicit, one tap: take every selected transaction of ONE suggested category out of the selection (selection only; nothing is approved or saved). */
+  const removeCategory = (key: string) => {
+    setConfirming(false); setBatchNote(null)
+    const drop = new Set(chosen.filter(r => (r.bucket.key ?? r.bucket.label ?? 'uncategorized') === key).map(r => r.id))
+    commitSelection(new Map([...selection].filter(([id]) => !drop.has(id))))
   }
   const selectConfident = () => { setConfirming(false); setBatchNote(null); setSelection(prev => { const n = new Map(prev); for (const r of eligible) { if (n.size >= maxBatch) break; n.set(r.id, r) } return n }) }
   const clearSelection = () => { setSelection(new Map()); setReviewing(false); setConfirming(false) }
@@ -273,7 +295,7 @@ export default function SpendingExplorer() {
     {batchNote && <p className="mt-1 text-xs" data-testid="spending-batch-note" role="status">{batchNote}</p>}
     {message && <p role="alert" className="mt-2 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
     {showingSelected
-      ? <SelectedReview rows={chosen} busy={busy} onRemove={toggle} />
+      ? <SelectedReview rows={chosen} categories={categories} busy={busy} onRemove={toggle} onRemoveCategory={removeCategory} />
       : rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
       : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}

@@ -392,4 +392,97 @@ describe('SpendingExplorer (BANK-5)', () => {
       expect(count()).toBe('50 selected'); expect(host.querySelector('[data-testid="spending-batch-note"]')!.textContent).toBe('You can select up to 50 at a time.')
     })
   })
+
+  describe('BANK-6A deselecting inside Review selected', () => {
+    const mk = (id: string, merchant: string, bucketKey: string, bucketLabel: string, amountMinor: number, date: string) => row({ id, merchant, name: merchant, amountMinor, date, bucket: { key: bucketKey, label: bucketLabel, state: 'suggested', confidence: 'high', reasons: [] } })
+    const mixed = () => [mk('m1', 'STARBUCKS', 'meals', 'Meals', 500, '2026-10-05'), mk('m2', 'CHIPOTLE', 'meals', 'Meals', 1200, '2026-10-04'), mk('m3', 'KFC', 'meals', 'Meals', 800, '2026-10-03'),
+      mk('f1', 'CHEVRON', 'fuel_vehicle', 'Fuel / Vehicle', 6210, '2026-10-02'), mk('h1', 'HOME DEPOT', 'materials', 'Materials', 12000, '2026-10-01')]
+    const count = () => host.querySelector('[data-testid="spending-selected-count"]')?.textContent ?? null
+    const total = () => host.querySelector('[data-testid="spending-selection-bar"]')?.textContent ?? ''
+    const items = () => [...host.querySelectorAll('[data-testid="spending-selected-item"]')]
+    const queueRows = () => [...host.querySelectorAll('[data-testid="spending-row"]')]
+    const startReview = async () => {
+      await click(host.querySelector('[data-testid="spending-select-all"]'))
+      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+    }
+
+    it('every line is a visible control: a checked checkbox and a "Remove" label, with an instruction above the list', async () => {
+      await mount(payload(mixed()))
+      await startReview()
+      expect(items()).toHaveLength(5)
+      for (const i of items()) {
+        expect((i.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+        expect(i.textContent).toContain('Remove')
+      }
+      expect(host.querySelector('[data-testid="spending-selected-review"]')!.textContent).toMatch(/Tap a transaction to remove it from the selection\. Removing never approves or saves anything/)
+    })
+
+    it('tapping ANYWHERE on a line (its merchant name, not just the box) removes it at once, and the count and dollar total update immediately', async () => {
+      await mount(payload(mixed()))
+      await startReview()
+      expect(count()).toBe('5 selected'); expect(total()).toContain('$207.10 going out') // 5.00 + 12.00 + 8.00 + 62.10 + 120.00
+      const starbucks = items().find(i => i.textContent!.includes('STARBUCKS'))!
+      await click(starbucks.querySelector('span.font-semibold'))
+      expect(items().map(i => i.textContent).join('|')).not.toContain('STARBUCKS')
+      expect(items()).toHaveLength(4)
+      expect(count()).toBe('4 selected'); expect(total()).toContain('$202.10 going out')
+      await click(items().find(i => i.textContent!.includes('HOME DEPOT'))!.querySelector('input'))
+      expect(count()).toBe('3 selected'); expect(total()).toContain('$82.10 going out')
+    })
+
+    it('a removed transaction stays in the full To Review queue (unchecked), and the rest of the selection survives going back and forth', async () => {
+      await mount(payload(mixed()))
+      await startReview()
+      await click(items().find(i => i.textContent!.includes('CHEVRON'))!.querySelector('span.font-semibold'))
+      await click(host.querySelector('[data-testid="spending-review-selected"]')) // Back to review queue
+      expect(host.querySelector('[data-testid="spending-selected-list"]')).toBeNull()
+      expect(queueRows()).toHaveLength(5) // the queue still lists everything
+      const chevron = queueRows().find(r => r.textContent!.includes('CHEVRON'))!
+      expect(chevron.getAttribute('data-selected')).toBe('false'); expect((chevron.querySelector('input') as HTMLInputElement).checked).toBe(false)
+      expect(queueRows().filter(r => r.getAttribute('data-selected') === 'true')).toHaveLength(4)
+      await click(host.querySelector('[data-testid="spending-review-selected"]')) // Review selected again
+      expect(items()).toHaveLength(4); expect(count()).toBe('4 selected')
+    })
+
+    it('one tap removes a whole suggested category (e.g. Meals) from the selection - only that category, and only the selection', async () => {
+      await mount(payload(mixed()))
+      await startReview()
+      const buttons = [...host.querySelectorAll('[data-testid="spending-remove-category"]')]
+      expect(buttons.map(b => b.textContent)).toEqual(['Remove all Meals (3)', 'Remove all Fuel / Vehicle (1)', 'Remove all Materials (1)'])
+      expect(count()).toBe('5 selected') // nothing happens until the owner taps it
+      await click(buttons[0])
+      expect(count()).toBe('2 selected'); expect(total()).toContain('$182.10 going out')
+      expect(items().map(i => i.textContent).join('|')).not.toMatch(/STARBUCKS|CHIPOTLE|KFC/)
+      expect(items().map(i => i.textContent).join('|')).toMatch(/CHEVRON/); expect(items().map(i => i.textContent).join('|')).toMatch(/HOME DEPOT/)
+      expect([...host.querySelectorAll('[data-testid="spending-remove-category"]')].map(b => b.textContent)).toEqual(['Remove all Fuel / Vehicle (1)', 'Remove all Materials (1)'])
+      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+      expect(queueRows().filter(r => /STARBUCKS|CHIPOTLE|KFC/.test(r.textContent!)).every(r => r.getAttribute('data-selected') === 'false')).toBe(true)
+      expect(queueRows()).toHaveLength(5) // all five are still in the queue to be reviewed
+    })
+
+    it('removing the last selected line leaves Review selected and returns to the full queue (the next selection does not jump into review)', async () => {
+      await mount(payload([mk('only', 'CHEVRON', 'fuel_vehicle', 'Fuel / Vehicle', 6210, '2026-10-02'), mk('o2', 'SHELL', 'fuel_vehicle', 'Fuel / Vehicle', 4000, '2026-10-01')]))
+      await startReview()
+      await click(items()[0].querySelector('input')); await click(items()[0].querySelector('input'))
+      expect(count()).toBeNull(); expect(host.querySelector('[data-testid="spending-selected-review"]')).toBeNull()
+      expect(queueRows()).toHaveLength(2)
+      await click((queueRows()[0].querySelector('input[type="checkbox"]')) as HTMLElement)
+      expect(count()).toBe('1 selected'); expect(host.querySelector('[data-testid="spending-selected-review"]')).toBeNull() // still the queue, not the review list
+    })
+
+    it('removing anything (a line or a category) saves and approves NOTHING: no request is made, and any open confirmation is withdrawn', async () => {
+      await mount(payload(mixed()))
+      await startReview()
+      const callsBefore = fetchMock.mock.calls.length
+      await click(items()[0].querySelector('span.font-semibold'))
+      await click(host.querySelector('[data-testid="spending-remove-category"]'))
+      expect(posts()).toEqual([])
+      expect(fetchMock.mock.calls.length).toBe(callsBefore) // not even a read: it is purely local selection state
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect(host.querySelector('[data-testid="spending-confirm"]')).not.toBeNull()
+      await click(items()[0].querySelector('span.font-semibold')) // changing the selection withdraws the open confirmation
+      expect(host.querySelector('[data-testid="spending-confirm"]')).toBeNull()
+      expect(posts()).toEqual([])
+    })
+  })
 })
