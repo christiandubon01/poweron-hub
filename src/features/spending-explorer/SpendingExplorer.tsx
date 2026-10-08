@@ -27,6 +27,24 @@ const REL_KINDS: Array<{ key: string; label: string }> = [
   { key: 'transfer', label: 'Transfer' }, { key: 'overhead', label: 'General overhead (business)' }, { key: 'personal', label: 'Personal' },
 ]
 
+const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}${usd2(r.amountMinor)}`
+
+/** The selection, made reviewable: exactly what will be approved, one line each, with merchant, date, signed amount, suggested category and account. */
+function SelectedReview({ rows, busy, onRemove }: { rows: ExplorerRow[]; busy: boolean; onRemove: (row: ExplorerRow) => void }) {
+  return <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-selected-list" aria-label="Selected transactions">{rows.map(r => <li key={r.id} data-testid="spending-selected-item" className="flex items-start gap-2 py-2"
+    style={{ background: 'color-mix(in srgb, var(--fin-cash) 10%, transparent)' }}>
+    <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6 cursor-pointer" style={{ accentColor: 'var(--fin-cash)' }} checked disabled={busy} onChange={() => onRemove(r)} aria-label={`Remove ${r.merchant} from the selection`} data-testid="spending-selected-remove" /></label>
+    <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold">{r.merchant}</p>
+        <p className="text-xs text-[var(--text-secondary)]">{shortDate(r.date)} · {r.account.mappedTo ?? r.account.label}{r.account.mask ? ` ••••${r.account.mask}` : ''}</p>
+        <p className="mt-1"><Chip tone="muted">{r.bucket.label ?? 'Uncategorized'} · suggested</Chip></p>
+      </div>
+      <span className="shrink-0 text-sm font-semibold">{signed(r)}</span>
+    </div>
+  </li>)}</ul>
+}
+
 /** Glance state: where the unassigned money went, as tappable bars. Selecting a bucket drills into its transactions. */
 function Snapshot({ a, selected, onPick }: { a: Analytics; selected: string; onPick: (bucket: string) => void }) {
   const top = a.unassigned.byBucket.filter(b => b.totalMinor > 0)
@@ -141,17 +159,19 @@ function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRo
   </div>
 }
 
-function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle }: { row: ExplorerRow; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (id: string) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle }: { row: ExplorerRow; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
-  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} className="py-2">
+  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} className="rounded-lg py-2"
+    style={selected ? { background: 'color-mix(in srgb, var(--fin-cash) 16%, transparent)', boxShadow: 'inset 4px 0 0 var(--fin-cash)' } : undefined}>
     <div className="flex items-start gap-2">
-    {selectable && <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" checked={selected} onChange={() => onToggle(row.id)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>}
+    {selectable && <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6 cursor-pointer" style={{ accentColor: 'var(--fin-cash)' }} checked={selected} onChange={() => onToggle(row)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>}
     <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={open} onClick={() => setOpen(o => !o)}>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold">{row.merchant}</span>
         <span className="block text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · {row.account.mappedTo ?? row.account.label}</span>
         <span className="mt-1 flex flex-wrap gap-1">
+          {selected && <Chip tone="ok">✓ Selected</Chip>}
           {row.pending && <Chip tone="warn">Pending</Chip>}
           {row.account.environment === 'sandbox' && environment === 'production' && <Chip>Sandbox</Chip>}
           {row.review === 'ignored' ? <Chip>Ignored</Chip> : <>
@@ -175,24 +195,42 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
 export default function SpendingExplorer() {
   const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore } = useSpendingExplorer()
   const [showFilters, setShowFilters] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  // The selection keeps a snapshot of each row, so it survives filter and view changes. The snapshot is for DISPLAY only: the server re-decides
+  // eligibility from current data when the owner confirms, and refuses anything that is not allowed.
+  const [selection, setSelection] = useState<Map<string, ExplorerRow>>(new Map())
+  const [reviewing, setReviewing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [batchNote, setBatchNote] = useState<string | null>(null)
   if (load !== 'ready' || !data || data.viewCounts.all === 0) return null
   const a = data.analytics
+  const maxBatch = data.options.maxBatch ?? 50
   // Which rows may be approved together is decided by the SERVER; this only mirrors its rule so the checkboxes appear on the right rows.
   const batchBuckets = data.options.batchBuckets ?? []
   const approvable = (r: ExplorerRow) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high'
     && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
   const eligible = rows.filter(approvable)
-  const chosen = [...selected].filter(id => eligible.some(r => r.id === id))
-  const toggle = (id: string) => setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  const freshById = new Map(rows.map(r => [r.id, r]))
+  // A selected row that has since been decided or changed (and is on the current page) drops out; one not on the current page keeps its snapshot.
+  const chosen = [...selection.values()].map(snap => freshById.get(snap.id) ?? snap).filter(r => !freshById.has(r.id) || approvable(r)).sort((x, y) => y.date.localeCompare(x.date) || x.id.localeCompare(y.id))
+  const chosenIds = new Set(chosen.map(r => r.id))
+  const totalOutMinor = chosen.reduce((n, r) => n + Math.abs(r.amountMinor), 0)
+  const breakdown = [...chosen.reduce((m, r) => { const k = r.bucket.label ?? 'Uncategorized'; const e = m.get(k) ?? { label: k, count: 0, totalMinor: 0 }; e.count += 1; e.totalMinor += Math.abs(r.amountMinor); return m.set(k, e) }, new Map<string, { label: string; count: number; totalMinor: number }>()).values()].sort((x, y) => y.totalMinor - x.totalMinor || x.label.localeCompare(y.label))
+  const toggle = (row: ExplorerRow) => {
+    setConfirming(false); setBatchNote(null) // any change to the selection voids a confirmation that was already showing
+    if (selection.has(row.id)) { const n = new Map(selection); n.delete(row.id); setSelection(n) }
+    else if (selection.size >= maxBatch) setBatchNote(`You can select up to ${maxBatch} at a time.`)
+    else setSelection(new Map(selection).set(row.id, row))
+  }
+  const selectConfident = () => { setConfirming(false); setBatchNote(null); setSelection(prev => { const n = new Map(prev); for (const r of eligible) { if (n.size >= maxBatch) break; n.set(r.id, r) } return n }) }
+  const clearSelection = () => { setSelection(new Map()); setReviewing(false); setConfirming(false) }
   const approveSelected = async () => {
-    const ids = chosen.slice(0, data.options.maxBatch ?? 50)
+    const ids = chosen.map(r => r.id).slice(0, maxBatch)
     if (!ids.length) return
     const out = await decideBatch(ids)
-    setSelected(new Set())
+    clearSelection()
     setBatchNote(out ? batchSummary(out) : null)
   }
+  const showingSelected = reviewing && chosen.length > 0
   const active = (['bucket', 'account', 'scope', 'review', 'confidence', 'project', 'search', 'min', 'max'] as const).filter(k => filters[k]).length + (filters.days !== DEFAULT_FILTERS.days ? 1 : 0) + (filters.accounts !== DEFAULT_FILTERS.accounts ? 1 : 0)
   return <section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -229,15 +267,34 @@ export default function SpendingExplorer() {
 
     {data.reviewCounts && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-review-counts">Reviewed {data.reviewCounts.reviewed} · Unreviewed {data.reviewCounts.unreviewed} · Excluded {data.reviewCounts.excluded}</p>}
     {eligible.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="spending-batch-bar">
-      <button type="button" className={btn} disabled={busy} onClick={() => setSelected(new Set(eligible.slice(0, data.options.maxBatch ?? 50).map(r => r.id)))} data-testid="spending-select-all">Select {Math.min(eligible.length, data.options.maxBatch ?? 50)} confident matches</button>
-      {chosen.length > 0 && <button type="button" className={btn} disabled={busy} onClick={() => setSelected(new Set())}>Clear</button>}
-      <button type="button" className={`${btn} bg-white/10`} disabled={busy || chosen.length === 0} onClick={() => void approveSelected()} data-testid="spending-approve-selected">Approve {chosen.length} selected</button>
+      <button type="button" className={btn} disabled={busy} onClick={selectConfident} data-testid="spending-select-all">Select {Math.min(eligible.length, maxBatch)} confident matches</button>
       <p className="w-full text-xs text-[var(--text-secondary)]">Only confident everyday expense categories can be approved together. Payroll, transfers, owner draws, personal items, deposits and refunds always need your individual decision. Approving labels bank evidence only.</p>
     </div>}
     {batchNote && <p className="mt-1 text-xs" data-testid="spending-batch-note" role="status">{batchNote}</p>}
     {message && <p role="alert" className="mt-2 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
-    {rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={selected.has(r.id)} onToggle={toggle} />)}</ul>}
+    {showingSelected
+      ? <SelectedReview rows={chosen} busy={busy} onRemove={toggle} />
+      : rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
+      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
+    {chosen.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="spending-selection-bar" role="region" aria-label="Selected transactions">
+      <p className="text-sm font-semibold" aria-live="polite"><span data-testid="spending-selected-count">{chosen.length} selected</span> <span className="font-normal text-[var(--text-secondary)]">· {usd2(totalOutMinor)} going out</span></p>
+      {confirming
+        ? <section role="alertdialog" aria-label="Confirm batch approval" data-testid="spending-confirm" className="space-y-2 rounded-lg border border-[var(--border-primary)] p-3">
+            <p className="text-sm font-semibold" data-testid="spending-confirm-title">Approve {chosen.length} transaction{chosen.length === 1 ? '' : 's'}?</p>
+            <ul className="text-sm" data-testid="spending-confirm-breakdown">{breakdown.map(b => <li key={b.label} className="flex justify-between gap-3"><span>{b.label} · {b.count}</span><span>{usd2(b.totalMinor)}</span></li>)}</ul>
+            <p className="flex justify-between gap-3 border-t border-[var(--border-primary)] pt-2 text-sm font-semibold" data-testid="spending-confirm-total"><span>Total going out</span><span>{usd2(totalOutMinor)}</span></p>
+            <p className="text-xs text-[var(--text-secondary)]">This labels these bank records with the categories shown. It does not change your balances, ledger, bills, payroll or reports, and each one can be undone.</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={`${btn} bg-white/10`} disabled={busy} onClick={() => void approveSelected()} data-testid="spending-confirm-approve">Confirm approval</button>
+              <button type="button" className={btn} disabled={busy} onClick={() => setConfirming(false)} data-testid="spending-confirm-cancel">Cancel</button>
+            </div>
+          </section>
+        : <div className="flex flex-wrap gap-2">
+            <button type="button" className={btn} disabled={busy} aria-pressed={showingSelected} onClick={() => setReviewing(r => !r)} data-testid="spending-review-selected">{showingSelected ? 'Back to review queue' : 'Review selected'}</button>
+            <button type="button" className={btn} disabled={busy} onClick={clearSelection} data-testid="spending-clear-selection">Clear selection</button>
+            <button type="button" className={`${btn} bg-white/10`} disabled={busy} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
+          </div>}
+    </div>}
   </section>
 }

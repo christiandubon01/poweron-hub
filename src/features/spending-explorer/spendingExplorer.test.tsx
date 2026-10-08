@@ -244,8 +244,10 @@ describe('SpendingExplorer (BANK-5)', () => {
       const summary = { outcome: 'batch', confirmed: 1, unchanged: 0, skipped: 1, results: [{ id: 'a1', result: 'confirmed' }, { id: 'a2', result: 'skipped', reason: 'not_high_confidence' }] }
       await mount(payload([a, b]), summary)
       await click(host.querySelector('[data-testid="spending-select-all"]'))
-      expect(host.querySelector('[data-testid="spending-approve-selected"]')!.textContent).toBe('Approve 2 selected')
+      expect(host.querySelector('[data-testid="spending-selected-count"]')!.textContent).toBe('2 selected')
       await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect(posts()).toEqual([]) // asking to approve never writes: the owner must confirm the summary first
+      await click(host.querySelector('[data-testid="spending-confirm-approve"]'))
       expect(posts()).toEqual([{ action: 'confirm_batch', transactionIds: ['a1', 'a2'] }])
       expect(host.querySelector('[data-testid="spending-batch-note"]')!.textContent).toBe('Approved 1. 1 left for individual review: 1 not a confident match.')
       expect(gets().length).toBeGreaterThan(1) // a fresh read follows: the server is the source of truth
@@ -267,6 +269,127 @@ describe('SpendingExplorer (BANK-5)', () => {
       const text = host.querySelector('[data-testid="spending-history"]')!.textContent!
       expect(text).toMatch(/Materials · undone \(replaced\) · from a suggestion/); expect(text).toMatch(/Tools & Equipment · active · by you/)
       expect(posts()).toEqual([])
+    })
+  })
+
+  describe('BANK-6A visible batch selection, review and confirmation', () => {
+    const mk = (id: string, merchant: string, bucketKey: string, bucketLabel: string, amountMinor: number, date: string) => row({ id, merchant, name: merchant, amountMinor, date, bucket: { key: bucketKey, label: bucketLabel, state: 'suggested', confidence: 'high', reasons: [] } })
+    const three = () => [mk('a1', 'HOME DEPOT', 'materials', 'Materials', 12000, '2026-10-01'), mk('a2', 'CHEVRON', 'fuel_vehicle', 'Fuel / Vehicle', 6210, '2026-10-03'), mk('a3', 'SHELL', 'fuel_vehicle', 'Fuel / Vehicle', 4000, '2026-10-02')]
+    const selectAll = async () => { await click(host.querySelector('[data-testid="spending-select-all"]')) }
+    const count = () => host.querySelector('[data-testid="spending-selected-count"]')?.textContent ?? null
+    const rowEls = () => [...host.querySelectorAll('[data-testid="spending-row"]')]
+    const box = (i: number) => rowEls()[i].querySelector('input[type="checkbox"]') as HTMLInputElement
+
+    it('every selected row is unmistakable: checked checkbox, highlighted row, a "Selected" chip - and unselected rows are not', async () => {
+      await mount(payload([...three(), row({ id: 'z9', merchant: 'ZZQ', bucket: { key: 'materials', label: 'Materials', state: 'suggested', confidence: 'possible', reasons: [] } })]))
+      expect(rowEls().every(r => r.getAttribute('data-selected') === 'false')).toBe(true)
+      await selectAll()
+      const sel = rowEls().filter(r => r.getAttribute('data-selected') === 'true')
+      expect(sel).toHaveLength(3)
+      for (const r of sel) {
+        const cb = r.querySelector('input[type="checkbox"]') as HTMLInputElement
+        expect(cb.checked).toBe(true)
+        expect(r.textContent).toContain('✓ Selected')
+        expect((r as HTMLElement).style.boxShadow).toMatch(/inset/) // a highlight bar, not colour alone
+      }
+      const other = rowEls().find(r => r.textContent!.includes('ZZQ'))!
+      expect(other.getAttribute('data-selected')).toBe('false'); expect(other.querySelector('input[type="checkbox"]')).toBeNull()
+    })
+
+    it('shows a persistent, live count with the outgoing total, and it follows every individual change', async () => {
+      await mount(payload(three()))
+      expect(count()).toBeNull()
+      await selectAll()
+      expect(count()).toBe('3 selected')
+      expect(host.querySelector('[data-testid="spending-selection-bar"]')!.textContent).toContain('$222.10 going out') // 120.00 + 62.10 + 40.00
+      await click(box(0))
+      expect(count()).toBe('2 selected')
+      await click(box(0)); expect(count()).toBe('3 selected')
+      expect(host.querySelector('[data-testid="spending-selection-bar"]')!.getAttribute('aria-label')).toBe('Selected transactions')
+    })
+
+    it('Review selected shows ONLY the selected rows with merchant, date, signed amount, suggested category and account', async () => {
+      await mount(payload([...three(), mk('a4', 'OTHER', 'meals', 'Meals', 900, '2026-10-04')]))
+      await click(box(0)); await click(box(2)) // first and third rows only
+      expect(count()).toBe('2 selected')
+      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+      const items = [...host.querySelectorAll('[data-testid="spending-selected-item"]')]
+      expect(items).toHaveLength(2)
+      expect(host.querySelector('[data-testid="spending-list"]')).toBeNull() // the full queue is hidden while reviewing
+      const text = items.map(i => i.textContent!.replace(/\s+/g, ' ')).join(' | ')
+      expect(text).toMatch(/HOME DEPOT.*Oct 1.*Wells Fargo Business Checking 6960.*••••0000.*Materials · suggested.*−\$120\.00/)
+      expect(text).toMatch(/CHEVRON|SHELL/); expect(text).not.toContain('OTHER')
+      expect(host.querySelector('[data-testid="spending-review-selected"]')!.textContent).toBe('Back to review queue')
+    })
+
+    it('rows can be deselected one by one inside the review, Clear selection empties it, and going back to the queue keeps the selection', async () => {
+      await mount(payload(three()))
+      await selectAll()
+      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+      await click(host.querySelectorAll('[data-testid="spending-selected-remove"]')[0])
+      expect(count()).toBe('2 selected'); expect(host.querySelectorAll('[data-testid="spending-selected-item"]')).toHaveLength(2)
+      await click(host.querySelector('[data-testid="spending-review-selected"]')) // Back to review queue
+      expect(host.querySelector('[data-testid="spending-selected-list"]')).toBeNull()
+      expect(rowEls()).toHaveLength(3)
+      expect(rowEls().filter(r => r.getAttribute('data-selected') === 'true')).toHaveLength(2) // nothing lost
+      expect(count()).toBe('2 selected')
+      await click(host.querySelector('[data-testid="spending-clear-selection"]'))
+      expect(count()).toBeNull(); expect(host.querySelector('[data-testid="spending-selection-bar"]')).toBeNull()
+      expect(rowEls().every(r => r.getAttribute('data-selected') === 'false')).toBe(true)
+      expect(posts()).toEqual([])
+    })
+
+    it('the selection survives changing the view or filters', async () => {
+      await mount(payload(three()))
+      await selectAll()
+      await click(host.querySelector('[data-testid="spending-view-all"]'))
+      expect(count()).toBe('3 selected')
+    })
+
+    it('asking to approve shows an exact summary (count, category breakdown, total going out) and writes NOTHING until the owner confirms; Cancel writes nothing', async () => {
+      await mount(payload(three()), { outcome: 'batch', confirmed: 3, unchanged: 0, skipped: 0, results: [] })
+      await selectAll()
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect(host.querySelector('[data-testid="spending-confirm-title"]')!.textContent).toBe('Approve 3 transactions?')
+      const lines = [...host.querySelectorAll('[data-testid="spending-confirm-breakdown"] li')].map(l => l.textContent)
+      expect(lines).toEqual(['Materials · 1$120.00', 'Fuel / Vehicle · 2$102.10'])
+      expect(host.querySelector('[data-testid="spending-confirm-total"]')!.textContent).toBe('Total going out$222.10')
+      expect(host.querySelector('[data-testid="spending-confirm"]')!.textContent).toMatch(/does not change your balances, ledger, bills, payroll or reports/)
+      expect(posts()).toEqual([])
+      await click(host.querySelector('[data-testid="spending-confirm-cancel"]'))
+      expect(posts()).toEqual([]); expect(host.querySelector('[data-testid="spending-confirm"]')).toBeNull(); expect(count()).toBe('3 selected') // still selected
+    })
+
+    it('changing the selection while the summary is open voids it, so the owner always confirms exactly what is selected', async () => {
+      await mount(payload(three()))
+      await selectAll()
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect(host.querySelector('[data-testid="spending-confirm"]')).not.toBeNull()
+      await click(box(1))
+      expect(host.querySelector('[data-testid="spending-confirm"]')).toBeNull()
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect(host.querySelector('[data-testid="spending-confirm-title"]')!.textContent).toBe('Approve 2 transactions?')
+    })
+
+    it('Confirm sends ONLY the ids once; the server reply (what it actually approved or refused) is shown, and the selection is cleared', async () => {
+      const reply = { outcome: 'batch', confirmed: 2, unchanged: 0, skipped: 1, results: [{ id: 'a1', result: 'confirmed' }, { id: 'a2', result: 'confirmed' }, { id: 'a3', result: 'skipped', reason: 'not_high_confidence' }] }
+      await mount(payload(three()), reply)
+      await selectAll()
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      await click(host.querySelector('[data-testid="spending-confirm-approve"]'))
+      expect(posts()).toHaveLength(1)
+      expect(posts()[0]).toEqual({ action: 'confirm_batch', transactionIds: ['a2', 'a3', 'a1'] }) // ids only (newest first); no categories, amounts or eligibility claims are sent
+      expect(host.querySelector('[data-testid="spending-batch-note"]')!.textContent).toBe('Approved 2. 1 left for individual review: 1 not a confident match.')
+      expect(host.querySelector('[data-testid="spending-selection-bar"]')).toBeNull()
+    })
+
+    it('cannot select more than the server\'s batch limit', async () => {
+      const many = Array.from({ length: 52 }, (_, i) => mk(`m${i}`, `SHOP ${i}`, 'materials', 'Materials', 1000, '2026-10-01'))
+      await mount(payload(many))
+      await selectAll()
+      expect(count()).toBe('50 selected')
+      await click(box(51))
+      expect(count()).toBe('50 selected'); expect(host.querySelector('[data-testid="spending-batch-note"]')!.textContent).toBe('You can select up to 50 at a time.')
     })
   })
 })
