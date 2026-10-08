@@ -131,10 +131,78 @@ describe('SmartReview (BANK-6B)', () => {
     expect(post.rememberTransactionIds).toHaveLength(1); expect(netlify.map(r => r.id)).toContain(post.rememberTransactionIds[0])
   })
 
-  it('the remember choice is hidden when rules are unavailable (migration 157 not applied)', async () => {
+  it('when rules are unavailable, no remember control is offered; a clear message says so, before and after selecting', async () => {
     await mount(payload({ rulesAvailable: false }))
+    const g = groupEl('NETLIFY')
+    expect(g.querySelector('[data-testid="smart-remember"]')).toBeNull(); expect(g.querySelector('[data-testid="smart-remember-on"]')).toBeNull()
+    expect(g.querySelector('[data-testid="smart-remember-unavailable"]')!.textContent).toMatch(/not available right now.*Approving still works/)
+    await click(g.querySelector('[data-testid="smart-group-select"]'))
+    expect(qa('[data-testid="smart-remember-on"]')).toHaveLength(0)
+    expect(groupEl('NETLIFY').querySelector('[data-testid="smart-remember-unavailable"]')).not.toBeNull()
+  })
+
+  it('discoverability: before any selection the future-preference control is visible, "Don\'t remember" is the default, and "Remember this category" is disabled with a reason', async () => {
+    await mount(payload())
+    expect(q('[data-testid="smart-steps"]')!.textContent).toMatch(/Select transactions.*Check the category.*Approve selected/)
+    expect(host.textContent).toContain('Selecting and choosing categories saves nothing')
+    for (const g of qa('[data-testid="smart-group"]')) {
+      const on = g.querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement, off = g.querySelector('[data-testid="smart-this-only"]') as HTMLButtonElement
+      expect(off.textContent).toBe("Don't remember"); expect(off.getAttribute('aria-pressed')).toBe('true')
+      expect(on.disabled).toBe(true); expect(on.getAttribute('aria-pressed')).toBe('false')
+      expect(g.querySelector('[data-testid="smart-remember-hint"]')!.textContent).toBe('Select a transaction first to remember its category.')
+    }
+    expect(host.textContent).not.toContain('Apply to this transaction only')
+    await click(groupEl('NETLIFY').querySelector('[data-testid="smart-remember-on"]')) // disabled: nothing happens
+    expect(posts()).toEqual([]); expect(q('[data-testid="smart-selection-bar"]')).toBeNull()
+  })
+
+  it('after selecting: count, total and "not approved yet" are shown; remembering is explained as a suggestion only and falls back to the default when the selection is cleared', async () => {
+    await mount(payload())
     await click(groupEl('NETLIFY').querySelector('[data-testid="smart-group-select"]'))
-    expect(q('[data-testid="smart-remember"]')).toBeNull()
+    const g = groupEl('NETLIFY')
+    expect(g.querySelector('[data-testid="smart-group-selected"]')!.textContent).toBe('3 selected · $57.00 · not approved yet')
+    expect(q('[data-testid="smart-selection-bar"]')!.textContent).toContain('3 selected · $57.00 going out · not approved yet')
+    expect(g.querySelector('[data-testid="smart-remember-hint"]')!.textContent).toMatch(/Default: nothing is remembered.*never approves/)
+    expect((g.querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement).disabled).toBe(false)
+    await click(g.querySelector('[data-testid="smart-remember-on"]'))
+    expect(groupEl('NETLIFY').querySelector('[data-testid="smart-remember-hint"]')!.textContent).toMatch(/suggested as Software \/ Subscriptions.*still need your approval.*Saved only when you confirm/)
+    expect(posts()).toEqual([]) // choosing to remember saves nothing
+    await click(groupEl('NETLIFY').querySelector('[data-testid="smart-group-select"]')) // deselect the group
+    const after = groupEl('NETLIFY')
+    expect(after.querySelector('[data-testid="smart-this-only"]')!.getAttribute('aria-pressed')).toBe('true')
+    expect((after.querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement).disabled).toBe(true)
+    await click(after.querySelector('[data-testid="smart-group-select"]')) // reselect: still the default, not silently "remember"
+    expect(groupEl('NETLIFY').querySelector('[data-testid="smart-this-only"]')!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('a mixed-purpose merchant still needs an explicit category; remember stays disabled until it is chosen, and flagged rows are never auto-selected', async () => {
+    await mount(payload())
+    const v = groupEl('VONS')
+    expect((v.querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement).disabled).toBe(true)
+    await click(v.querySelector('[data-testid="smart-group-header"]')); await click(v.querySelector('[data-testid="smart-row"]'))
+    expect(q('[data-testid="smart-selection-bar"]')).toBeNull()
+    expect((groupEl('VONS').querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement).disabled).toBe(true)
+    await pick(groupEl('VONS').querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement, 'fuel_vehicle')
+    expect((groupEl('VONS').querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement).disabled).toBe(false)
+    await pick(groupEl('STAPLES').querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement, 'tools_equipment')
+    const st = groupEl('STAPLES')
+    expect(st.querySelector('[data-testid="smart-group-selected"]')!.textContent).toContain('2 selected') // the flagged $31.00 row is not included
+  })
+
+  it('cancelling the confirmation saves nothing and keeps the selection and the remember choice; the confirmation states when nothing is remembered', async () => {
+    await mount(payload())
+    await click(groupEl('NETLIFY').querySelector('[data-testid="smart-group-select"]'))
+    await click(q('[data-testid="smart-approve"]'))
+    expect(q('[data-testid="smart-confirm-no-remember"]')!.textContent).toBe('No category will be remembered for future transactions.')
+    await click(q('[data-testid="smart-confirm-cancel"]'))
+    await click(groupEl('NETLIFY').querySelector('[data-testid="smart-remember-on"]'))
+    await click(q('[data-testid="smart-approve"]'))
+    expect(q('[data-testid="smart-confirm-no-remember"]')).toBeNull(); expect(q('[data-testid="smart-confirm-remember"]')).not.toBeNull()
+    await click(q('[data-testid="smart-confirm-cancel"]'))
+    expect(posts()).toEqual([])
+    expect(q('[data-testid="smart-confirm"]')).toBeNull()
+    expect(q('[data-testid="smart-selected-count"]')!.textContent).toBe('3 selected')
+    expect(groupEl('NETLIFY').querySelector('[data-testid="smart-remember-on"]')!.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('tells suggestions, remembered rules and the owner\'s own choices apart, and lists remembered categories with a Forget control', async () => {

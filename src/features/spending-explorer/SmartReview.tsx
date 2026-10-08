@@ -125,7 +125,12 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       return next
     })
   }
-  const dropMany = (ids: string[]) => setSelected(prev => { const next = new Set(prev); for (const id of ids) next.delete(id); return next })
+  const dropMany = (ids: string[]) => {
+    const next = new Set(selected); for (const id of ids) next.delete(id)
+    setSelected(next)
+    // A "Remember" choice belongs to a selection: a group with nothing selected any more falls back to the default (don't remember).
+    setRemember(prev => { const keep = new Set([...prev].filter(gid => [...next].some(id => groupOfRow.get(id)?.id === gid))); return keep.size === prev.size ? prev : keep })
+  }
   const unflagged = (g: SmartGroup) => g.rows.filter(r => r.flags.length === 0).map(r => r.id)
   const toggleRow = (g: SmartGroup, r: SmartRow) => {
     touch()
@@ -164,7 +169,11 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
   }
 
   return <div className="mt-3" data-testid="smart-review">
-    <p className="text-xs text-[var(--text-secondary)]">Your unreviewed spending, grouped by merchant. Open a group to see every transaction. Nothing is approved until you confirm it, and approving only labels bank records.</p>
+    <p className="text-xs text-[var(--text-secondary)]">Your unreviewed spending, grouped by merchant. Open a group to see every transaction.</p>
+    <ol className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs" data-testid="smart-steps" aria-label="How Smart Review works">
+      <li><span className="font-semibold">1.</span> Select transactions</li><li><span className="font-semibold">2.</span> Check the category</li><li><span className="font-semibold">3.</span> Approve selected</li>
+    </ol>
+    <p className="mt-0.5 text-xs text-[var(--text-secondary)]">Selecting and choosing categories saves nothing. Only <span className="font-semibold">Confirm approval</span> saves, and it only labels bank records.</p>
     <p className="mt-1 text-sm font-semibold" data-testid="smart-totals">{data.totals.groupedCount} in {data.totals.groups} group{data.totals.groups === 1 ? '' : 's'} · {usd2(data.totals.groupedMinor)} going out{data.totals.exceptionCount > 0 ? ` · ${data.totals.exceptionCount} set aside for you` : ''}</p>
     {note && <p className="mt-1 text-xs" role="status" data-testid="smart-note">{note}</p>}
     {message && <p role="alert" className="mt-1 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
@@ -186,6 +195,7 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       const choice = choices.get(g.id)
       const origin = g.basis === 'owner_rule' ? <Chip tone="ok">Your remembered rule</Chip> : choice ? <Chip tone="ok">Your choice</Chip> : <Chip>Suggestion</Chip>
       const selTotal = sel.reduce((s, r) => s + r.amountMinor, 0)
+      const rememberOn = sel.length > 0 && remember.has(g.id)
       return <li key={g.id} className="rounded-xl border border-[var(--border-primary)] p-3" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
         <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={isOpen} onClick={() => toggleOpen(g.id)} data-testid="smart-group-header">
           <span className="min-w-0"><span className="block truncate text-sm font-semibold">{g.merchant}</span>
@@ -206,14 +216,21 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
           </select>
         </div>
         {g.flaggedCount > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]">{g.flaggedCount} flagged transaction{g.flaggedCount === 1 ? ' is' : 's are'} not included when you select the group. Open the group to choose them yourself.</p>}
-        {sel.length > 0 && data.rulesAvailable && <fieldset className="mt-2" data-testid="smart-remember">
-          <legend className="text-xs text-[var(--text-secondary)]">For future {g.merchant} transactions</legend>
-          <div className="mt-1 flex flex-wrap gap-2">
-            <button type="button" className={`${btn} ${!remember.has(g.id) ? 'bg-white/10' : ''}`} aria-pressed={!remember.has(g.id)} onClick={() => toggleRemember(g, false)} data-testid="smart-this-only">Apply to this transaction only</button>
-            <button type="button" className={`${btn} ${remember.has(g.id) ? 'bg-white/10' : ''}`} aria-pressed={remember.has(g.id)} onClick={() => toggleRemember(g, true)} data-testid="smart-remember-on">Remember this category</button>
-          </div>
-        </fieldset>}
-        {sel.length > 0 && <p className="mt-1 text-xs" aria-live="polite">{sel.length} selected · {usd2(selTotal)}</p>}
+        {sel.length > 0 && <p className="mt-2 text-xs font-semibold" aria-live="polite" data-testid="smart-group-selected">{sel.length} selected · {usd2(selTotal)} <span className="font-normal text-[var(--text-secondary)]">· not approved yet</span></p>}
+        {data.rulesAvailable
+          ? <fieldset className="mt-2" data-testid="smart-remember">
+              <legend className="text-xs text-[var(--text-secondary)]">For future {g.merchant} transactions</legend>
+              <div className="mt-1 flex flex-wrap gap-2">
+                <button type="button" className={`${btn} ${!rememberOn ? 'bg-white/10' : ''}`} aria-pressed={!rememberOn} disabled={busy} onClick={() => toggleRemember(g, false)} data-testid="smart-this-only">Don't remember</button>
+                <button type="button" className={`${btn} ${rememberOn ? 'bg-white/10' : ''}`} aria-pressed={rememberOn} disabled={busy || sel.length === 0} onClick={() => toggleRemember(g, true)} data-testid="smart-remember-on">Remember this category</button>
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="smart-remember-hint">{sel.length === 0
+                ? 'Select a transaction first to remember its category.'
+                : rememberOn
+                  ? `Future ${g.merchant} transactions will be suggested as ${labelOf(effective(g) ?? g.bucket.key)}. They still need your approval. Saved only when you confirm.`
+                  : 'Default: nothing is remembered. Remembering only suggests a category next time; it never approves anything.'}</p>
+            </fieldset>
+          : <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="smart-remember-unavailable">Remembering categories for future transactions is not available right now. Approving still works for the transactions you select.</p>}
         {isOpen && <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="smart-group-rows">{g.rows.map(r => {
           const on = selected.has(r.id)
           return <li key={r.id}>
@@ -242,13 +259,15 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
     </div>}
 
     {chosen.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="smart-selection-bar" role="region" aria-label="Selected transactions">
-      <p className="text-sm font-semibold" aria-live="polite"><span data-testid="smart-selected-count">{chosen.length} selected</span> <span className="font-normal text-[var(--text-secondary)]">· {usd2(totalOut)} going out</span></p>
+      <p className="text-sm font-semibold" aria-live="polite"><span data-testid="smart-selected-count">{chosen.length} selected</span> <span className="font-normal text-[var(--text-secondary)]">· {usd2(totalOut)} going out · not approved yet</span></p>
       {confirming
         ? <section role="alertdialog" aria-label="Confirm approval" data-testid="smart-confirm" className="space-y-2 rounded-lg border border-[var(--border-primary)] p-3">
             <p className="text-sm font-semibold">Approve {chosen.length} transaction{chosen.length === 1 ? '' : 's'}?</p>
             <ul className="text-sm" data-testid="smart-confirm-breakdown">{breakdown.map(b => <li key={b.label} className="flex justify-between gap-3"><span>{b.label} · {b.count}</span><span>{usd2(b.totalMinor)}</span></li>)}</ul>
             <p className="flex justify-between gap-3 border-t border-[var(--border-primary)] pt-2 text-sm font-semibold"><span>Total going out</span><span>{usd2(totalOut)}</span></p>
-            {rememberedGroups.length > 0 && <p className="text-sm" data-testid="smart-confirm-remember">Also remember: {rememberedGroups.map(g => `${g.merchant} → ${labelOf(effective(g) ?? g.bucket.key)}`).join(', ')}. Future matching transactions will be suggested this way; you still approve each one.</p>}
+            {rememberedGroups.length > 0
+              ? <p className="text-sm" data-testid="smart-confirm-remember">Also remember: {rememberedGroups.map(g => `${g.merchant} → ${labelOf(effective(g) ?? g.bucket.key)}`).join(', ')}. Future matching transactions will be suggested this way; you still approve each one.</p>
+              : <p className="text-xs text-[var(--text-secondary)]" data-testid="smart-confirm-no-remember">No category will be remembered for future transactions.</p>}
             <p className="text-xs text-[var(--text-secondary)]">This labels these bank records with the categories shown. It does not change your balances, ledger, bills, payroll or reports, and each one can be undone.</p>
             <div className="flex flex-wrap gap-2">
               <button type="button" className={`${btn} bg-white/10`} disabled={busy} onClick={() => void approveSelected()} data-testid="smart-confirm-approve">Confirm approval</button>
