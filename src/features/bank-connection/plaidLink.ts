@@ -32,11 +32,39 @@ export function loadPlaidLink(): Promise<PlaidGlobal> {
   return loading
 }
 
+/**
+ * OAuth banks (e.g. Wells Fargo in Production) send the owner away to sign in and then back to the registered redirect URI with `?oauth_state_id=`.
+ * Plaid requires Link to be re-opened with the SAME link token and the full returned URL. Only the short-lived LINK token (never a public or
+ * access token, and nothing that can read bank data) is kept, in this tab's sessionStorage, for at most 30 minutes, and removed as soon as it is used.
+ */
+const OAUTH_KEY = 'poweron.plaid.oauth.link'
+const OAUTH_MAX_AGE_MS = 30 * 60 * 1000
+export interface PendingOauth { linkToken: string; mode: 'new' | 'update'; itemId: string | null }
+
+export function rememberLinkToken(pending: PendingOauth, now = Date.now()): void {
+  try { window.sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ ...pending, at: now })) } catch { /* storage may be blocked: non-OAuth banks do not need it */ }
+}
+export function clearPendingOauth(): void {
+  try { window.sessionStorage.removeItem(OAUTH_KEY) } catch { /* ignore */ }
+}
+/** Returns the stored session only when this page load IS an OAuth return and the stored token is still fresh. */
+export function readPendingOauth(search: string = typeof window === 'undefined' ? '' : window.location.search, now = Date.now()): PendingOauth | null {
+  if (!/[?&]oauth_state_id=/.test(search)) return null
+  try {
+    const raw = window.sessionStorage.getItem(OAUTH_KEY)
+    if (!raw) return null
+    const v = JSON.parse(raw) as Partial<PendingOauth> & { at?: number }
+    if (typeof v.linkToken !== 'string' || !v.linkToken || typeof v.at !== 'number' || now - v.at > OAUTH_MAX_AGE_MS || now < v.at) { clearPendingOauth(); return null }
+    return { linkToken: v.linkToken, mode: v.mode === 'update' ? 'update' : 'new', itemId: typeof v.itemId === 'string' ? v.itemId : null }
+  } catch { clearPendingOauth(); return null }
+}
+
 /** Opens Link. `onSuccess` receives the one-time public token and must forward it immediately; nothing here retains it. */
-export async function openPlaidLink(options: { linkToken: string; onSuccess: (publicToken: string) => void | Promise<void>; onExit: () => void }): Promise<void> {
+export async function openPlaidLink(options: { linkToken: string; receivedRedirectUri?: string; onSuccess: (publicToken: string) => void | Promise<void>; onExit: () => void }): Promise<void> {
   const Plaid = await loadPlaidLink()
   const handler = Plaid.create({
     token: options.linkToken,
+    ...(options.receivedRedirectUri ? { receivedRedirectUri: options.receivedRedirectUri } : {}),
     onSuccess: (publicToken: string) => { void options.onSuccess(publicToken); handler.destroy() },
     onExit: () => { options.onExit(); handler.destroy() },
   })

@@ -1,7 +1,7 @@
 /**
  * src/services/bankProvider/bankConnectionService.ts
  *
- * SERVER-ONLY orchestration for the BANK-2 Plaid sandbox connection. Pure: every dependency (Plaid, persistence, key,
+ * SERVER-ONLY orchestration for the Plaid bank connection (Sandbox or Production, never both at once). Pure: every dependency (Plaid, persistence, key,
  * logging) is injected, so the whole security story is testable without a network or a database.
  *
  * What it does: create a Link token, exchange a public token for an encrypted server-held credential, report sanitized
@@ -15,6 +15,7 @@
 import type { Buffer } from 'node:buffer'
 import { BankTokenDecryptError, decryptProviderToken, encryptProviderToken } from './providerTokenCrypto'
 import { PlaidApiFailure, type BankPlaidPort } from './plaidPort'
+import type { PlaidEnvironmentName } from './plaidConfig'
 
 export const BANK_PROVIDER = 'plaid' as const
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -45,6 +46,8 @@ export interface BankConnectionView {
   provider: string
   status: 'connecting' | 'healthy' | 'login_required' | 'error' | 'disconnected'
   institutionName: string | null
+  /** Where the Item lives at the provider. Sandbox and Production Items are never interchangeable. */
+  environment: PlaidEnvironmentName
   connectedAt: string | null
   disconnectedAt: string | null
   lastSuccessfulSyncAt: string | null
@@ -54,8 +57,8 @@ export interface BankConnectionRepo {
   findItemOwner(provider: string, providerItemId: string): Promise<{ id: string; organizationId: string } | null>
   /** One database transaction: item + credential. Throws item_owned_elsewhere if the item belongs to another organization. */
   connectItem(input: { organizationId: string; provider: string; providerItemId: string; institutionId: string | null
-    institutionName: string | null; encryptedAccessToken: string; actorUserId: string }): Promise<{ itemId: string; outcome: 'created' | 'credential_rotated' | 'reconnected' }>
-  getItem(organizationId: string, itemId: string): Promise<{ id: string; provider: string; providerItemId: string; status: BankConnectionView['status'] } | null>
+    institutionName: string | null; encryptedAccessToken: string; actorUserId: string; environment: PlaidEnvironmentName }): Promise<{ itemId: string; outcome: 'created' | 'credential_rotated' | 'reconnected' }>
+  getItem(organizationId: string, itemId: string): Promise<{ id: string; provider: string; providerItemId: string; status: BankConnectionView['status']; environment?: PlaidEnvironmentName } | null>
   listItems(organizationId: string): Promise<BankConnectionView[]>
   getActiveCredential(organizationId: string, itemId: string): Promise<string | null>
   disconnectItem(organizationId: string, itemId: string): Promise<'disconnected' | 'already_disconnected'>
@@ -72,7 +75,8 @@ export interface BankConnectionDeps {
   plaid: BankPlaidPort
   repo: BankConnectionRepo
   key: Buffer
-  environment: 'sandbox'
+  /** The environment this server is configured for. Items of any other environment are never read, synced, re-linked or disconnected here. */
+  environment: PlaidEnvironmentName
   /** Receives only the safe fields above. */
   log?: (event: SafeLogEvent) => void
 }
@@ -89,6 +93,8 @@ export async function loadCredential(deps: BankConnectionDeps, actor: BankActor,
   if (typeof itemId !== 'string' || !UUID.test(itemId)) throw new BankConnectionError('invalid_request', 400, 'A valid connection is required.')
   const item = await deps.repo.getItem(actor.organizationId, itemId) // organization-scoped: another org's id is simply "not found"
   if (!item) throw new BankConnectionError('not_found', 404, 'Bank connection not found.')
+  // A Sandbox Item's token is meaningless to the Production API (and the reverse): refuse before any credential is decrypted or any provider call is made.
+  if ((item.environment ?? 'sandbox') !== deps.environment) throw new BankConnectionError('conflict', 409, `This connection belongs to the ${item.environment ?? 'sandbox'} environment and cannot be used while Cash OS is configured for ${deps.environment}.`)
   const envelope = await deps.repo.getActiveCredential(actor.organizationId, itemId)
   return { item, envelope }
 }
@@ -177,7 +183,7 @@ export async function exchangePublicToken(deps: BankConnectionDeps, actor: BankA
 
   try {
     const saved = await deps.repo.connectItem({ organizationId: actor.organizationId, provider: BANK_PROVIDER, providerItemId, institutionId,
-      institutionName, encryptedAccessToken: encrypted, actorUserId: actor.userId })
+      institutionName, encryptedAccessToken: encrypted, actorUserId: actor.userId, environment: deps.environment })
     note(deps, { event: 'bank.connected', organizationId: actor.organizationId, itemId: saved.itemId, outcome: saved.outcome })
     return { connection: { id: saved.itemId, provider: BANK_PROVIDER, status: 'healthy' as const, institutionName }, outcome: saved.outcome }
   } catch (error) {
@@ -192,7 +198,7 @@ export async function exchangePublicToken(deps: BankConnectionDeps, actor: BankA
 export async function getConnectionStatus(deps: BankConnectionDeps, actor: BankActor) {
   assertAuthority(actor)
   const items = await deps.repo.listItems(actor.organizationId)
-  return { environment: deps.environment, connected: items.some(i => i.status === 'healthy'), connections: items }
+  return { environment: deps.environment, connected: items.some(i => i.status === 'healthy' && i.environment === deps.environment), connections: items }
 }
 
 /** Remove at Plaid, then revoke locally. Deletes no financial history. Retry-safe in both directions. */

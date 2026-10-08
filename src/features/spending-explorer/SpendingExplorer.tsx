@@ -117,7 +117,7 @@ function Detail({ row, options, busy, onDecide }: { row: ExplorerRow; options: O
   </div>
 }
 
-function Row({ row, options, busy, onDecide }: { row: ExplorerRow; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function Row({ row, options, busy, onDecide, environment }: { row: ExplorerRow; environment?: string; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
   return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} className="py-2">
@@ -127,6 +127,7 @@ function Row({ row, options, busy, onDecide }: { row: ExplorerRow; options: Opti
         <span className="block text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · {row.account.mappedTo ?? row.account.label}</span>
         <span className="mt-1 flex flex-wrap gap-1">
           {row.pending && <Chip tone="warn">Pending</Chip>}
+          {row.account.environment === 'sandbox' && environment === 'production' && <Chip>Sandbox</Chip>}
           {row.review === 'ignored' ? <Chip>Ignored</Chip> : <>
             {row.bucket.label && <Chip tone={row.bucket.state === 'confirmed' ? 'ok' : 'muted'}>{row.bucket.state === 'confirmed' ? '✓ ' : ''}{row.bucket.label}{row.bucket.state === 'suggested' ? ` · suggested` : ''}</Chip>}
             <Chip tone={row.relationship.state === 'confirmed' ? 'ok' : 'muted'}>{row.relationship.state === 'none' ? (out ? 'Unassigned' : row.relationship.label) : `${row.relationship.state === 'confirmed' ? '✓ ' : ''}${row.relationship.label}${row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}${row.relationship.state === 'suggested' ? ' · suggested' : ''}`}</Chip>
@@ -167,8 +168,8 @@ export default function SpendingExplorer() {
       <button type="button" className={btn} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">Filters{active ? ` (${active})` : ''}</button>
       {active > 0 && <button type="button" className={btn} onClick={reset}>Clear</button>}
     </div>
-    {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
-    {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
+    {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS{data.environment === 'production' ? ' (or from Sandbox test accounts)' : ''} {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
+    {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS{data.environment === 'production' ? ' and Sandbox test accounts' : ''}. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
     {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}
     {showFilters && <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-testid="spending-filters">
       <label className="text-xs">Period<select className={`${field} mt-1 w-full`} value={filters.days} onChange={e => update({ days: Number(e.target.value) as 30 | 60 | 90 })}><option value={30}>Last 30 days</option><option value={60}>Last 60 days</option><option value={90}>Last 90 days</option></select></label>
@@ -185,7 +186,7 @@ export default function SpendingExplorer() {
 
     {message && <p role="alert" className="mt-2 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
     {rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} />)}</ul>}
+      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
   </section>
 }

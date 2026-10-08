@@ -114,7 +114,7 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
 
   return {
     async createLinkToken({ clientUserId, accessToken }) {
-      const base = { user: { client_user_id: clientUserId }, client_name: config.clientName, country_codes: [CountryCode.Us], language: config.language }
+      const base = { user: { client_user_id: clientUserId }, client_name: config.clientName, country_codes: [CountryCode.Us], language: config.language, ...(config.redirectUri ? { redirect_uri: config.redirectUri } : {}) }
       // Update mode is triggered by the Item's access token and carries NO products (per Plaid docs).
       const request = accessToken
         ? { ...base, access_token: accessToken }

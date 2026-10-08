@@ -25,6 +25,8 @@ export interface AccountContext {
   ownership: 'business' | 'personal' | null
   financialAccountId: string | null
   financialAccountName: string | null
+  /** Environment of the Item this account belongs to. Undefined only in pure-engine tests / pre-migration data (treated as sandbox by the service). */
+  environment?: 'sandbox' | 'production'
 }
 
 /** A thing Cash OS already knows is coming (a recurring bill occurrence or a one-off commitment) that a transaction might belong to. */
@@ -81,7 +83,7 @@ export interface ExplorerRow {
   amountMinor: number
   direction: Direction
   pending: boolean
-  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; /** true only when the owner explicitly mapped this provider account to a Cash OS account */ mapped: boolean }
+  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; /** true only when the owner explicitly mapped this provider account to a Cash OS account */ mapped: boolean; environment: 'sandbox' | 'production' | null }
   bucket: { key: BucketKey | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
   relationship: {
     kind: RelationshipKind | 'unknown'

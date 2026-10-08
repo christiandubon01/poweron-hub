@@ -73,7 +73,7 @@ export interface SpendingRepo {
   insertDecision(row: NewDecision): Promise<{ id: string }>
   markUndone(organizationId: string, decisionId: string, actorUserId: string, reason: string): Promise<void>
 }
-export interface SpendingDeps { repo: SpendingRepo; log?: (e: { event: string; organizationId: string; outcome?: string; code?: string }) => void; now?: () => number }
+export interface SpendingDeps { repo: SpendingRepo; environment?: 'sandbox' | 'production'; log?: (e: { event: string; organizationId: string; outcome?: string; code?: string }) => void; now?: () => number }
 const clock = (d: SpendingDeps) => d.now ? d.now() : Date.now()
 const today = (d: SpendingDeps) => new Date(clock(d)).toISOString().slice(0, 10)
 const logNote = (d: SpendingDeps, e: { event: string; organizationId: string; outcome?: string; code?: string }) => { try { d.log?.(e) } catch { /* logging never breaks the flow */ } }
@@ -101,12 +101,12 @@ export function buildBillCandidates(ctx: Pick<SpendingContext, 'obligations' | '
   return out
 }
 
-export function explorerFromContext(ctx: SpendingContext, asOf: string, accountScope: AccountScope = 'all') {
+export function explorerFromContext(ctx: SpendingContext, asOf: string, accountScope: AccountScope = 'all', activeEnvironment?: 'sandbox' | 'production') {
   const dates = ctx.txs.map(t => t.date).sort()
   const start = dates.length ? addDays(dates[0], -7) : asOf, end = dates.length ? addDays(dates[dates.length - 1], 7) : asOf
   const bills = buildBillCandidates(ctx, start, end)
   const built = buildRows({
-    asOf, accountScope, txs: ctx.txs, accounts: ctx.accounts, decisions: ctx.decisions, bills, debts: ctx.debts, projects: ctx.projects,
+    asOf, accountScope, activeEnvironment, txs: ctx.txs, accounts: ctx.accounts, decisions: ctx.decisions, bills, debts: ctx.debts, projects: ctx.projects,
     obligationLabels: new Map(ctx.obligations.map(o => [o.id, o.name])), commitmentLabels: new Map(ctx.commitments.map(c => [c.id, c.title])),
   })
   return { ...built, bills }
@@ -143,8 +143,9 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
   const asOf = today(deps)
   const ctx = await deps.repo.loadContext(actor.organizationId, addDays(asOf, -200))
   const q = parseQuery(rawQuery)
+  const environment = deps.environment ?? 'sandbox' // the environment this server is configured for
   const accounts = q.accounts ?? 'mapped' // the default business view is the owner's MAPPED accounts; 'all' is an explicit choice
-  const { rows, analytics, bills, outOfScopeDates } = explorerFromContext(ctx, asOf, accounts)
+  const { rows, analytics, bills, outOfScopeDates } = explorerFromContext(ctx, asOf, accounts, environment)
   const base = { from: q.from ?? addDays(asOf, -89), ...q }
   const filtered = filterRows(rows, base)
   const page = filtered.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 100))
@@ -160,7 +161,7 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
       commitments: ctx.commitments.filter(c => c.status === 'scheduled').map(c => ({ id: c.id, label: c.title, amountMinor: c.amountMinor, expectedDate: c.expectedDate })),
       debts: ctx.debts, projects: ctx.projects,
     },
-    accounts,
+    accounts, environment,
     meta: {
       // Diagnostics for known-bill matching: a healthy pipeline with zero matches means the evidence simply does not resemble the bills.
       billCandidates: bills.length, activeObligations: ctx.obligations.filter(o => o.status === 'active').length, scheduledCommitments: ctx.commitments.filter(c => c.status === 'scheduled').length,

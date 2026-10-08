@@ -61,19 +61,25 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
       }))
       const [accts, items, maps, fin, decs] = await Promise.all([
         svc.from('financial_provider_accounts').select('id, name, mask, provider_item_ref').eq('organization_id', organizationId),
-        svc.from('financial_provider_items').select('id, institution_name').eq('organization_id', organizationId),
+        (async () => {
+          const read = (columns: string) => svc.from('financial_provider_items').select(columns).eq('organization_id', organizationId)
+          const r = await read('id, institution_name, environment')
+          // Before migration 156 there is no environment column and every Item is a Sandbox Item.
+          return r.error && (r.error.code === '42703' || /environment/.test(String(r.error.message ?? ''))) ? read('id, institution_name') : r
+        })(),
         svc.from('financial_provider_account_mappings').select('provider_account_ref, financial_account_id').eq('organization_id', organizationId).eq('status', 'active'),
         svc.from('financial_accounts').select('id, display_name, ownership_context, account_class, account_type, status').eq('organization_id', organizationId),
         decisions(organizationId, ['confirmed', 'rejected']),
       ])
       for (const r of [accts, items, maps, fin]) if (r.error) failed()
       const itemName = new Map<string, string | null>((items.data ?? []).map((i: any) => [i.id, i.institution_name ?? null]))
+      const itemEnv = new Map<string, 'sandbox' | 'production'>((items.data ?? []).map((i: any) => [i.id, i.environment === 'production' ? 'production' : 'sandbox']))
       const mapOf = new Map<string, string>((maps.data ?? []).map((m: any) => [m.provider_account_ref, m.financial_account_id]))
       const finById = new Map<string, any>((fin.data ?? []).map((f: any) => [f.id, f]))
       const accounts = (accts.data ?? []).map((a: any) => {
         const f = finById.get(mapOf.get(a.id) ?? '')
         return { providerAccountRef: a.id, label: [itemName.get(a.provider_item_ref), a.name].filter(Boolean).join(' · ') || 'Bank account', mask: a.mask ?? null,
-          ownership: f && (f.ownership_context === 'business' || f.ownership_context === 'personal') ? f.ownership_context : null, financialAccountId: f?.id ?? null, financialAccountName: f?.display_name ?? null }
+          ownership: f && (f.ownership_context === 'business' || f.ownership_context === 'personal') ? f.ownership_context : null, financialAccountId: f?.id ?? null, financialAccountName: f?.display_name ?? null, environment: itemEnv.get(a.provider_item_ref) ?? 'sandbox' }
       })
       const debts: DebtOption[] = (fin.data ?? []).filter((f: any) => f.account_class === 'liability' && f.status === 'active').map((f: any) => ({ id: f.id, label: f.display_name, accountType: f.account_type }))
 

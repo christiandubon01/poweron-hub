@@ -67,8 +67,8 @@ describe('bank connection endpoints (BANK-2 authorization)', () => {
           expect(res.statusCode).toBe(403)
         }
       })
-      it('fails closed (500, generic) when Plaid or the encryption key is not configured, or the environment is not sandbox', async () => {
-        for (const mutate of [() => delete process.env.PLAID_SECRET, () => delete process.env.POWERON_BANK_TOKEN_ENCRYPTION_KEY, () => { process.env.PLAID_ENV = 'production' }, () => { process.env.POWERON_BANK_TOKEN_ENCRYPTION_KEY = 'short' }]) {
+      it('fails closed (500, generic) when Plaid or the encryption key is not configured, or the environment is not sandbox/production', async () => {
+        for (const mutate of [() => delete process.env.PLAID_SECRET, () => delete process.env.POWERON_BANK_TOKEN_ENCRYPTION_KEY, () => { process.env.PLAID_ENV = 'development' }, () => { process.env.POWERON_BANK_TOKEN_ENCRYPTION_KEY = 'short' }]) {
           mutate()
           const res = await build(world({ org_id: ORG_A, role: 'owner', is_active: true }).overrides)(ev(method, body))
           expect(res.statusCode).toBe(500)

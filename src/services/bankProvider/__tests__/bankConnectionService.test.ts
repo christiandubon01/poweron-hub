@@ -56,7 +56,7 @@ class FakePlaid implements BankPlaidPort {
 
 /** Faithful in-memory repo: item + credential saved together, one active credential, cross-org refusal. */
 class MemoryRepo implements BankConnectionRepo {
-  items = new Map<string, { id: string; organizationId: string; provider: string; providerItemId: string; status: BankConnectionView['status']; institutionName: string | null; connectedAt: string | null; disconnectedAt: string | null }>()
+  items = new Map<string, { id: string; organizationId: string; provider: string; providerItemId: string; status: BankConnectionView['status']; environment: 'sandbox' | 'production'; institutionName: string | null; connectedAt: string | null; disconnectedAt: string | null }>()
   credentials: Array<{ organizationId: string; itemId: string; envelope: string; status: 'active' | 'revoked' }> = []
   failConnect = false
   failDisconnect = false
@@ -72,7 +72,7 @@ class MemoryRepo implements BankConnectionRepo {
     let outcome: 'created' | 'credential_rotated' | 'reconnected' = 'created'
     let item = existing
     if (!item) {
-      item = { id: `30000000-0000-4000-8000-${String(++this.seq).padStart(12, '0')}`, organizationId: input.organizationId, provider: input.provider, providerItemId: input.providerItemId, status: 'healthy', institutionName: input.institutionName, connectedAt: 'now', disconnectedAt: null }
+      item = { id: `30000000-0000-4000-8000-${String(++this.seq).padStart(12, '0')}`, organizationId: input.organizationId, provider: input.provider, providerItemId: input.providerItemId, status: 'healthy', environment: input.environment, institutionName: input.institutionName, connectedAt: 'now', disconnectedAt: null }
       this.items.set(item.id, item)
     } else {
       outcome = item.status === 'disconnected' ? 'reconnected' : 'credential_rotated'
@@ -84,10 +84,10 @@ class MemoryRepo implements BankConnectionRepo {
   }
   async getItem(organizationId: string, itemId: string) {
     const it = this.items.get(itemId)
-    return it && it.organizationId === organizationId ? { id: it.id, provider: it.provider, providerItemId: it.providerItemId, status: it.status } : null
+    return it && it.organizationId === organizationId ? { id: it.id, provider: it.provider, providerItemId: it.providerItemId, status: it.status, environment: it.environment } : null
   }
   async listItems(organizationId: string) {
-    return [...this.items.values()].filter(i => i.organizationId === organizationId).map(i => ({ id: i.id, provider: i.provider, status: i.status, institutionName: i.institutionName, connectedAt: i.connectedAt, disconnectedAt: i.disconnectedAt, lastSuccessfulSyncAt: null }))
+    return [...this.items.values()].filter(i => i.organizationId === organizationId).map(i => ({ id: i.id, provider: i.provider, status: i.status, environment: i.environment, institutionName: i.institutionName, connectedAt: i.connectedAt, disconnectedAt: i.disconnectedAt, lastSuccessfulSyncAt: null }))
   }
   async getActiveCredential(organizationId: string, itemId: string) {
     return this.credentials.find(c => c.organizationId === organizationId && c.itemId === itemId && c.status === 'active')?.envelope ?? null
@@ -319,7 +319,7 @@ describe('bank connection service (BANK-2)', () => {
       const status = await getConnectionStatus(deps, OWNER_A)
       expect(status.environment).toBe('sandbox')
       expect(status.connected).toBe(true)
-      expect(Object.keys(status.connections[0]).sort()).toEqual(['connectedAt', 'disconnectedAt', 'id', 'institutionName', 'lastSuccessfulSyncAt', 'provider', 'status'])
+      expect(Object.keys(status.connections[0]).sort()).toEqual(['connectedAt', 'disconnectedAt', 'environment', 'id', 'institutionName', 'lastSuccessfulSyncAt', 'provider', 'status'])
       const text = JSON.stringify(status)
       expect(text).not.toMatch(/access-sandbox|v1:|cursor|item-1|encrypted/i)
     })

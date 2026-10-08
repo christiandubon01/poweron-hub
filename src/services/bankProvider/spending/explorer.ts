@@ -41,6 +41,8 @@ export interface ExplorerInput {
   asOf: string
   /** Engine default is 'all' (pure); the service passes 'mapped' unless the owner asks for all connected accounts. */
   accountScope?: AccountScope
+  /** With accountScope 'mapped': only accounts of Items in THIS environment are in the business view (evidence of the other environment is preserved and shown under 'all'). */
+  activeEnvironment?: 'sandbox' | 'production'
   windowDays?: number
   txs: EvidenceTx[]
   accounts: AccountContext[]
@@ -102,15 +104,16 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     return {
       id: tx.id, date: tx.date, name: (tx.name ?? tx.merchantName ?? 'Unnamed transaction').slice(0, 120), merchant: merchantLabel(tx.name, tx.merchantName), merchantKey: merchantKey(tx.name, tx.merchantName),
       amountMinor: tx.amountMinor, direction, pending: tx.pending,
-      account: { ref: tx.providerAccountRef, label: acct?.financialAccountName ?? acct?.label ?? 'Bank account', mask: acct?.mask ?? null, ownership: acct?.ownership ?? null, mappedTo: acct?.financialAccountName ?? null, mapped: !!acct?.financialAccountId },
+      account: { ref: tx.providerAccountRef, label: acct?.financialAccountName ?? acct?.label ?? 'Bank account', mask: acct?.mask ?? null, ownership: acct?.ownership ?? null, mappedTo: acct?.financialAccountName ?? null, mapped: !!acct?.financialAccountId, environment: acct?.environment ?? null },
       bucket, relationship, review, scope, unassigned: false, repeatedPattern: false, pattern: null,
     }
   })
 
   // Classification above ran over ALL evidence (so a transfer between a mapped and an unmapped account can still be paired). Everything that
   // produces totals, patterns and signals runs over the SCOPED rows only; evidence outside the scope is preserved and reported, never deleted.
-  const inScope = (input.accountScope ?? 'all') === 'all' ? base : base.filter(r => r.account.mapped)
-  const outOfScopeDates = (input.accountScope ?? 'all') === 'all' ? [] : base.filter(r => !r.account.mapped).map(r => r.date)
+  const inBusinessView = (r: ExplorerRow) => r.account.mapped && (!input.activeEnvironment || r.account.environment === input.activeEnvironment)
+  const inScope = (input.accountScope ?? 'all') === 'all' ? base : base.filter(inBusinessView)
+  const outOfScopeDates = (input.accountScope ?? 'all') === 'all' ? [] : base.filter(r => !inBusinessView(r)).map(r => r.date)
   const recurring = detectRecurring(inScope.filter(r => r.review !== 'ignored'))
   for (const r of inScope) {
     const rel = r.relationship

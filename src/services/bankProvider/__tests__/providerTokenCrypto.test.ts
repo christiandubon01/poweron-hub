@@ -89,9 +89,11 @@ describe('Plaid configuration (sandbox only, fail closed)', () => {
     expect(c.clientName.length).toBeLessThanOrEqual(30)
     expect(loadPlaidConfig({ ...ok, PLAID_ENV: ' Sandbox ' }).environment).toBe('sandbox')
   })
-  it('never defaults and refuses production or any other environment', () => {
+  it('accepts exactly sandbox or production, never defaults, and refuses any other environment', () => {
+    expect(loadPlaidConfig({ ...ok, PLAID_ENV: 'production' }).environment).toBe('production')
+    expect(loadPlaidConfig({ ...ok, PLAID_ENV: ' Production ' }).environment).toBe('production')
     expect(() => loadPlaidConfig({ PLAID_CLIENT_ID: 'cid', PLAID_SECRET: 'sec' })).toThrow(PlaidConfigError)
-    for (const env of ['production', 'development', 'prod', 'live', 'sandbox2', 'true']) expect(() => loadPlaidConfig({ ...ok, PLAID_ENV: env }), env).toThrow(/Unsupported Plaid environment/)
+    for (const env of ['development', 'prod', 'live', 'sandbox2', 'true']) expect(() => loadPlaidConfig({ ...ok, PLAID_ENV: env }), env).toThrow(/Unsupported Plaid environment/)
   })
   it('requires both credentials and never echoes their values', () => {
     expect(() => loadPlaidConfig({ PLAID_ENV: 'sandbox', PLAID_SECRET: 'sec' })).toThrow(/PLAID_CLIENT_ID/)
@@ -116,7 +118,8 @@ describe('server-only boundary', () => {
     expect(everything.filter(f => /VITE_PLAID|VITE_.*BANK_TOKEN/.test(read(f)))).toEqual([])
     const example = read('.env.local.example')
     expect(example).toMatch(/^PLAID_ENV=sandbox$/m)
-    expect(example).toMatch(/^PLAID_SECRET=your-plaid-SANDBOX-secret$/m)
+    expect(example).toMatch(/^PLAID_SECRET=your-plaid-secret-for-this-environment$/m)
+    expect(example).toMatch(/^# PLAID_REDIRECT_URI=https:\/\/your-site.example\/$/m) // documented, commented out: no real value ever lives in the file
     expect(example).toMatch(/^POWERON_BANK_TOKEN_ENCRYPTION_KEY=base64-of-32-random-bytes$/m)
   })
 
@@ -125,7 +128,14 @@ describe('server-only boundary', () => {
     expect(feature).not.toMatch(/sandbox\.plaid\.com|production\.plaid\.com|api\.plaid\.com/)
     expect(feature).not.toMatch(/PLAID_SECRET|PLAID_CLIENT_ID|access_token|accessToken|encrypted/)
     expect(feature).toMatch(/cdn\.plaid\.com\/link\/v2\/stable\/link-initialize\.js/)
-    expect(feature).not.toMatch(/localStorage|sessionStorage/)
+    expect(feature).not.toMatch(/localStorage/)
+    // The ONE sessionStorage use is the short-lived Link token needed to resume an OAuth bank sign-in (plaidLink.ts): never a public or access token.
+    const withStorage = walk('src/features/bank-connection').filter(f => !/\.test\./.test(f) && /sessionStorage/.test(read(f)))
+    expect(withStorage.map(f => f.replace(/\\/g, '/'))).toEqual(['src/features/bank-connection/plaidLink.ts'])
+    const link = read('src/features/bank-connection/plaidLink.ts')
+    expect(link).toMatch(/OAUTH_KEY = 'poweron\.plaid\.oauth\.link'/)
+    expect(link.match(/sessionStorage\.setItem\([^)]*\)/g)).toHaveLength(1)
+    expect(link).not.toMatch(/publicToken[^\n]*sessionStorage|sessionStorage[^\n]*publicToken/)
   })
 
   it('the CSP allows Plaid Link script and frame from cdn.plaid.com and nothing broader', () => {

@@ -21,7 +21,9 @@ export function buildHandler(overrides = {}) {
     if (event.httpMethod !== 'GET' && event.httpMethod !== 'POST') return jsonResponse(405, { error: 'Method not allowed' })
     const auth = await resolveOwnerContext(event, overrides, 'Only owners and admins can review spending.')
     if (!auth.ok) return auth.response
-    const deps = { repo: (overrides.spendingRepo ?? createSpendingRepo)(auth.svc), log: safeLog, now: overrides.now }
+    // The environment is server configuration, never a request value. Spending only READS evidence, so it needs no Plaid credentials.
+    const environment = (process.env.PLAID_ENV ?? '').trim().toLowerCase() === 'production' ? 'production' : 'sandbox'
+    const deps = { repo: (overrides.spendingRepo ?? createSpendingRepo)(auth.svc), log: safeLog, now: overrides.now, environment }
     try {
       if (event.httpMethod === 'GET') return jsonResponse(200, await getExplorer(deps, auth.actor, event.queryStringParameters ?? {}))
       const body = parseJsonBody(event)

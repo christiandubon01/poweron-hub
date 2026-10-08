@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 vi.mock('@/services/authedFetch', () => ({ authedJsonHeaders: async () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer t' }) }))
 const openPlaidLink = vi.fn()
-vi.mock('./plaidLink', () => ({ openPlaidLink: (o: unknown) => openPlaidLink(o) }))
+vi.mock('./plaidLink', () => ({ openPlaidLink: (o: unknown) => openPlaidLink(o), readPendingOauth: () => null, rememberLinkToken: () => undefined, clearPendingOauth: () => undefined }))
 import BankConnectionCard from './BankConnectionCard'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true

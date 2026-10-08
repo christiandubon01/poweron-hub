@@ -77,18 +77,23 @@ function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: strin
 }
 
 /**
- * Minimal bank connection surface (Sandbox). It renders nothing when the caller cannot manage bank connections or the feature is
+ * Minimal bank connection surface (Sandbox or Production, per server configuration). It renders nothing when the caller cannot manage bank connections or the feature is
  * not configured. Connecting a bank does not change any balance, project, obligation, debt or Outlook number.
  */
 export default function BankConnectionCard() {
   const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect } = useBankConnection()
   if (load !== 'ready') return null
-  const active = connections.filter(c => c.status !== 'disconnected')
+  // Only Items of THIS environment are active here. An Item of the other environment (e.g. the earlier Sandbox test) is kept, shown for clarity, and has no actions.
+  const here = connections.filter(c => (c.environment ?? 'sandbox') === (environment ?? 'sandbox'))
+  const active = here.filter(c => c.status !== 'disconnected')
+  const otherEnvironment = connections.filter(c => (c.environment ?? 'sandbox') !== (environment ?? 'sandbox') && c.status !== 'disconnected')
   return <section data-testid="bank-connection-card" aria-label="Bank connection" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Bank connection{environment ? ` · ${environment}` : ''}</h3>
       {active.length === 0 && <button type="button" className={btn} disabled={busy} onClick={() => void connect()} data-testid="bank-connect">{busy ? 'Connecting…' : 'Connect bank'}</button>}
+      {active.length > 0 && <button type="button" className={btn} disabled={busy} onClick={() => void connect()} data-testid="bank-connect-another">{busy ? 'Connecting…' : 'Connect another bank'}</button>}
     </div>
+    {active.length > 0 && environment === 'production' && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="bank-connect-another-note">Each connection is billed by Plaid. Connect a bank only once.</p>}
     {active.length === 0 && <p className="mt-2 text-sm text-[var(--text-secondary)]" data-testid="bank-not-connected">Not connected. Connecting a bank does not change any balance or report.</p>}
     <div className="mt-2 divide-y divide-[var(--border-primary)]">{active.map(c => {
       const s = STATUS[c.status]
@@ -117,6 +122,14 @@ export default function BankConnectionCard() {
         </div>
       </div>
     })}</div>
+    {otherEnvironment.map(c => <div key={c.id} data-testid="bank-other-environment" className="mt-2 border-t border-[var(--border-primary)] pt-2 text-xs text-[var(--text-secondary)]">
+      <p>{c.institutionName ?? 'Bank'} · {(c.environment ?? 'sandbox') === 'production' ? 'Production' : 'Sandbox'} test connection. Its history is kept but it is not active here and is never used for your business numbers.</p>
+      {/* An account of this connection that still points at a Cash OS account can have that mapping removed (an explicit owner choice, no provider call), so the real account can be mapped instead. */}
+      {accounts.filter(a => a.connectionId === c.id && a.mapping).map(a => <p key={a.id} className="mt-1 flex flex-wrap items-center justify-between gap-2" data-testid="bank-other-environment-mapping">
+        <span>{bankLabel(a)} → <span className="font-semibold">{a.mapping!.financialAccountName}</span></span>
+        <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Remove this test mapping? Your records, balances and the test history are not changed.')) void unmapAccount(a.id) }}>Remove mapping</button>
+      </p>)}
+    </div>)}
     {message && <p role="alert" className="mt-2 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
   </section>
 }

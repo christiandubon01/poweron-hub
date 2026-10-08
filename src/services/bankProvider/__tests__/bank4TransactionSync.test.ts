@@ -398,10 +398,10 @@ describe('BANK-4 webhooks (nudge, not truth)', () => {
       expect((await webhookHandler(mk(w))(ev(body, { 'plaid-verification': sign(body) }))).statusCode).toBe(200)
       expect(w.state.events).toHaveLength(0)
     })
-    it('fails closed when Plaid is not configured or the environment is not sandbox; only POST is accepted', async () => {
+    it('fails closed when Plaid is not configured or the environment is not sandbox/production; only POST is accepted', async () => {
       const w = world(); delete process.env.PLAID_SECRET
       expect((await webhookHandler(mk(w))(ev(BODY, { 'plaid-verification': sign(BODY) }))).statusCode).toBe(500)
-      process.env.PLAID_SECRET = 's'; process.env.PLAID_ENV = 'production'
+      process.env.PLAID_SECRET = 's'; process.env.PLAID_ENV = 'development'
       expect((await webhookHandler(mk(w))(ev(BODY, { 'plaid-verification': sign(BODY) }))).statusCode).toBe(500)
       process.env.PLAID_ENV = 'sandbox'
       expect((await webhookHandler(mk(w))({ httpMethod: 'GET', headers: {} })).statusCode).toBe(405)
@@ -747,7 +747,7 @@ describe('BANK-4 static guarantees', () => {
   it('37. migrations are unchanged (BANK-4 needs none)', async () => {
     const { readdirSync } = await import('node:fs')
     const nums = readdirSync(new URL('../../../../supabase/migrations/', import.meta.url)).map(f => parseInt(f, 10)).filter(n => n >= 153)
-    expect(Math.max(...nums)).toBeLessThanOrEqual(155) // BANK-5 later added 155; BANK-4 itself needed none
+    expect(Math.max(...nums)).toBeLessThanOrEqual(156) // BANK-5 added 155 and BANK-6P added 156; BANK-4 itself needed none
   })
   it('the browser code never references secrets and never auto-syncs on load', () => {
     const ui = readFileSync(new URL('../../../features/bank-connection/useBankConnection.ts', import.meta.url), 'utf8')

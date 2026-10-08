@@ -4,9 +4,9 @@
  * Browser state for the sandbox bank connection card. Talks only to the authenticated Netlify functions; receives only
  * SANITIZED data (no token, no cursor, no provider response). Connecting a bank has no effect on any Cash OS number.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { authedJsonHeaders } from '@/services/authedFetch'
-import { openPlaidLink } from './plaidLink'
+import { clearPendingOauth, openPlaidLink, readPendingOauth, rememberLinkToken } from './plaidLink'
 
 const BASE = '/.netlify/functions'
 
@@ -14,6 +14,8 @@ export interface BankConnectionSummary {
   id: string
   provider: string
   status: 'connecting' | 'healthy' | 'login_required' | 'error' | 'disconnected'
+  /** Optional only for responses from a server that predates environments (treated as sandbox). */
+  environment?: 'sandbox' | 'production'
   institutionName: string | null
   connectedAt: string | null
   disconnectedAt: string | null
@@ -95,30 +97,55 @@ export function useBankConnection() {
     await refreshAccounts()
   }, [refreshAccounts])
 
+  /** What happens after Link succeeds: the public token goes straight to the server (never kept), then the list and accounts reload. */
+  const handleLinkSuccess = useCallback(async (onDone: (publicToken: string) => Promise<void>, publicToken: string) => {
+    clearPendingOauth()
+    try {
+      await onDone(publicToken)
+      const status = await request('plaid-connection-status', { method: 'GET' })
+      setConnections(Array.isArray(status.connections) ? status.connections : [])
+      const live = (status.connections as BankConnectionSummary[] | undefined)?.filter(c => c.status !== 'disconnected') ?? []
+      for (const c of live) {
+        try { await discoverAccounts(c.id) } catch (error) { setMessage(`Connected, but the bank accounts could not be loaded yet: ${(error as Error).message}`); await refresh(); await refreshSyncs() }
+      }
+    } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [discoverAccounts, refresh, refreshSyncs])
+
   const runLink = useCallback(async (body: Record<string, unknown>, onDone: (publicToken: string) => Promise<void>) => {
     setBusy(true); setMessage(null)
     try {
       const { linkToken } = await request('plaid-link-token', { method: 'POST', body })
+      rememberLinkToken({ linkToken, mode: body.mode === 'update' ? 'update' : 'new', itemId: typeof body.itemId === 'string' ? body.itemId : null })
       await openPlaidLink({
         linkToken,
-        onSuccess: async publicToken => {
-          try {
-            await onDone(publicToken)
-            const status = await request('plaid-connection-status', { method: 'GET' })
-            setConnections(Array.isArray(status.connections) ? status.connections : [])
-            const live = (status.connections as BankConnectionSummary[] | undefined)?.filter(c => c.status !== 'disconnected') ?? []
-            for (const c of live) {
-              try { await discoverAccounts(c.id) } catch (error) { setMessage(`Connected, but the bank accounts could not be loaded yet: ${(error as Error).message}`); await refresh(); await refreshSyncs() }
-            }
-          } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
-        },
-        onExit: () => setBusy(false),
+        onSuccess: publicToken => handleLinkSuccess(onDone, publicToken),
+        onExit: () => { clearPendingOauth(); setBusy(false) },
       })
     } catch (error) {
       setMessage((error as Error).message || 'Could not start the bank connection.')
       setBusy(false)
     }
-  }, [discoverAccounts])
+  }, [handleLinkSuccess])
+
+  // Returning from an OAuth bank (e.g. Wells Fargo): resume the SAME Link session with the returned URL. Runs once, only on an OAuth return.
+  const resumed = useRef(false)
+  useEffect(() => {
+    if (resumed.current) return
+    const pending = readPendingOauth()
+    if (!pending) return
+    resumed.current = true
+    const returnedUri = window.location.href
+    try { window.history.replaceState(null, '', window.location.pathname) } catch { /* ignore */ }
+    const onDone = pending.mode === 'update' && pending.itemId
+      ? (async () => { await request('plaid-exchange', { method: 'POST', body: { mode: 'update_complete', itemId: pending.itemId } }) })
+      : (async (publicToken: string) => { await request('plaid-exchange', { method: 'POST', body: { publicToken } }) })
+    setBusy(true)
+    void Promise.resolve(openPlaidLink({
+      linkToken: pending.linkToken, receivedRedirectUri: returnedUri,
+      onSuccess: publicToken => handleLinkSuccess(onDone, publicToken),
+      onExit: () => { clearPendingOauth(); setBusy(false) },
+    })).catch(error => { setMessage((error as Error).message || 'Could not resume the bank connection.'); setBusy(false) })
+  }, [handleLinkSuccess])
 
   /** New connection. The public token goes straight to the server and is not kept. */
   const connect = useCallback(() => runLink({}, publicToken => request('plaid-exchange', { method: 'POST', body: { publicToken } })), [runLink])
