@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
 const btn = 'min-h-[44px] rounded-lg px-3 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
@@ -27,35 +28,54 @@ const REL_KINDS: Array<{ key: string; label: string }> = [
   { key: 'transfer', label: 'Transfer' }, { key: 'overhead', label: 'General overhead (business)' }, { key: 'personal', label: 'Personal' },
 ]
 
+/** Mirrors the SERVER's batch rule only so the checkboxes appear on the right rows. The server re-decides everything when the owner confirms. */
+const isBatchApprovable = (r: ExplorerRow, batchBuckets: string[]) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high'
+  && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
+
 const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}${usd2(r.amountMinor)}`
 
 /**
- * The selection, made reviewable: exactly what will be approved, one line each, with merchant, date, signed amount, suggested category and account.
- * The WHOLE line is the control (a tap anywhere on it removes it from the selection, and a "Remove" label says so), and each category can be removed
- * in one explicit tap. Removing only changes the selection: nothing is approved or saved.
+ * The selection, made reviewable. EVERY transaction of the draft stays listed here; tapping a line only checks or unchecks it (a second tap restores it),
+ * so an accidental tap costs nothing. Only CHECKED lines are approved. Each line has its own category control so a wrong suggestion can be corrected
+ * before approval (the server validates every choice). Nothing here approves or saves anything.
  */
-function SelectedReview({ rows, categories, busy, onRemove, onRemoveCategory }: {
-  rows: ExplorerRow[]; categories: Array<{ key: string; label: string; count: number }>; busy: boolean
-  onRemove: (row: ExplorerRow) => void; onRemoveCategory: (key: string) => void
+function SelectedReview({ items, off, overrides, categoryChoices, categories, busy, onToggle, onCategory, onUncheckCategory }: {
+  items: ExplorerRow[]; off: Set<string>; overrides: Map<string, string>; categoryChoices: Array<{ key: string; label: string }>
+  categories: Array<{ key: string; label: string; count: number }>; busy: boolean
+  onToggle: (row: ExplorerRow) => void; onCategory: (row: ExplorerRow, key: string) => void; onUncheckCategory: (key: string) => void
 }) {
+  const labelOf = (key: string | null) => categoryChoices.find(c => c.key === key)?.label ?? 'Uncategorized'
   return <div className="mt-2" data-testid="spending-selected-review">
-    <p className="text-xs text-[var(--text-secondary)]">Tap a transaction to remove it from the selection. Removing never approves or saves anything, and the transaction stays in the review queue.</p>
-    <div className="mt-2 flex flex-wrap gap-2" data-testid="spending-selected-categories" aria-label="Remove a whole category from the selection">
-      {categories.map(c => <button key={c.key} type="button" className={btn} disabled={busy} onClick={() => onRemoveCategory(c.key)} aria-label={`Remove all ${c.label} (${c.count}) from the selection`} data-testid="spending-remove-category">Remove all {c.label} ({c.count})</button>)}
-    </div>
-    <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-selected-list" aria-label="Selected transactions">{rows.map(r => <li key={r.id} data-testid="spending-selected-item" style={{ background: 'color-mix(in srgb, var(--fin-cash) 10%, transparent)' }}>
-      <label className={`flex min-h-[56px] w-full items-start gap-2 py-2 ${busy ? 'opacity-60' : 'cursor-pointer'}`}>
-        <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={{ accentColor: 'var(--fin-cash)' }} checked disabled={busy} onChange={() => onRemove(r)} aria-label={`Remove ${r.merchant} from the selection`} data-testid="spending-selected-remove" /></span>
-        <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold">{r.merchant}</span>
-            <span className="block text-xs text-[var(--text-secondary)]">{shortDate(r.date)} · {r.account.mappedTo ?? r.account.label}{r.account.mask ? ` ••••${r.account.mask}` : ''}</span>
-            <span className="mt-1 block"><Chip tone="muted">{r.bucket.label ?? 'Uncategorized'} · suggested</Chip></span>
+    <p className="text-xs text-[var(--text-secondary)]">Tap a transaction to check or uncheck it. Only checked transactions are approved. Use the category box to correct a suggestion first. Nothing is saved until you confirm.</p>
+    {categories.length > 0 && <div className="mt-2 flex flex-wrap gap-2" data-testid="spending-selected-categories" aria-label="Uncheck a whole category">
+      {categories.map(c => <button key={c.key} type="button" className={btn} disabled={busy} onClick={() => onUncheckCategory(c.key)} aria-label={`Uncheck all ${c.label} (${c.count})`} data-testid="spending-uncheck-category">Uncheck all {c.label} ({c.count})</button>)}
+    </div>}
+    <ul className="mt-2 space-y-2" data-testid="spending-selected-list" aria-label="Transactions in this review">{items.map(r => {
+      const on = !off.has(r.id)
+      const chosenKey = overrides.get(r.id) ?? r.bucket.key
+      const changed = overrides.has(r.id) && overrides.get(r.id) !== r.bucket.key
+      return <li key={r.id} data-testid="spending-selected-item" data-checked={on ? 'true' : 'false'} className="rounded-lg border border-[var(--border-primary)] p-2"
+        style={on ? { background: 'color-mix(in srgb, var(--fin-cash) 14%, transparent)', boxShadow: 'inset 4px 0 0 var(--fin-cash)' } : { opacity: 0.7 }}>
+        <label className={`flex min-h-[56px] w-full items-start gap-2 ${busy ? 'opacity-60' : 'cursor-pointer'}`}>
+          <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={{ accentColor: 'var(--fin-cash)' }} checked={on} disabled={busy} onChange={() => onToggle(r)} aria-label={`${on ? 'Uncheck' : 'Check'} ${r.merchant}`} data-testid="spending-selected-toggle" /></span>
+          <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold">{r.merchant}</span>
+              <span className="block text-xs text-[var(--text-secondary)]">{shortDate(r.date)} · {r.account.mappedTo ?? r.account.label}{r.account.mask ? ` ••••${r.account.mask}` : ''}</span>
+              <span className="mt-1 block"><Chip tone={on ? 'ok' : 'muted'}>{on ? '✓ Selected' : 'Not selected'}</Chip></span>
+            </span>
+            <span className="shrink-0 text-sm font-semibold">{signed(r)}</span>
           </span>
-          <span className="shrink-0 text-right"><span className="block text-sm font-semibold">{signed(r)}</span><span className="block text-xs underline">Remove</span></span>
-        </span>
-      </label>
-    </li>)}</ul>
+        </label>
+        <div className="mt-1 flex flex-wrap items-center gap-2 pl-[52px]">
+          <label className="text-xs text-[var(--text-secondary)]" htmlFor={`cat-${r.id}`}>Category</label>
+          <select id={`cat-${r.id}`} className={`${field} min-w-0 flex-1`} value={chosenKey ?? ''} disabled={busy} onChange={e => onCategory(r, e.target.value)} data-testid="spending-selected-category">
+            {categoryChoices.map(c => <option key={c.key} value={c.key}>{c.label}{c.key === r.bucket.key ? ' (suggested)' : ''}</option>)}
+          </select>
+          {changed && <span className="w-full text-xs" data-testid="spending-category-changed" style={{ color: 'var(--fin-warning)' }}>Changed from the suggestion ({labelOf(r.bucket.key)}). Your category will be saved when you confirm.</span>}
+        </div>
+      </li>
+    })}</ul>
   </div>
 }
 
@@ -173,7 +193,7 @@ function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRo
   </div>
 }
 
-function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle }: { row: ExplorerRow; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel }: { row: ExplorerRow; overrideLabel?: string | null; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
   return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} className="rounded-lg py-2"
@@ -186,6 +206,7 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
         <span className="block text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · {row.account.mappedTo ?? row.account.label}</span>
         <span className="mt-1 flex flex-wrap gap-1">
           {selected && <Chip tone="ok">✓ Selected</Chip>}
+          {overrideLabel && <Chip tone="ok">Your category: {overrideLabel}</Chip>}
           {row.pending && <Chip tone="warn">Pending</Chip>}
           {row.account.environment === 'sandbox' && environment === 'production' && <Chip>Sandbox</Chip>}
           {row.review === 'ignored' ? <Chip>Ignored</Chip> : <>
@@ -209,50 +230,111 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
 export default function SpendingExplorer() {
   const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore } = useSpendingExplorer()
   const [showFilters, setShowFilters] = useState(false)
-  // The selection keeps a snapshot of each row, so it survives filter and view changes. The snapshot is for DISPLAY only: the server re-decides
-  // eligibility from current data when the owner confirms, and refuses anything that is not allowed.
+  // The review DRAFT. `selection` holds a snapshot of each row (display only), `off` the ones unchecked, `overrides` the owner's category corrections.
+  // Nothing here is a decision: the server re-validates every id and category when the owner confirms.
   const [selection, setSelection] = useState<Map<string, ExplorerRow>>(new Map())
+  const [off, setOff] = useState<Set<string>>(new Set())
+  const [overrides, setOverrides] = useState<Map<string, string>>(new Map())
+  const [pendingRestore, setPendingRestore] = useState<Set<string>>(new Set())
   const [reviewing, setReviewing] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [batchNote, setBatchNote] = useState<string | null>(null)
+  const restored = useRef(false)
+  const scope = data?.draftScope ?? null
+  const batchBuckets = data?.options.batchBuckets ?? []
+  const maxBatch = data?.options.maxBatch ?? 50
+
+  // Reload safety: restore the saved draft ONCE per page load, re-selecting only rows that are still eligible bank evidence. Ids not on the loaded page wait
+  // (they are shown as a note) and are dropped once the whole unfiltered queue is loaded without them. A restored draft never carries an approval.
+  useEffect(() => {
+    if (load !== 'ready' || !data || !scope) return
+    const byId = new Map(rows.map(r => [r.id, r]))
+    const fullQueueLoaded = filters.view === 'review_queue' && rows.length >= data.total && !filters.bucket && !filters.account && !filters.scope && !filters.review && !filters.confidence && !filters.project && !filters.search && !filters.min && !filters.max
+    let sel = selection, pend = pendingRestore, nextOff = off, nextOverrides = overrides, changed = false
+    if (!restored.current) {
+      restored.current = true
+      const wanted = loadDraft(scope)
+      if (wanted) {
+        sel = new Map(); pend = new Set(); changed = true
+        for (const id of wanted.ids) { const r = byId.get(id); if (r && isBatchApprovable(r, batchBuckets) && sel.size < maxBatch) sel.set(id, r); else if (!r) pend.add(id) }
+        nextOff = new Set(wanted.off); nextOverrides = new Map(Object.entries(wanted.overrides))
+      }
+    }
+    if (pend.size > 0) {
+      sel = new Map(sel); pend = new Set(pend)
+      for (const id of [...pend]) {
+        const r = byId.get(id)
+        if (r) { pend.delete(id); changed = true; if (isBatchApprovable(r, batchBuckets) && sel.size < maxBatch) sel.set(id, r) }
+        else if (fullQueueLoaded) { pend.delete(id); changed = true }
+      }
+    }
+    if (changed) {
+      setSelection(sel); setPendingRestore(pend)
+      setOff(new Set([...nextOff].filter(id => sel.has(id) || pend.has(id)))); setOverrides(new Map([...nextOverrides].filter(([id]) => sel.has(id) || pend.has(id))))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, data, rows])
+
+  // Keep the draft saved as it changes (ids, unchecked ids, category choices only). An empty draft removes it.
+  useEffect(() => {
+    if (!scope || !restored.current) return
+    saveDraft(scope, { ids: [...selection.keys(), ...pendingRestore], off: [...off], overrides: Object.fromEntries(overrides) })
+  }, [scope, selection, off, overrides, pendingRestore])
+
   if (load !== 'ready' || !data || data.viewCounts.all === 0) return null
   const a = data.analytics
-  const maxBatch = data.options.maxBatch ?? 50
-  // Which rows may be approved together is decided by the SERVER; this only mirrors its rule so the checkboxes appear on the right rows.
-  const batchBuckets = data.options.batchBuckets ?? []
-  const approvable = (r: ExplorerRow) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high'
-    && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
+  const approvable = (r: ExplorerRow) => isBatchApprovable(r, batchBuckets)
+  const categoryChoices = (data.options.buckets ?? []).filter(b => batchBuckets.includes(b.key)).map(b => ({ key: b.key, label: b.label }))
+  const labelFor = (key: string | null) => categoryChoices.find(c => c.key === key)?.label ?? data.options.buckets.find(b => b.key === key)?.label ?? 'Uncategorized'
   const eligible = rows.filter(approvable)
   const freshById = new Map(rows.map(r => [r.id, r]))
-  // A selected row that has since been decided or changed (and is on the current page) drops out; one not on the current page keeps its snapshot.
-  const chosen = [...selection.values()].map(snap => freshById.get(snap.id) ?? snap).filter(r => !freshById.has(r.id) || approvable(r)).sort((x, y) => y.date.localeCompare(x.date) || x.id.localeCompare(y.id))
+  // A draft row that has since been decided or changed (and is on the current page) drops out; one not on the current page keeps its snapshot.
+  const items = [...selection.values()].map(snap => freshById.get(snap.id) ?? snap).filter(r => !freshById.has(r.id) || approvable(r)).sort((x, y) => y.date.localeCompare(x.date) || x.id.localeCompare(y.id))
+  const effectiveKey = (r: ExplorerRow) => overrides.get(r.id) ?? r.bucket.key ?? 'uncategorized'
+  const chosen = items.filter(r => !off.has(r.id)) // the ones that WILL be sent for approval, if the owner confirms
   const chosenIds = new Set(chosen.map(r => r.id))
-  const categories = [...chosen.reduce((m, r) => { const key = r.bucket.key ?? r.bucket.label ?? 'uncategorized'; const e = m.get(key) ?? { key, label: r.bucket.label ?? 'Uncategorized', count: 0 }; e.count += 1; return m.set(key, e) }, new Map<string, { key: string; label: string; count: number }>()).values()].sort((x, y) => y.count - x.count || x.label.localeCompare(y.label))
+  const categories = [...chosen.reduce((m, r) => { const key = effectiveKey(r); const e = m.get(key) ?? { key, label: labelFor(key), count: 0 }; e.count += 1; return m.set(key, e) }, new Map<string, { key: string; label: string; count: number }>()).values()].sort((x, y) => y.count - x.count || x.label.localeCompare(y.label))
   const totalOutMinor = chosen.reduce((n, r) => n + Math.abs(r.amountMinor), 0)
-  const breakdown = [...chosen.reduce((m, r) => { const k = r.bucket.label ?? 'Uncategorized'; const e = m.get(k) ?? { label: k, count: 0, totalMinor: 0 }; e.count += 1; e.totalMinor += Math.abs(r.amountMinor); return m.set(k, e) }, new Map<string, { label: string; count: number; totalMinor: number }>()).values()].sort((x, y) => y.totalMinor - x.totalMinor || x.label.localeCompare(y.label))
-  const commitSelection = (next: Map<string, ExplorerRow>) => { setSelection(next); if (next.size === 0) { setReviewing(false); setConfirming(false) } }
+  const breakdown = [...chosen.reduce((m, r) => { const k = labelFor(effectiveKey(r)); const e = m.get(k) ?? { label: k, count: 0, totalMinor: 0 }; e.count += 1; e.totalMinor += Math.abs(r.amountMinor); return m.set(k, e) }, new Map<string, { label: string; count: number; totalMinor: number }>()).values()].sort((x, y) => y.totalMinor - x.totalMinor || x.label.localeCompare(y.label))
+  const touch = () => { setConfirming(false); setBatchNote(null) } // any change to the draft voids a confirmation that was already showing
+  /** Tap = check or uncheck. A row that was never selected is added (checked); a selected row only flips, and stays listed. */
   const toggle = (row: ExplorerRow) => {
-    setConfirming(false); setBatchNote(null) // any change to the selection voids a confirmation that was already showing
-    if (selection.has(row.id)) { const n = new Map(selection); n.delete(row.id); commitSelection(n) }
-    else if (selection.size >= maxBatch) setBatchNote(`You can select up to ${maxBatch} at a time.`)
-    else commitSelection(new Map(selection).set(row.id, row))
+    touch()
+    if (!selection.has(row.id)) {
+      if (selection.size >= maxBatch) { setBatchNote(`You can select up to ${maxBatch} at a time.`); return }
+      setSelection(new Map(selection).set(row.id, row)); return
+    }
+    setOff(prev => { const n = new Set(prev); if (n.has(row.id)) n.delete(row.id); else n.add(row.id); return n })
   }
-  /** Explicit, one tap: take every selected transaction of ONE suggested category out of the selection (selection only; nothing is approved or saved). */
-  const removeCategory = (key: string) => {
-    setConfirming(false); setBatchNote(null)
-    const drop = new Set(chosen.filter(r => (r.bucket.key ?? r.bucket.label ?? 'uncategorized') === key).map(r => r.id))
-    commitSelection(new Map([...selection].filter(([id]) => !drop.has(id))))
+  const setCategory = (row: ExplorerRow, key: string) => {
+    touch()
+    setOverrides(prev => { const n = new Map(prev); if (!key || key === row.bucket.key) n.delete(row.id); else n.set(row.id, key); return n })
   }
-  const selectConfident = () => { setConfirming(false); setBatchNote(null); setSelection(prev => { const n = new Map(prev); for (const r of eligible) { if (n.size >= maxBatch) break; n.set(r.id, r) } return n }) }
-  const clearSelection = () => { setSelection(new Map()); setReviewing(false); setConfirming(false) }
+  /** Explicit, one tap: uncheck every CHECKED transaction in ONE category (they stay listed and can be checked again). Nothing is approved or saved. */
+  const uncheckCategory = (key: string) => {
+    touch()
+    const ids = chosen.filter(r => effectiveKey(r) === key).map(r => r.id)
+    setOff(prev => new Set([...prev, ...ids]))
+  }
+  const selectConfident = () => {
+    touch()
+    const n = new Map(selection)
+    for (const r of eligible) { if (n.size >= maxBatch) break; if (!n.has(r.id)) n.set(r.id, r) }
+    setSelection(n)
+    setOff(prev => new Set([...prev].filter(id => !eligible.some(r => r.id === id && !selection.has(id))))) // newly added rows start checked
+  }
+  const clearSelection = () => { setSelection(new Map()); setOff(new Set()); setOverrides(new Map()); setPendingRestore(new Set()); setReviewing(false); setConfirming(false); if (scope) clearDraft(scope) }
   const approveSelected = async () => {
     const ids = chosen.map(r => r.id).slice(0, maxBatch)
     if (!ids.length) return
-    const out = await decideBatch(ids)
+    const sent: Record<string, string> = {}
+    for (const id of ids) { const k = overrides.get(id); const r = chosen.find(x => x.id === id); if (k && r && k !== r.bucket.key) sent[id] = k }
+    const out = await decideBatch(ids, sent)
+    if (!out) { setConfirming(false); return } // the request failed: the draft is kept so nothing has to be rebuilt
     clearSelection()
-    setBatchNote(out ? batchSummary(out) : null)
+    setBatchNote(batchSummary(out))
   }
-  const showingSelected = reviewing && chosen.length > 0
+  const showingSelected = reviewing && items.length > 0
   const active = (['bucket', 'account', 'scope', 'review', 'confidence', 'project', 'search', 'min', 'max'] as const).filter(k => filters[k]).length + (filters.days !== DEFAULT_FILTERS.days ? 1 : 0) + (filters.accounts !== DEFAULT_FILTERS.accounts ? 1 : 0)
   return <section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -295,11 +377,12 @@ export default function SpendingExplorer() {
     {batchNote && <p className="mt-1 text-xs" data-testid="spending-batch-note" role="status">{batchNote}</p>}
     {message && <p role="alert" className="mt-2 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
     {showingSelected
-      ? <SelectedReview rows={chosen} categories={categories} busy={busy} onRemove={toggle} onRemoveCategory={removeCategory} />
+      ? <SelectedReview items={items} off={off} overrides={overrides} categoryChoices={categoryChoices} categories={categories} busy={busy} onToggle={toggle} onCategory={setCategory} onUncheckCategory={uncheckCategory} />
       : rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} />)}</ul>}
+      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
-    {chosen.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="spending-selection-bar" role="region" aria-label="Selected transactions">
+    {pendingRestore.size > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-pending-restore">{pendingRestore.size} saved selection{pendingRestore.size === 1 ? ' is' : 's are'} on transactions not loaded yet. {pendingRestore.size === 1 ? 'It returns' : 'They return'} if {pendingRestore.size === 1 ? 'it loads' : 'they load'}; use Show more.</p>}
+    {items.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="spending-selection-bar" role="region" aria-label="Selected transactions">
       <p className="text-sm font-semibold" aria-live="polite"><span data-testid="spending-selected-count">{chosen.length} selected</span> <span className="font-normal text-[var(--text-secondary)]">· {usd2(totalOutMinor)} going out</span></p>
       {confirming
         ? <section role="alertdialog" aria-label="Confirm batch approval" data-testid="spending-confirm" className="space-y-2 rounded-lg border border-[var(--border-primary)] p-3">
@@ -315,7 +398,7 @@ export default function SpendingExplorer() {
         : <div className="flex flex-wrap gap-2">
             <button type="button" className={btn} disabled={busy} aria-pressed={showingSelected} onClick={() => setReviewing(r => !r)} data-testid="spending-review-selected">{showingSelected ? 'Back to review queue' : 'Review selected'}</button>
             <button type="button" className={btn} disabled={busy} onClick={clearSelection} data-testid="spending-clear-selection">Clear selection</button>
-            <button type="button" className={`${btn} bg-white/10`} disabled={busy} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
+            <button type="button" className={`${btn} bg-white/10`} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
           </div>}
     </div>}
   </section>

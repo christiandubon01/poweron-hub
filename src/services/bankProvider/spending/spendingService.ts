@@ -13,6 +13,7 @@
  * Authority: owner/admin only, organization from the authenticated profile (never the request). Pending evidence may only be categorized
  * or ignored. Changing a decision keeps the old one as an "undone" row (audit trail), then writes the new one.
  */
+import { createHash } from 'node:crypto'
 import { BankConnectionError, UUID, assertAuthority, note, type BankActor } from '../bankConnectionService'
 import { generateRecurrenceDates } from '../../../finance/recurrence'
 import { addDays } from './analytics'
@@ -177,6 +178,8 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
       commitments: ctx.commitments.filter(c => c.status === 'scheduled').map(c => ({ id: c.id, label: c.title, amountMinor: c.amountMinor, expectedDate: c.expectedDate })),
       debts: ctx.debts, projects: ctx.projects,
     },
+    // Opaque, one-way: lets the browser keep an in-progress review draft that is private to this organization AND this user, without knowing either id.
+    draftScope: createHash('sha256').update(`${actor.organizationId}:${actor.userId}:review-draft`).digest('hex').slice(0, 16),
     accounts, environment,
     meta: {
       // Diagnostics for known-bill matching: a healthy pipeline with zero matches means the evidence simply does not resemble the bills.
@@ -197,7 +200,7 @@ export type DecisionInput =
   | { action: 'accept_suggestion' | 'reject_suggestion'; transactionId?: unknown; dimension?: unknown }
   | { action: 'undo'; transactionId?: unknown; dimension?: unknown }
   | { action: 'ignore' | 'unignore'; transactionId?: unknown }
-  | { action: 'confirm_batch'; transactionIds?: unknown }
+  | { action: 'confirm_batch'; transactionIds?: unknown; categoryOverrides?: unknown }
 
 const bad = (m: string) => new BankConnectionError('invalid_request', 400, m)
 const requireId = (v: unknown, what: string): string => { if (typeof v !== 'string' || !UUID.test(v)) throw bad(`A valid ${what} is required.`); return v }
@@ -234,7 +237,7 @@ async function relationshipRow(deps: SpendingDeps, actor: BankActor, txId: strin
 
 export const MAX_BATCH = 50
 export type BatchSkipReason = 'not_found' | 'pending' | 'money_in' | 'no_suggestion' | 'not_high_confidence' | 'needs_individual_review' | 'relationship_suggested' | 'already_decided' | 'failed'
-export interface BatchItemResult { id: string; result: 'confirmed' | 'unchanged' | 'skipped'; reason?: BatchSkipReason; bucket?: string }
+export interface BatchItemResult { id: string; result: 'confirmed' | 'unchanged' | 'skipped'; reason?: BatchSkipReason; bucket?: string; overridden?: boolean }
 
 /**
  * SELECTED-BATCH approval. The server decides what is eligible, from the CURRENT evidence and decisions (the browser's idea of a suggestion
@@ -242,12 +245,28 @@ export interface BatchItemResult { id: string; result: 'confirmed' | 'unchanged'
  * Never confirmed in bulk: pending rows, money in, payroll, personal, transfers, owner draws, projects, bills, debts, or any row that also carries a
  * relationship suggestion. Those stay in the review queue for an individual decision. Each confirmed row is its own atomic, audited decision
  * (so a failure on one row never half-saves another); nothing here can create canonical truth.
+ *
+ * CATEGORY OVERRIDES: the owner may correct the suggested category of a row before approving it ({ transactionId: bucketKey }). An override is
+ * validated here, never trusted: it must belong to a selected row, name a real everyday-expense category (the same list batch approval allows), and
+ * the row must still be a posted, undecided money-out transaction with no competing relationship suggestion. It is saved as the OWNER's decision
+ * (not a rule's), with the original suggestion kept in the audit basis. A malformed or disallowed override refuses the whole request unchanged.
  */
-async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknown) {
+async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknown, rawOverrides: unknown) {
   if (!Array.isArray(rawIds) || rawIds.length === 0) throw bad('Select at least one transaction.')
   const ids = [...new Set(rawIds)]
   if (ids.length > MAX_BATCH) throw bad(`Approve at most ${MAX_BATCH} transactions at a time.`)
   for (const id of ids) requireId(id, 'transaction')
+  const overrides = new Map<string, string>()
+  if (rawOverrides !== undefined && rawOverrides !== null) {
+    if (typeof rawOverrides !== 'object' || Array.isArray(rawOverrides)) throw bad('Category changes were not understood.')
+    const entries = Object.entries(rawOverrides as Record<string, unknown>)
+    if (entries.length > ids.length) throw bad('Category changes were not understood.')
+    for (const [id, bucket] of entries) {
+      if (!ids.includes(id)) throw bad('A category change was sent for a transaction that is not selected.')
+      if (!isBucketKey(bucket) || !BATCH_APPROVABLE_BUCKETS.includes(bucket)) throw bad('Choose an everyday expense category. Payroll, personal, transfers and owner draws are decided one at a time.')
+      overrides.set(id, bucket)
+    }
+  }
   const org = actor.organizationId
   const ctx = await deps.repo.loadContext(org, addDays(today(deps), -200)) // organization-scoped: another organization's ids are simply not found
   const rows = new Map(explorerFromContext(ctx, today(deps)).rows.map(r => [r.id, r]))
@@ -259,6 +278,16 @@ async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknow
     if (row.pending) { skip('pending'); continue }
     if (row.direction !== 'money_out') { skip('money_in'); continue }
     if (row.review === 'ignored' || row.bucket.state === 'confirmed') { skip('already_decided'); continue }
+    const override = overrides.get(id)
+    if (override) {
+      if (row.relationship.state === 'suggested') { skip('relationship_suggested'); continue }
+      try {
+        const basis = { mode: 'owner_batch_override', suggested: row.bucket.state === 'suggested' ? row.bucket.key : null, suggestedConfidence: row.bucket.state === 'suggested' ? row.bucket.confidence : null }
+        const out = await deps.repo.replaceDecision({ ...fresh(actor, id, 'category', { category: override, basis }) }) // source 'owner': the owner chose this category
+        results.push({ id, result: out.outcome === 'unchanged' ? 'unchanged' : 'confirmed', bucket: override, overridden: true })
+      } catch { skip('failed') }
+      continue
+    }
     if (row.bucket.state !== 'suggested' || !row.bucket.key) { skip('no_suggestion'); continue }
     if (row.bucket.confidence !== 'high') { skip('not_high_confidence'); continue }
     if (!BATCH_APPROVABLE_BUCKETS.includes(row.bucket.key)) { skip('needs_individual_review'); continue }
@@ -302,7 +331,7 @@ export async function applyDecision(deps: SpendingDeps, actor: BankActor, input:
 async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: DecisionInput) {
   assertAuthority(actor)
   const org = actor.organizationId
-  if (input.action === 'confirm_batch') return confirmBatch(deps, actor, input.transactionIds)
+  if (input.action === 'confirm_batch') return confirmBatch(deps, actor, input.transactionIds, input.categoryOverrides)
   const txId = requireId((input as { transactionId?: unknown }).transactionId, 'transaction')
   const ev = await deps.repo.getEvidence(org, txId) // organization-scoped: another organization's id is simply "not found"
   if (!ev || ev.removed) throw new BankConnectionError('not_found', 404, 'Transaction not found.')

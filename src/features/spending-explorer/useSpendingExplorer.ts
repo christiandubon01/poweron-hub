@@ -48,7 +48,7 @@ export interface ExplorerMeta { billCandidates: number; activeObligations: numbe
 export interface ReviewCounts { reviewed: number; unreviewed: number; excluded: number }
 export interface HistoryEntry { label: string; kind: string; status: string; source: string; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
 export interface BatchResult { confirmed: number; unchanged: number; skipped: number; results: Array<{ id: string; result: string; reason?: string }> }
-export interface ExplorerData { reviewCounts?: ReviewCounts; asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
+export interface ExplorerData { draftScope?: string; reviewCounts?: ReviewCounts; asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
 
 export interface Filters {
   view: ExplorerView; accounts: AccountScope; days: 30 | 60 | 90; bucket: string; account: string; scope: string; review: string; confidence: string; project: string; search: string; min: string; max: string
@@ -61,7 +61,7 @@ export type DecisionBody =
   | { action: 'accept_suggestion' | 'reject_suggestion'; transactionId: string; dimension: 'bucket' | 'relationship' }
   | { action: 'undo'; transactionId: string; dimension: 'bucket' | 'relationship' | 'ignore' }
   | { action: 'ignore' | 'unignore'; transactionId: string }
-  | { action: 'confirm_batch'; transactionIds: string[] }
+  | { action: 'confirm_batch'; transactionIds: string[]; categoryOverrides?: Record<string, string> }
 
 const isoDaysAgo = (asOf: string, days: number): string => new Date(Date.parse(`${asOf}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10)
 const PAGE = 100
@@ -125,9 +125,9 @@ export function useSpendingExplorer() {
     finally { await fetchPage(filters, 0); setBusy(false) }
   }, [fetchPage, filters])
   /** Selected-batch approval. The SERVER decides which rows are eligible; the answer says how many were approved and why others were left for individual review. */
-  const decideBatch = useCallback(async (transactionIds: string[]): Promise<BatchResult | null> => {
+  const decideBatch = useCallback(async (transactionIds: string[], categoryOverrides?: Record<string, string>): Promise<BatchResult | null> => {
     setBusy(true); setMessage(null)
-    try { return await call(URL_BASE, { method: 'POST', body: { action: 'confirm_batch', transactionIds } }) as BatchResult }
+    try { return await call(URL_BASE, { method: 'POST', body: { action: 'confirm_batch', transactionIds, ...(categoryOverrides && Object.keys(categoryOverrides).length ? { categoryOverrides } : {}) } }) as BatchResult }
     catch (error) { setMessage((error as Error).message); return null }
     finally { await fetchPage(filters, 0); setBusy(false) }
   }, [fetchPage, filters])

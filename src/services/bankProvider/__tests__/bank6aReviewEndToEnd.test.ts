@@ -302,3 +302,106 @@ describe.runIf(!!PGliteCtor)('BANK-6A endpoint', () => {
     expect((await w.q(`SELECT count(*)::int n FROM public.financial_provider_interpretations`))[0].n).toBe(before)
   })
 })
+
+describe.runIf(!!PGliteCtor)('BANK-6A category overrides in batch approval (real PostgreSQL)', () => {
+  let w: Awaited<ReturnType<typeof build>>
+  const t: Record<string, string> = {}
+  let baseline = ''
+  const batch = (transactionIds: string[], categoryOverrides?: unknown, actor = owner) => applyDecision(w.deps, actor, { action: 'confirm_batch', transactionIds, categoryOverrides } as any) as Promise<any>
+  const rows = async () => w.q(`SELECT provider_transaction_ref AS tx, category, source, status, suggestion_basis AS basis FROM public.financial_provider_interpretations ORDER BY created_at`)
+  beforeAll(async () => {
+    w = await build()
+    t.autozone = await w.tx('AUTOZONE #4421', 11.95, '2026-10-02'); t.chev = await w.tx('CHEVRON 0098', 62.1, '2026-10-03'); t.hd = await w.tx('THE HOME DEPOT #6', 120, '2026-10-01')
+    t.mystery = await w.tx('ZZQ HOLDINGS', 40, '2026-10-04'); t.pend = await w.tx('CHEVRON 0099', 30, '2026-10-05', { pending: true }); t.dep = await w.tx('MOBILE DEPOSIT', -2500, '2026-10-02')
+    t.gusto = await w.tx('GUSTO PAYROLL 4412', 4200, '2026-10-04'); t.sbux = await w.tx('STARBUCKS 77', 6, '2026-10-03')
+    baseline = await w.canonical()
+  }, 180_000)
+  afterAll(async () => { await w?.db?.close?.() })
+
+  it('the existing catalog already has the category: Tools & Equipment (no "Tools / Supplies" exists, so none is invented), and AutoZone is suggested as Fuel / Vehicle', async () => {
+    const e = await getExplorer(w.deps, owner, { limit: 200 })
+    expect(e.options.buckets.find(b => b.key === 'tools_equipment')).toMatchObject({ label: 'Tools & Equipment' })
+    expect(e.options.buckets.some(b => /tools\s*\/\s*supplies/i.test(b.label))).toBe(false)
+    expect(e.rows.find(r => r.id === t.autozone)!.bucket).toMatchObject({ key: 'fuel_vehicle', state: 'suggested', confidence: 'high' })
+    expect(e.options.batchBuckets).toContain('tools_equipment')
+  })
+
+  it('malformed or disallowed overrides refuse the WHOLE request and write nothing', async () => {
+    const before = await rows()
+    const bad: Array<[string, unknown]> = [
+      ['unknown category', { [t.autozone]: 'not_a_category' }], ['payroll is an individual decision', { [t.autozone]: 'payroll_people' }], ['personal is an individual decision', { [t.autozone]: 'personal_owner' }],
+      ['transfers', { [t.autozone]: 'transfers' }], ['owner draw', { [t.autozone]: 'owner_draw' }], ['money-in category on an expense', { [t.autozone]: 'customer_payment' }],
+      ['not an object', ['tools_equipment']], ['a string', 'tools_equipment'], ['non-string value', { [t.autozone]: 7 }],
+      ['id that is not selected', { [t.hd]: 'tools_equipment' }], ['not even an id', { 'x': 'tools_equipment' }],
+    ]
+    for (const [name, overrides] of bad) {
+      const e = await batch([t.autozone], overrides).catch(x => x)
+      expect(e.httpStatus, name).toBe(400)
+    }
+    expect(await batch([t.autozone], { [t.autozone]: 'tools_equipment', [t.hd]: 'materials' }).catch(x => x.httpStatus)).toBe(400) // more entries than selected ids
+    expect(await rows()).toEqual(before)
+    expect(await w.canonical()).toBe(baseline)
+  })
+
+  it('a valid override saves the OWNER\'s category (AutoZone work strap -> Tools & Equipment), keeps the original suggestion in the audit basis, and leaves other rows on the normal rule', async () => {
+    const out = await batch([t.autozone, t.chev], { [t.autozone]: 'tools_equipment' })
+    const by = new Map(out.results.map((r: any) => [r.id, r]))
+    expect(by.get(t.autozone)).toMatchObject({ result: 'confirmed', bucket: 'tools_equipment', overridden: true })
+    expect(by.get(t.chev)).toMatchObject({ result: 'confirmed', bucket: 'fuel_vehicle' })
+    const saved = await rows()
+    const az = saved.find(r => r.tx === t.autozone), ch = saved.find(r => r.tx === t.chev)
+    expect(az).toMatchObject({ category: 'tools_equipment', source: 'owner', status: 'confirmed' })
+    expect(az.basis).toMatchObject({ mode: 'owner_batch_override', suggested: 'fuel_vehicle', suggestedConfidence: 'high' })
+    expect(ch).toMatchObject({ category: 'fuel_vehicle', source: 'rule' }) // not overridden: still a rule-sourced suggestion approval
+    expect((await getExplorer(w.deps, owner, { limit: 200 })).rows.find(r => r.id === t.autozone)).toMatchObject({ bucket: { key: 'tools_equipment', state: 'confirmed' }, review: 'confirmed' })
+    const { history } = await getTransactionHistory(w.deps, owner, t.autozone)
+    expect(history.map(h => [h.label, h.status, h.source])).toEqual([['Tools & Equipment', 'confirmed', 'owner']])
+    expect(await w.canonical()).toBe(baseline)
+  })
+
+  it('an override can be corrected later with the audit trail kept (replace, undo)', async () => {
+    expect(await applyDecision(w.deps, owner, { action: 'set_bucket', transactionId: t.autozone, bucket: 'materials' })).toEqual({ outcome: 'changed' })
+    const { history } = await getTransactionHistory(w.deps, owner, t.autozone)
+    expect(history.map(h => [h.label, h.status])).toEqual([['Tools & Equipment', 'undone'], ['Materials', 'confirmed']])
+  })
+
+  it('overrides never bypass the row rules: pending, money in, competing relationship suggestions, and already-decided rows are skipped and unchanged', async () => {
+    const before = (await rows()).length
+    const out = await batch([t.pend, t.dep, t.gusto, t.chev, t.hd], { [t.pend]: 'tools_equipment', [t.dep]: 'tools_equipment', [t.gusto]: 'tools_equipment', [t.chev]: 'tools_equipment' })
+    const reason = (id: string) => (out.results.find((r: any) => r.id === id) as any)
+    expect(reason(t.pend)).toMatchObject({ result: 'skipped', reason: 'pending' })
+    expect(reason(t.dep)).toMatchObject({ result: 'skipped', reason: 'money_in' })
+    expect(reason(t.gusto)).toMatchObject({ result: 'skipped', reason: 'relationship_suggested' }) // a payroll suggestion stays an individual decision
+    expect(reason(t.chev)).toMatchObject({ result: 'skipped', reason: 'already_decided' }) // confirmed earlier: an override cannot silently replace it
+    expect(reason(t.hd)).toMatchObject({ result: 'confirmed', bucket: 'materials' }) // no override: the normal rule
+    expect((await rows()).length).toBe(before + 1)
+  })
+
+  it('an override may categorize a row that had no suggestion (still the owner\'s explicit choice, and still audited)', async () => {
+    const out = await batch([t.mystery], { [t.mystery]: 'office_admin' })
+    expect(out.results[0]).toMatchObject({ result: 'confirmed', bucket: 'office_admin', overridden: true })
+    expect((await rows()).find(r => r.tx === t.mystery)).toMatchObject({ source: 'owner', category: 'office_admin' })
+    expect((await rows()).find(r => r.tx === t.mystery)!.basis).toMatchObject({ suggested: null })
+  })
+
+  it('another organization cannot override or approve these rows, and roles below owner are refused', async () => {
+    const before = await rows()
+    const out = await batch([t.sbux], { [t.sbux]: 'meals' }, ownerB)
+    expect(out.results[0]).toMatchObject({ result: 'skipped', reason: 'not_found' })
+    for (const role of ['employee', 'viewer']) expect((await batch([t.sbux], { [t.sbux]: 'meals' }, { ...owner, role }).catch(e => e)).httpStatus).toBe(403)
+    expect(await rows()).toEqual(before)
+  })
+
+  it('the draft scope is opaque, stable, and private to the organization AND user', async () => {
+    const a1 = (await getExplorer(w.deps, owner, { limit: 5 })).draftScope, a2 = (await getExplorer(w.deps, owner, { limit: 5 })).draftScope
+    const b = (await getExplorer(w.deps, ownerB, { limit: 5 })).draftScope, otherUser = (await getExplorer(w.deps, { ...owner, userId: 'b0000000-0000-4000-8000-0000000000ff' }, { limit: 5 })).draftScope
+    expect(a1).toMatch(/^[0-9a-f]{16}$/); expect(a1).toBe(a2)
+    expect(new Set([a1, b, otherUser]).size).toBe(3)
+    expect(a1).not.toContain(ORG.slice(0, 8)); expect(JSON.stringify(a1)).not.toContain(OWNER.slice(0, 8))
+  })
+
+  it('through all of it nothing canonical changed and no provider-sourced ledger row exists', async () => {
+    expect(await w.canonical()).toBe(baseline)
+    expect((await w.q(`SELECT count(*)::int n FROM public.financial_transactions WHERE source_type = 'future_provider' OR source_kind = 'provider_transaction'`))[0].n).toBe(0)
+  })
+})

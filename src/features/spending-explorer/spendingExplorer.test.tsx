@@ -29,8 +29,8 @@ const analytics = (over: Record<string, unknown> = {}) => ({
   suggestions: [{ id: 'sub:apple', basis: 'heuristic', title: 'Possible untracked recurring expense: Apple', detail: '$20 monthly pattern, not tied to any known bill.' }], ...over,
 })
 const payload = (rows: unknown[], over: Record<string, unknown> = {}) => ({
-  asOf: '2026-10-07', accounts: 'mapped', meta: { billCandidates: 4, activeObligations: 3, scheduledCommitments: 1, evidenceRows: 10, hiddenUnmapped: 0, olderThanPeriod: 0, periodFrom: '2026-07-10' }, analytics: analytics(), viewCounts: { review_queue: 8, all: 10, known_bills: 1, unassigned: 7, repeated_spending: 1, needs_review: 6 }, reviewCounts: { reviewed: 2, unreviewed: 8, excluded: 0 }, total: rows.length, rows,
-  options: { batchBuckets: ['materials', 'fuel_vehicle', 'meals'], maxBatch: 50, buckets: [{ key: 'materials', label: 'Materials', hint: '' }, { key: 'fuel_vehicle', label: 'Fuel / Vehicle', hint: '' }, { key: 'customer_payment', label: 'Customer payment', hint: '', flow: 'in' }, { key: 'transfers', label: 'Transfers', hint: '' }], accounts: [{ ref: 'a1', label: 'Wells Fargo Business Checking 6960', mask: '0000' }],
+  asOf: '2026-10-07', draftScope: 'abcdef0123456789', accounts: 'mapped', meta: { billCandidates: 4, activeObligations: 3, scheduledCommitments: 1, evidenceRows: 10, hiddenUnmapped: 0, olderThanPeriod: 0, periodFrom: '2026-07-10' }, analytics: analytics(), viewCounts: { review_queue: 8, all: 10, known_bills: 1, unassigned: 7, repeated_spending: 1, needs_review: 6 }, reviewCounts: { reviewed: 2, unreviewed: 8, excluded: 0 }, total: rows.length, rows,
+  options: { batchBuckets: ['materials', 'fuel_vehicle', 'meals', 'tools_equipment'], maxBatch: 50, buckets: [{ key: 'materials', label: 'Materials', hint: '' }, { key: 'fuel_vehicle', label: 'Fuel / Vehicle', hint: '' }, { key: 'meals', label: 'Meals', hint: '' }, { key: 'tools_equipment', label: 'Tools & Equipment', hint: '' }, { key: 'customer_payment', label: 'Customer payment', hint: '', flow: 'in' }, { key: 'transfers', label: 'Transfers', hint: '' }], accounts: [{ ref: 'a1', label: 'Wells Fargo Business Checking 6960', mask: '0000' }],
     obligations: [{ id: 'o1', label: 'QuickBooks Online', amountMinor: 3800 }], commitments: [], debts: [{ id: 'd1', label: 'Chase Ink Card' }], projects: [{ id: 'p1', name: 'Desert Willow Remodel' }] }, ...over,
 })
 
@@ -48,7 +48,7 @@ describe('SpendingExplorer (BANK-5)', () => {
   const posts = () => fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').map(([, i]) => JSON.parse(i.body))
   const gets = () => fetchMock.mock.calls.filter(([, i]) => !i || i.method === 'GET').map(([u]) => String(u))
   const click = async (el: Element | null) => { await act(async () => { (el as HTMLElement).click() }); await flush() }
-  beforeEach(() => { host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host) })
+  beforeEach(() => { window.localStorage.clear(); host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host) })
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 
   it('renders nothing for callers who may not review spending (403) and when there is no bank evidence', async () => {
@@ -317,17 +317,20 @@ describe('SpendingExplorer (BANK-5)', () => {
       expect(items).toHaveLength(2)
       expect(host.querySelector('[data-testid="spending-list"]')).toBeNull() // the full queue is hidden while reviewing
       const text = items.map(i => i.textContent!.replace(/\s+/g, ' ')).join(' | ')
-      expect(text).toMatch(/HOME DEPOT.*Oct 1.*Wells Fargo Business Checking 6960.*••••0000.*Materials · suggested.*−\$120\.00/)
+      expect(text).toMatch(/HOME DEPOT.*Oct 1.*Wells Fargo Business Checking 6960.*••••0000.*−\$120\.00/)
+      const hd = items.find(i => i.textContent!.includes('HOME DEPOT'))!
+      expect((hd.querySelector('select') as HTMLSelectElement).value).toBe('materials') // the suggested category is the control's current value
+      expect([...hd.querySelectorAll('option')].find(o => (o as HTMLOptionElement).value === 'materials')!.textContent).toBe('Materials (suggested)')
       expect(text).toMatch(/CHEVRON|SHELL/); expect(text).not.toContain('OTHER')
       expect(host.querySelector('[data-testid="spending-review-selected"]')!.textContent).toBe('Back to review queue')
     })
 
-    it('rows can be deselected one by one inside the review, Clear selection empties it, and going back to the queue keeps the selection', async () => {
+    it('a tap in Review selected only UNchecks the line (it stays listed); Clear selection empties everything; going back keeps the selection', async () => {
       await mount(payload(three()))
       await selectAll()
       await click(host.querySelector('[data-testid="spending-review-selected"]'))
-      await click(host.querySelectorAll('[data-testid="spending-selected-remove"]')[0])
-      expect(count()).toBe('2 selected'); expect(host.querySelectorAll('[data-testid="spending-selected-item"]')).toHaveLength(2)
+      await click(host.querySelectorAll('[data-testid="spending-selected-toggle"]')[0])
+      expect(count()).toBe('2 selected'); expect(host.querySelectorAll('[data-testid="spending-selected-item"]')).toHaveLength(3) // still listed
       await click(host.querySelector('[data-testid="spending-review-selected"]')) // Back to review queue
       expect(host.querySelector('[data-testid="spending-selected-list"]')).toBeNull()
       expect(rowEls()).toHaveLength(3)
@@ -393,96 +396,191 @@ describe('SpendingExplorer (BANK-5)', () => {
     })
   })
 
-  describe('BANK-6A deselecting inside Review selected', () => {
+  describe('BANK-6A review: accidental taps, category corrections, reload safety', () => {
     const mk = (id: string, merchant: string, bucketKey: string, bucketLabel: string, amountMinor: number, date: string) => row({ id, merchant, name: merchant, amountMinor, date, bucket: { key: bucketKey, label: bucketLabel, state: 'suggested', confidence: 'high', reasons: [] } })
-    const mixed = () => [mk('m1', 'STARBUCKS', 'meals', 'Meals', 500, '2026-10-05'), mk('m2', 'CHIPOTLE', 'meals', 'Meals', 1200, '2026-10-04'), mk('m3', 'KFC', 'meals', 'Meals', 800, '2026-10-03'),
-      mk('f1', 'CHEVRON', 'fuel_vehicle', 'Fuel / Vehicle', 6210, '2026-10-02'), mk('h1', 'HOME DEPOT', 'materials', 'Materials', 12000, '2026-10-01')]
+    const SCOPE = 'abcdef0123456789'
+    const u = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+    const mixed = () => [mk(u(1), 'STARBUCKS', 'meals', 'Meals', 500, '2026-10-05'), mk(u(2), 'CHIPOTLE', 'meals', 'Meals', 1200, '2026-10-04'), mk(u(3), 'KFC', 'meals', 'Meals', 800, '2026-10-03'),
+      mk(u(4), 'AUTOZONE', 'fuel_vehicle', 'Fuel / Vehicle', 1195, '2026-10-02'), mk(u(5), 'HOME DEPOT', 'materials', 'Materials', 12000, '2026-10-01')]
     const count = () => host.querySelector('[data-testid="spending-selected-count"]')?.textContent ?? null
-    const total = () => host.querySelector('[data-testid="spending-selection-bar"]')?.textContent ?? ''
+    const bar = () => host.querySelector('[data-testid="spending-selection-bar"]')?.textContent ?? ''
     const items = () => [...host.querySelectorAll('[data-testid="spending-selected-item"]')]
+    const itemOf = (name: string) => items().find(i => i.textContent!.includes(name))!
     const queueRows = () => [...host.querySelectorAll('[data-testid="spending-row"]')]
-    const startReview = async () => {
-      await click(host.querySelector('[data-testid="spending-select-all"]'))
-      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+    const tap = (name: string) => click(itemOf(name).querySelector('span.font-semibold'))
+    const review = async () => { await click(host.querySelector('[data-testid="spending-select-all"]')); await click(host.querySelector('[data-testid="spending-review-selected"]')) }
+    const pickCategory = async (name: string, key: string) => {
+      const sel = itemOf(name).querySelector('select') as HTMLSelectElement
+      await act(async () => { sel.value = key; sel.dispatchEvent(new Event('change', { bubbles: true })) }); await flush()
     }
+    const stored = () => window.localStorage.getItem(`poweron.spending.review.draft.v1:${SCOPE}`)
+    const remount = async (body: unknown, post: unknown = { outcome: 'created' }) => { act(() => root.unmount()); root = createRoot(host); await mount(body, post) }
 
-    it('every line is a visible control: a checked checkbox and a "Remove" label, with an instruction above the list', async () => {
+    it('an accidental tap only UNchecks the line (it stays listed, visibly unchecked); a second tap restores it; count and total follow at once', async () => {
       await mount(payload(mixed()))
-      await startReview()
-      expect(items()).toHaveLength(5)
-      for (const i of items()) {
-        expect((i.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
-        expect(i.textContent).toContain('Remove')
-      }
-      expect(host.querySelector('[data-testid="spending-selected-review"]')!.textContent).toMatch(/Tap a transaction to remove it from the selection\. Removing never approves or saves anything/)
+      await review()
+      expect(items()).toHaveLength(5); expect(count()).toBe('5 selected'); expect(bar()).toContain('$156.95 going out')
+      await tap('STARBUCKS')
+      expect(items()).toHaveLength(5) // not removed
+      const sb = itemOf('STARBUCKS')
+      expect(sb.getAttribute('data-checked')).toBe('false'); expect((sb.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false); expect(sb.textContent).toContain('Not selected')
+      expect(count()).toBe('4 selected'); expect(bar()).toContain('$151.95 going out')
+      await tap('STARBUCKS')
+      expect(itemOf('STARBUCKS').getAttribute('data-checked')).toBe('true'); expect(itemOf('STARBUCKS').textContent).toContain('✓ Selected')
+      expect(count()).toBe('5 selected'); expect(bar()).toContain('$156.95 going out')
     })
 
-    it('tapping ANYWHERE on a line (its merchant name, not just the box) removes it at once, and the count and dollar total update immediately', async () => {
-      await mount(payload(mixed()))
-      await startReview()
-      expect(count()).toBe('5 selected'); expect(total()).toContain('$207.10 going out') // 5.00 + 12.00 + 8.00 + 62.10 + 120.00
-      const starbucks = items().find(i => i.textContent!.includes('STARBUCKS'))!
-      await click(starbucks.querySelector('span.font-semibold'))
-      expect(items().map(i => i.textContent).join('|')).not.toContain('STARBUCKS')
-      expect(items()).toHaveLength(4)
-      expect(count()).toBe('4 selected'); expect(total()).toContain('$202.10 going out')
-      await click(items().find(i => i.textContent!.includes('HOME DEPOT'))!.querySelector('input'))
-      expect(count()).toBe('3 selected'); expect(total()).toContain('$82.10 going out')
+    it('only CHECKED transactions are sent for approval', async () => {
+      await mount(payload(mixed()), { outcome: 'batch', confirmed: 4, unchanged: 0, skipped: 0, results: [] })
+      await review()
+      await tap('STARBUCKS')
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect(host.querySelector('[data-testid="spending-confirm-title"]')!.textContent).toBe('Approve 4 transactions?')
+      await click(host.querySelector('[data-testid="spending-confirm-approve"]'))
+      expect(posts()).toHaveLength(1)
+      expect(posts()[0].transactionIds.sort()).toEqual([u(2), u(3), u(4), u(5)])
+      expect(posts()[0].categoryOverrides).toBeUndefined() // no corrections were made
     })
 
-    it('a removed transaction stays in the full To Review queue (unchecked), and the rest of the selection survives going back and forth', async () => {
+    it('an unchecked line is also unchecked in the full queue, can be re-checked there, and the selection persists going back and forth', async () => {
       await mount(payload(mixed()))
-      await startReview()
-      await click(items().find(i => i.textContent!.includes('CHEVRON'))!.querySelector('span.font-semibold'))
-      await click(host.querySelector('[data-testid="spending-review-selected"]')) // Back to review queue
-      expect(host.querySelector('[data-testid="spending-selected-list"]')).toBeNull()
-      expect(queueRows()).toHaveLength(5) // the queue still lists everything
-      const chevron = queueRows().find(r => r.textContent!.includes('CHEVRON'))!
-      expect(chevron.getAttribute('data-selected')).toBe('false'); expect((chevron.querySelector('input') as HTMLInputElement).checked).toBe(false)
-      expect(queueRows().filter(r => r.getAttribute('data-selected') === 'true')).toHaveLength(4)
-      await click(host.querySelector('[data-testid="spending-review-selected"]')) // Review selected again
-      expect(items()).toHaveLength(4); expect(count()).toBe('4 selected')
-    })
-
-    it('one tap removes a whole suggested category (e.g. Meals) from the selection - only that category, and only the selection', async () => {
-      await mount(payload(mixed()))
-      await startReview()
-      const buttons = [...host.querySelectorAll('[data-testid="spending-remove-category"]')]
-      expect(buttons.map(b => b.textContent)).toEqual(['Remove all Meals (3)', 'Remove all Fuel / Vehicle (1)', 'Remove all Materials (1)'])
-      expect(count()).toBe('5 selected') // nothing happens until the owner taps it
-      await click(buttons[0])
-      expect(count()).toBe('2 selected'); expect(total()).toContain('$182.10 going out')
-      expect(items().map(i => i.textContent).join('|')).not.toMatch(/STARBUCKS|CHIPOTLE|KFC/)
-      expect(items().map(i => i.textContent).join('|')).toMatch(/CHEVRON/); expect(items().map(i => i.textContent).join('|')).toMatch(/HOME DEPOT/)
-      expect([...host.querySelectorAll('[data-testid="spending-remove-category"]')].map(b => b.textContent)).toEqual(['Remove all Fuel / Vehicle (1)', 'Remove all Materials (1)'])
+      await review()
+      await tap('KFC')
+      await click(host.querySelector('[data-testid="spending-review-selected"]')) // back to the queue
+      const kfc = queueRows().find(r => r.textContent!.includes('KFC'))!
+      expect(kfc.getAttribute('data-selected')).toBe('false'); expect(queueRows()).toHaveLength(5)
+      await click(kfc.querySelector('input[type="checkbox"]')) // re-check from the queue
+      expect(count()).toBe('5 selected')
       await click(host.querySelector('[data-testid="spending-review-selected"]'))
-      expect(queueRows().filter(r => /STARBUCKS|CHIPOTLE|KFC/.test(r.textContent!)).every(r => r.getAttribute('data-selected') === 'false')).toBe(true)
-      expect(queueRows()).toHaveLength(5) // all five are still in the queue to be reviewed
+      expect(itemOf('KFC').getAttribute('data-checked')).toBe('true')
     })
 
-    it('removing the last selected line leaves Review selected and returns to the full queue (the next selection does not jump into review)', async () => {
-      await mount(payload([mk('only', 'CHEVRON', 'fuel_vehicle', 'Fuel / Vehicle', 6210, '2026-10-02'), mk('o2', 'SHELL', 'fuel_vehicle', 'Fuel / Vehicle', 4000, '2026-10-01')]))
-      await startReview()
-      await click(items()[0].querySelector('input')); await click(items()[0].querySelector('input'))
-      expect(count()).toBeNull(); expect(host.querySelector('[data-testid="spending-selected-review"]')).toBeNull()
-      expect(queueRows()).toHaveLength(2)
-      await click((queueRows()[0].querySelector('input[type="checkbox"]')) as HTMLElement)
-      expect(count()).toBe('1 selected'); expect(host.querySelector('[data-testid="spending-selected-review"]')).toBeNull() // still the queue, not the review list
-    })
-
-    it('removing anything (a line or a category) saves and approves NOTHING: no request is made, and any open confirmation is withdrawn', async () => {
+    it('"Uncheck all <category>" is one explicit tap, affects only that category, keeps every line listed, and saves nothing', async () => {
       await mount(payload(mixed()))
-      await startReview()
-      const callsBefore = fetchMock.mock.calls.length
-      await click(items()[0].querySelector('span.font-semibold'))
-      await click(host.querySelector('[data-testid="spending-remove-category"]'))
+      await review()
+      expect([...host.querySelectorAll('[data-testid="spending-uncheck-category"]')].map(b => b.textContent)).toEqual(['Uncheck all Meals (3)', 'Uncheck all Fuel / Vehicle (1)', 'Uncheck all Materials (1)'])
+      expect(count()).toBe('5 selected')
+      await click(host.querySelector('[data-testid="spending-uncheck-category"]'))
+      expect(count()).toBe('2 selected'); expect(bar()).toContain('$131.95 going out'); expect(items()).toHaveLength(5)
+      for (const m of ['STARBUCKS', 'CHIPOTLE', 'KFC']) expect(itemOf(m).getAttribute('data-checked')).toBe('false')
+      await tap('CHIPOTLE'); expect(count()).toBe('3 selected') // individually restorable
       expect(posts()).toEqual([])
-      expect(fetchMock.mock.calls.length).toBe(callsBefore) // not even a read: it is purely local selection state
+    })
+
+    it('the owner can CORRECT a suggested category before approving: the change is shown, totals are by the corrected category, and the payload carries only the correction', async () => {
+      await mount(payload(mixed()), { outcome: 'batch', confirmed: 5, unchanged: 0, skipped: 0, results: [] })
+      await review()
+      await pickCategory('AUTOZONE', 'tools_equipment')
+      expect(itemOf('AUTOZONE').querySelector('[data-testid="spending-category-changed"]')!.textContent).toMatch(/Changed from the suggestion \(Fuel \/ Vehicle\)/)
+      expect([...itemOf('AUTOZONE').querySelectorAll('option')].map(o => o.textContent)).toEqual(['Materials', 'Fuel / Vehicle (suggested)', 'Meals', 'Tools & Equipment'])
+      expect([...host.querySelectorAll('[data-testid="spending-uncheck-category"]')].map(b => b.textContent)).toContain('Uncheck all Tools & Equipment (1)')
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect([...host.querySelectorAll('[data-testid="spending-confirm-breakdown"] li')].map(l => l.textContent)).toEqual(['Materials · 1$120.00', 'Meals · 3$25.00', 'Tools & Equipment · 1$11.95'])
+      expect(host.querySelector('[data-testid="spending-confirm-total"]')!.textContent).toBe('Total going out$156.95')
+      await click(host.querySelector('[data-testid="spending-confirm-approve"]'))
+      expect(posts()[0].categoryOverrides).toEqual({ [u(4)]: 'tools_equipment' })
+      expect(posts()[0].transactionIds).toHaveLength(5)
+    })
+
+    it('a category correction survives going to the queue and back, shows on the queue row, and choosing the suggestion again clears it', async () => {
+      await mount(payload(mixed()))
+      await review()
+      await pickCategory('AUTOZONE', 'tools_equipment')
+      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+      expect(queueRows().find(r => r.textContent!.includes('AUTOZONE'))!.textContent).toContain('Your category: Tools & Equipment')
+      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+      expect((itemOf('AUTOZONE').querySelector('select') as HTMLSelectElement).value).toBe('tools_equipment')
+      await pickCategory('AUTOZONE', 'fuel_vehicle')
+      expect(itemOf('AUTOZONE').querySelector('[data-testid="spending-category-changed"]')).toBeNull()
+    })
+
+    it('the category list offers only everyday expense categories (never payroll, personal, transfers, owner draw) and changing a category voids an open confirmation', async () => {
+      await mount(payload(mixed()))
+      await review()
+      expect([...itemOf('KFC').querySelectorAll('option')].map(o => (o as HTMLOptionElement).value)).toEqual(['materials', 'fuel_vehicle', 'meals', 'tools_equipment'])
       await click(host.querySelector('[data-testid="spending-approve-selected"]'))
       expect(host.querySelector('[data-testid="spending-confirm"]')).not.toBeNull()
-      await click(items()[0].querySelector('span.font-semibold')) // changing the selection withdraws the open confirmation
+      await pickCategory('KFC', 'materials')
       expect(host.querySelector('[data-testid="spending-confirm"]')).toBeNull()
+    })
+
+    it('the draft is saved as IDS and category choices only (no merchant, amount or account detail), under an account-scoped key', async () => {
+      await mount(payload(mixed()))
+      await review()
+      await tap('KFC'); await pickCategory('AUTOZONE', 'tools_equipment')
+      const raw = stored()!
+      const draft = JSON.parse(raw)
+      expect(draft.ids.sort()).toEqual([u(1), u(2), u(3), u(4), u(5)]); expect(draft.off).toEqual([u(3)]); expect(draft.overrides).toEqual({ [u(4)]: 'tools_equipment' })
+      for (const secret of ['STARBUCKS', 'AUTOZONE', 'KFC', '1195', '12000', 'Wells', '6960']) expect(raw).not.toContain(secret)
+      expect(Object.keys(window.localStorage)).toEqual([`poweron.spending.review.draft.v1:${SCOPE}`])
+    })
+
+    it('an accidental reload restores the review - selected, unchecked and corrected - but never an approval: nothing is confirmed or sent', async () => {
+      await mount(payload(mixed()))
+      await review()
+      await tap('KFC'); await pickCategory('AUTOZONE', 'tools_equipment')
+      await click(host.querySelector('[data-testid="spending-approve-selected"]')) // a confirmation is open at the moment of the "reload"
+      await remount(payload(mixed()))
+      expect(count()).toBe('4 selected'); expect(bar()).toContain('$148.95 going out')
+      expect(host.querySelector('[data-testid="spending-confirm"]')).toBeNull() // the confirmation was NOT restored
+      expect(queueRows().find(r => r.textContent!.includes('AUTOZONE'))!.textContent).toContain('Your category: Tools & Equipment')
+      expect(queueRows().find(r => r.textContent!.includes('KFC'))!.getAttribute('data-selected')).toBe('false')
       expect(posts()).toEqual([])
+      await click(host.querySelector('[data-testid="spending-review-selected"]'))
+      expect(items()).toHaveLength(5); expect((itemOf('AUTOZONE').querySelector('select') as HTMLSelectElement).value).toBe('tools_equipment')
+    })
+
+    it('restored ids are reconciled against CURRENT eligible evidence: a row decided in the meantime is dropped, and the draft is rewritten without it', async () => {
+      await mount(payload(mixed()))
+      await review()
+      const changed = mixed(); changed[0] = row({ ...changed[0], bucket: { key: 'meals', label: 'Meals', state: 'confirmed', confidence: 'high', reasons: [] }, review: 'confirmed' })
+      await remount(payload(changed))
+      expect(count()).toBe('4 selected'); expect(bar()).toContain('$151.95 going out')
+      expect(JSON.parse(stored()!).ids).not.toContain(u(1))
+    })
+
+    it('saved ids that are not on the loaded page wait (with a note) instead of being guessed; once the whole queue has loaded without them they are dropped', async () => {
+      await mount(payload(mixed()))
+      await review()
+      await remount(payload(mixed().slice(0, 3), { total: 10 })) // only 3 of the 5 loaded, 10 exist
+      expect(count()).toBe('3 selected')
+      expect(host.querySelector('[data-testid="spending-pending-restore"]')!.textContent).toMatch(/2 saved selections are on transactions not loaded yet/)
+      expect(JSON.parse(stored()!).ids).toHaveLength(5) // still kept
+      await remount(payload(mixed().slice(0, 3))) // now the full queue (3 of 3) is loaded and they are not in it
+      expect(host.querySelector('[data-testid="spending-pending-restore"]')).toBeNull()
+      expect(JSON.parse(stored()!).ids.sort()).toEqual([u(1), u(2), u(3)])
+    })
+
+    it('a draft belongs to one organization and user: another scope, an expired draft, or garbage restores nothing', async () => {
+      await mount(payload(mixed()))
+      await review()
+      await remount(payload(mixed(), { draftScope: 'ffffffffffffffff' }))
+      expect(count()).toBeNull()
+      window.localStorage.setItem(`poweron.spending.review.draft.v1:${SCOPE}`, JSON.stringify({ v: 1, at: Date.now() - 25 * 3600 * 1000, ids: [u(1)], off: [], overrides: {} }))
+      await remount(payload(mixed()))
+      expect(count()).toBeNull(); expect(stored()).toBeNull() // expired: discarded
+      window.localStorage.setItem(`poweron.spending.review.draft.v1:${SCOPE}`, '{not json')
+      await remount(payload(mixed()))
+      expect(count()).toBeNull(); expect(stored()).toBeNull()
+    })
+
+    it('Clear selection and a successful approval remove the draft; a FAILED approval keeps the review so nothing has to be rebuilt', async () => {
+      await mount(payload(mixed()), { outcome: 'batch', confirmed: 5, unchanged: 0, skipped: 0, results: [] })
+      await review()
+      expect(stored()).not.toBeNull()
+      fetchMock.mockImplementation(async (_u: string, init?: any) => init?.method === 'POST'
+        ? { ok: false, status: 503, json: async () => ({ error: 'The change could not be saved. Nothing was changed; please try again.' }) } : { ok: true, status: 200, json: async () => payload(mixed()) })
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      await click(host.querySelector('[data-testid="spending-confirm-approve"]'))
+      expect(count()).toBe('5 selected'); expect(stored()).not.toBeNull() // kept
+      expect(host.querySelector('[role="alert"]')!.textContent).toMatch(/could not be saved/)
+      fetchMock.mockImplementation(async (_u: string, init?: any) => init?.method === 'POST'
+        ? { ok: true, status: 200, json: async () => ({ outcome: 'batch', confirmed: 5, unchanged: 0, skipped: 0, results: [] }) } : { ok: true, status: 200, json: async () => payload(mixed()) })
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      await click(host.querySelector('[data-testid="spending-confirm-approve"]'))
+      expect(count()).toBeNull(); expect(stored()).toBeNull() // approved: the draft is gone
+      await click(host.querySelector('[data-testid="spending-select-all"]')); expect(stored()).not.toBeNull()
+      await click(host.querySelector('[data-testid="spending-clear-selection"]')); expect(stored()).toBeNull()
     })
   })
 })
