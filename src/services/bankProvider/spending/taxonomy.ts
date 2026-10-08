@@ -17,6 +17,8 @@ export interface BucketDef {
   discretionary: boolean
   /** Short owner-facing hint for pickers. */
   hint: string
+  /** Which direction of money this bucket describes. Omitted = money OUT (an expense-like use of money). */
+  flow?: 'in'
 }
 
 export const BUCKETS = [
@@ -34,6 +36,9 @@ export const BUCKETS = [
   { key: 'personal_owner', label: 'Personal / Owner', discretionary: false, hint: 'Owner personal spending' },
   { key: 'taxes', label: 'Taxes', discretionary: false, hint: 'Income, payroll and sales taxes' },
   { key: 'transfers', label: 'Transfers', discretionary: false, hint: 'Moving money between accounts' },
+  { key: 'owner_draw', label: 'Owner draw', discretionary: false, hint: 'Money taken out by the owner (not a business expense)' },
+  { key: 'customer_payment', label: 'Customer payment', discretionary: false, hint: 'Money received from a customer', flow: 'in' },
+  { key: 'refund', label: 'Refund', discretionary: false, hint: 'Money returned to you for an earlier purchase', flow: 'in' },
   { key: 'other_needs_review', label: 'Other / Needs Review', discretionary: false, hint: 'Not classified yet (unknown is not waste)' },
 ] as const satisfies readonly BucketDef[]
 
@@ -42,6 +47,18 @@ export const BUCKET_KEYS: readonly string[] = BUCKETS.map(b => b.key)
 export const OTHER_BUCKET: BucketKey = 'other_needs_review'
 export const bucketLabel = (key: string | null | undefined): string => BUCKETS.find(b => b.key === key)?.label ?? 'Other / Needs Review'
 export const isBucketKey = (v: unknown): v is BucketKey => typeof v === 'string' && BUCKET_KEYS.includes(v)
+/**
+ * Buckets a SELECTED-BATCH approval may confirm: ordinary operating-expense categories only, and only from a HIGH-confidence suggestion.
+ * Everything that moves money-meaning (payroll, personal, transfers, owner draws) or describes money coming IN (customer payments, refunds)
+ * is always an individual decision: a merchant name alone never confirms those.
+ */
+export const BATCH_APPROVABLE_BUCKETS: readonly string[] = ['materials', 'fuel_vehicle', 'tools_equipment', 'software_subscriptions', 'insurance', 'permits_fees', 'marketing', 'meals', 'office_admin', 'bank_finance_fees', 'taxes']
+/** Money-IN buckets fit only money in; expense-like buckets do not describe a deposit (except transfers, personal/owner money and "unknown"). */
+export const bucketFitsDirection = (key: string, direction: Direction): boolean => {
+  const inBucket = (BUCKETS as readonly BucketDef[]).find(b => b.key === key)?.flow === 'in'
+  if (direction === 'money_in') return inBucket || key === 'transfers' || key === 'personal_owner' || key === OTHER_BUCKET
+  return !inBucket
+}
 /** Unknown / unclassified spending is never discretionary: it stays visible for review but is not labelled leakage. */
 export const isDiscretionary = (key: string): boolean => BUCKETS.find(b => b.key === key)?.discretionary ?? false
 /** Buckets where a repeating charge reasonably looks like a bill or subscription. */

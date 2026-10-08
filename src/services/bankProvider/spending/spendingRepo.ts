@@ -104,9 +104,18 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
       }
     },
     async getEvidence(organizationId, id) {
-      const { data, error } = await svc.from('financial_provider_transactions').select('id, pending, removed_at').eq('organization_id', organizationId).eq('id', id).maybeSingle()
+      const { data, error } = await svc.from('financial_provider_transactions').select('id, pending, removed_at, provider_amount_minor').eq('organization_id', organizationId).eq('id', id).maybeSingle()
       if (error) failed()
-      return data ? { id: data.id, pending: data.pending === true, removed: !!data.removed_at } : null
+      return data ? { id: data.id, pending: data.pending === true, removed: !!data.removed_at, amountMinor: Number(data.provider_amount_minor) } : null
+    },
+    /** Every decision ever made about ONE transaction, newest last: the audit trail. No user ids are returned. */
+    async historyFor(organizationId, txId) {
+      const { data, error } = await svc.from('financial_provider_interpretations')
+        .select('kind, status, category, source, confidence, decided_at, undone_at, undo_reason, created_at')
+        .eq('organization_id', organizationId).eq('provider_transaction_ref', txId).order('created_at', { ascending: true }).limit(200)
+      if (error) failed()
+      return (data ?? []).map((r: any) => ({ kind: r.kind, status: r.status, category: r.category ?? null, source: r.source, confidence: r.confidence ?? null,
+        decidedAt: r.decided_at ?? null, undoneAt: r.undone_at ?? null, undoReason: r.undo_reason ?? null, createdAt: r.created_at }))
     },
     confirmedFor: (organizationId, txId) => decisions(organizationId, ['confirmed'], txId),
     async targetExists(organizationId, type, id) {

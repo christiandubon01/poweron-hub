@@ -29,8 +29,8 @@ const analytics = (over: Record<string, unknown> = {}) => ({
   suggestions: [{ id: 'sub:apple', basis: 'heuristic', title: 'Possible untracked recurring expense: Apple', detail: '$20 monthly pattern, not tied to any known bill.' }], ...over,
 })
 const payload = (rows: unknown[], over: Record<string, unknown> = {}) => ({
-  asOf: '2026-10-07', accounts: 'mapped', meta: { billCandidates: 4, activeObligations: 3, scheduledCommitments: 1, evidenceRows: 10, hiddenUnmapped: 0, olderThanPeriod: 0, periodFrom: '2026-07-10' }, analytics: analytics(), viewCounts: { all: 10, known_bills: 1, unassigned: 7, repeated_spending: 1, needs_review: 6 }, total: rows.length, rows,
-  options: { buckets: [{ key: 'materials', label: 'Materials', hint: '' }, { key: 'fuel_vehicle', label: 'Fuel / Vehicle', hint: '' }], accounts: [{ ref: 'a1', label: 'Wells Fargo Business Checking 6960', mask: '0000' }],
+  asOf: '2026-10-07', accounts: 'mapped', meta: { billCandidates: 4, activeObligations: 3, scheduledCommitments: 1, evidenceRows: 10, hiddenUnmapped: 0, olderThanPeriod: 0, periodFrom: '2026-07-10' }, analytics: analytics(), viewCounts: { review_queue: 8, all: 10, known_bills: 1, unassigned: 7, repeated_spending: 1, needs_review: 6 }, reviewCounts: { reviewed: 2, unreviewed: 8, excluded: 0 }, total: rows.length, rows,
+  options: { batchBuckets: ['materials', 'fuel_vehicle', 'meals'], maxBatch: 50, buckets: [{ key: 'materials', label: 'Materials', hint: '' }, { key: 'fuel_vehicle', label: 'Fuel / Vehicle', hint: '' }, { key: 'customer_payment', label: 'Customer payment', hint: '', flow: 'in' }, { key: 'transfers', label: 'Transfers', hint: '' }], accounts: [{ ref: 'a1', label: 'Wells Fargo Business Checking 6960', mask: '0000' }],
     obligations: [{ id: 'o1', label: 'QuickBooks Online', amountMinor: 3800 }], commitments: [], debts: [{ id: 'd1', label: 'Chase Ink Card' }], projects: [{ id: 'p1', name: 'Desert Willow Remodel' }] }, ...over,
 })
 
@@ -55,7 +55,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     await mount({ status: 403, body: { error: 'Only owners and admins can review spending.' } })
     expect(host.textContent).toBe('')
     act(() => root.unmount()); root = createRoot(host)
-    await mount(payload([], { viewCounts: { all: 0, known_bills: 0, unassigned: 0, repeated_spending: 0, needs_review: 0 } }))
+    await mount(payload([], { viewCounts: { review_queue: 0, all: 0, known_bills: 0, unassigned: 0, repeated_spending: 0, needs_review: 0 } }))
     expect(host.textContent).toBe('')
   })
 
@@ -72,7 +72,7 @@ describe('SpendingExplorer (BANK-5)', () => {
   it('offers the five owner views with counts, and switching a view re-queries the server', async () => {
     await mount(payload([row()]))
     const labels = [...host.querySelectorAll('[role="tab"]')].map(t => t.textContent!.replace(/\s+/g, ' ').trim())
-    expect(labels).toEqual(['All 10', 'Known Bills 1', 'Unassigned Spending 7', 'Repeated Spending 1', 'Needs Review 6'])
+    expect(labels).toEqual(['To Review 8', 'All 10', 'Known Bills 1', 'Unassigned Spending 7', 'Repeated Spending 1', 'Needs Review 6'])
     await click(host.querySelector('[data-testid="spending-view-known_bills"]'))
     expect(gets().slice(-1)[0]).toMatch(/view=known_bills/)
   })
@@ -215,6 +215,58 @@ describe('SpendingExplorer (BANK-5)', () => {
       expect(host.querySelector('[data-testid="spending-unclassified-note"]')).toBeNull() // collapsed by default
       await click(host.querySelector('[data-testid="spending-signals-toggle"]'))
       expect(host.querySelector('[data-testid="spending-unclassified-note"]')!.textContent).toBe('$3,205 across 8 transactions is not classified yet. It stays in review and is not counted as wasteful spending.')
+    })
+  })
+
+  describe('BANK-6A review queue, safe batch approval, history', () => {
+    const batchable = (id: string, merchant: string) => row({ id, merchant, name: merchant })
+    it('opens on the To Review queue with reviewed / unreviewed / excluded counts', async () => {
+      await mount(payload([row()]))
+      expect(gets()[0]).toMatch(/view=review_queue/)
+      expect(host.querySelector('[data-testid="spending-review-counts"]')!.textContent).toBe('Reviewed 2 · Unreviewed 8 · Excluded 0')
+      expect(host.querySelector('[data-testid="spending-view-review_queue"]')!.getAttribute('aria-selected')).toBe('true')
+    })
+    it('offers checkboxes ONLY on rows the server would approve in a batch (confident everyday expense category, posted, money out, no relationship suggestion)', async () => {
+      const ok = batchable('a1', 'CHEVRON')
+      const payroll = row({ id: 'p1', merchant: 'GUSTO', bucket: { key: 'payroll_people', label: 'Payroll / People', state: 'suggested', confidence: 'high', reasons: [] } })
+      const pending = row({ id: 'p2', merchant: 'SHELL', pending: true })
+      const possible = row({ id: 'p3', merchant: 'MAYBE', bucket: { key: 'fuel_vehicle', label: 'Fuel / Vehicle', state: 'suggested', confidence: 'possible', reasons: [] } })
+      const deposit = row({ id: 'p4', merchant: 'MOBILE DEPOSIT', direction: 'money_in', amountMinor: -250000, bucket: { key: 'customer_payment', label: 'Customer payment', state: 'suggested', confidence: 'possible', reasons: [] } })
+      const withRel = row({ id: 'p5', merchant: 'QB', relationship: { kind: 'obligation', label: 'Known bill', target: null, state: 'suggested', confidence: 'high', reasons: [] } })
+      await mount(payload([ok, payroll, pending, possible, deposit, withRel]))
+      const boxes = [...host.querySelectorAll('[data-testid="spending-select"]')]
+      expect(boxes).toHaveLength(1)
+      expect(boxes[0].getAttribute('aria-label')).toBe('Select CHEVRON for batch approval')
+      expect(host.querySelector('[data-testid="spending-batch-bar"]')!.textContent).toMatch(/Payroll, transfers, owner draws, personal items, deposits and refunds always need your individual decision/)
+    })
+    it('Select + Approve posts ONLY the action and transaction ids, then explains what was left for individual review; nothing else is written', async () => {
+      const a = batchable('a1', 'CHEVRON'), b = batchable('a2', 'SHELL')
+      const summary = { outcome: 'batch', confirmed: 1, unchanged: 0, skipped: 1, results: [{ id: 'a1', result: 'confirmed' }, { id: 'a2', result: 'skipped', reason: 'not_high_confidence' }] }
+      await mount(payload([a, b]), summary)
+      await click(host.querySelector('[data-testid="spending-select-all"]'))
+      expect(host.querySelector('[data-testid="spending-approve-selected"]')!.textContent).toBe('Approve 2 selected')
+      await click(host.querySelector('[data-testid="spending-approve-selected"]'))
+      expect(posts()).toEqual([{ action: 'confirm_batch', transactionIds: ['a1', 'a2'] }])
+      expect(host.querySelector('[data-testid="spending-batch-note"]')!.textContent).toBe('Approved 1. 1 left for individual review: 1 not a confident match.')
+      expect(gets().length).toBeGreaterThan(1) // a fresh read follows: the server is the source of truth
+    })
+    it('the picker offers only categories that fit the direction of the money (a deposit gets Customer payment, not Materials)', async () => {
+      const dep = row({ id: 'd1', merchant: 'MOBILE DEPOSIT', direction: 'money_in', amountMinor: -250000, bucket: { key: 'customer_payment', label: 'Customer payment', state: 'suggested', confidence: 'possible', reasons: [] } })
+      await mount(payload([dep, row({ id: 'e1' })]))
+      const rowsEls = [...host.querySelectorAll('[data-testid="spending-row"]')]
+      await click(rowsEls[0].querySelector('button'))
+      const opts = [...rowsEls[0].querySelectorAll('select#b-d1 option')].map(o => o.textContent)
+      expect(opts).toEqual(['Choose a bucket…', 'Customer payment', 'Transfers'])
+    })
+    it('shows the audit trail on request only (read-only), including replaced decisions', async () => {
+      await mount(payload([row()]))
+      await click(host.querySelector('[data-testid="spending-row"] button'))
+      expect(gets().some(u => /history=/.test(u))).toBe(false) // not loaded until asked
+      fetchMock.mockImplementation(async (url: string, init?: any) => ({ ok: true, status: 200, json: async () => (/history=/.test(String(url)) ? { history: [{ label: 'Materials', kind: 'category', status: 'undone', source: 'rule', decidedAt: '2026-10-02T10:00:00Z', undoneAt: '2026-10-03T10:00:00Z', undoReason: 'changed_by_owner', createdAt: '2026-10-02T10:00:00Z' }, { label: 'Tools & Equipment', kind: 'category', status: 'confirmed', source: 'owner', decidedAt: '2026-10-03T10:00:00Z', undoneAt: null, undoReason: null, createdAt: '2026-10-03T10:00:00Z' }] } : payload([row()])) }))
+      await click([...host.querySelectorAll('[data-testid="spending-history"] button')][0])
+      const text = host.querySelector('[data-testid="spending-history"]')!.textContent!
+      expect(text).toMatch(/Materials · undone \(replaced\) · from a suggestion/); expect(text).toMatch(/Tools & Equipment · active · by you/)
+      expect(posts()).toEqual([])
     })
   })
 })

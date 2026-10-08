@@ -1,15 +1,25 @@
 import { useState } from 'react'
-import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
+import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
 const btn = 'min-h-[44px] rounded-lg px-3 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
 const field = 'min-h-[44px] rounded-lg bg-transparent px-2 text-sm ring-1 ring-[var(--border-primary)]'
 const usd0 = (minor: number) => `$${Math.round(Math.abs(minor) / 100).toLocaleString('en-US')}`
 const usd2 = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+const SKIP_TEXT: Record<string, string> = {
+  pending: 'still pending', money_in: 'money coming in', no_suggestion: 'nothing recognised', not_high_confidence: 'not a confident match', needs_individual_review: 'needs your individual decision',
+  relationship_suggested: 'also suggests a bill, payroll, transfer or project', already_decided: 'already decided', not_found: 'not found', failed: 'could not be saved',
+}
+export const batchSummary = (r: BatchResult): string => {
+  const reasons = new Map<string, number>()
+  for (const x of r.results) if (x.result === 'skipped' && x.reason) reasons.set(x.reason, (reasons.get(x.reason) ?? 0) + 1)
+  const left = [...reasons].map(([k, n]) => `${n} ${SKIP_TEXT[k] ?? k}`).join(', ')
+  return `Approved ${r.confirmed}${r.unchanged ? ` (${r.unchanged} already approved)` : ''}.${r.skipped ? ` ${r.skipped} left for individual review: ${left}.` : ''}`
+}
 const CONF: Record<string, string> = { high: 'High', possible: 'Possible', low: 'Low' }
 
 const VIEWS: Array<{ key: ExplorerView; label: string }> = [
-  { key: 'all', label: 'All' }, { key: 'known_bills', label: 'Known Bills' }, { key: 'unassigned', label: 'Unassigned Spending' },
+  { key: 'review_queue', label: 'To Review' }, { key: 'all', label: 'All' }, { key: 'known_bills', label: 'Known Bills' }, { key: 'unassigned', label: 'Unassigned Spending' },
   { key: 'repeated_spending', label: 'Repeated Spending' }, { key: 'needs_review', label: 'Needs Review' },
 ]
 const REL_KINDS: Array<{ key: string; label: string }> = [
@@ -62,7 +72,20 @@ function Chip({ children, tone }: { children: React.ReactNode; tone?: 'ok' | 'wa
   return <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-[var(--border-primary)]" style={{ color }}>{children}</span>
 }
 
-function Detail({ row, options, busy, onDecide }: { row: ExplorerRow; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function History({ id, load }: { id: string; load: (id: string) => Promise<HistoryEntry[]> }) {
+  const [items, setItems] = useState<HistoryEntry[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  const show = async () => { try { setItems(await load(id)); setFailed(false) } catch { setFailed(true) } }
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '')
+  return <div data-testid="spending-history">
+    {items === null ? <button type="button" className={btn} onClick={() => void show()}>Show history</button>
+      : items.length === 0 ? <p className="text-xs text-[var(--text-secondary)]">No decisions yet.</p>
+      : <ul className="space-y-1 text-xs">{items.map((h, i) => <li key={i}>{h.label} · {h.status === 'confirmed' ? 'active' : h.status}{h.status === 'undone' && h.undoReason === 'changed_by_owner' ? ' (replaced)' : ''} · {h.source === 'owner' ? 'by you' : 'from a suggestion'} · {when(h.decidedAt ?? h.createdAt)}{h.undoneAt ? ` → undone ${when(h.undoneAt)}` : ''}</li>)}</ul>}
+    {failed && <p className="text-xs" style={{ color: 'var(--fin-negative)' }}>History could not be loaded.</p>}
+  </div>
+}
+
+function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRow; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide']; loadHistory: (id: string) => Promise<HistoryEntry[]> }) {
   const [bucket, setBucket] = useState(row.bucket.state === 'confirmed' ? row.bucket.key ?? '' : '')
   const [kind, setKind] = useState(row.relationship.state === 'confirmed' && row.relationship.kind !== 'unknown' ? row.relationship.kind : '')
   const [target, setTarget] = useState('')
@@ -86,7 +109,7 @@ function Detail({ row, options, busy, onDecide }: { row: ExplorerRow; options: O
           <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'reject_suggestion', transactionId: row.id, dimension: 'bucket' })}>Not this</button></div></div>}
       <div className="flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor={`b-${row.id}`}>Spending bucket</label>
-        <select id={`b-${row.id}`} className={`${field} min-w-0 flex-1`} value={bucket} onChange={e => setBucket(e.target.value)}><option value="">Choose a bucket…</option>{options.buckets.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}</select>
+        <select id={`b-${row.id}`} className={`${field} min-w-0 flex-1`} value={bucket} onChange={e => setBucket(e.target.value)}><option value="">Choose a bucket…</option>{options.buckets.filter(b => (row.direction === 'money_in' ? (b.flow === 'in' || ['transfers', 'personal_owner', 'other_needs_review'].includes(b.key)) : b.flow !== 'in')).map(b => <option key={b.key} value={b.key}>{b.label}</option>)}</select>
         <button type="button" className={btn} disabled={busy || !bucket || bucket === row.bucket.key && row.bucket.state === 'confirmed'} onClick={() => void onDecide({ action: 'set_bucket', transactionId: row.id, bucket })}>Save bucket</button>
         {row.bucket.state === 'confirmed' && <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'undo', transactionId: row.id, dimension: 'bucket' })}>Undo</button>}
       </div>
@@ -113,14 +136,17 @@ function Detail({ row, options, busy, onDecide }: { row: ExplorerRow; options: O
         ? <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'unignore', transactionId: row.id })}>Stop ignoring</button>
         : <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'ignore', transactionId: row.id })}>Ignore this transaction</button>}
     </div>
+    <section aria-label="History"><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Decision history</p><History id={row.id} load={loadHistory} /></section>
     <p className="text-xs text-[var(--text-secondary)]">These choices label bank evidence only. They do not change your balances, ledger, bills, projects or reports.</p>
   </div>
 }
 
-function Row({ row, options, busy, onDecide, environment }: { row: ExplorerRow; environment?: string; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle }: { row: ExplorerRow; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (id: string) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
   return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} className="py-2">
+    <div className="flex items-start gap-2">
+    {selectable && <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" checked={selected} onChange={() => onToggle(row.id)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>}
     <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={open} onClick={() => setOpen(o => !o)}>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold">{row.merchant}</span>
@@ -137,7 +163,8 @@ function Row({ row, options, busy, onDecide, environment }: { row: ExplorerRow; 
       </span>
       <span className={`shrink-0 text-sm font-semibold ${row.pending ? 'opacity-70' : ''}`} style={{ color: out ? undefined : 'var(--fin-cash)' }}>{out ? '−' : '+'}{usd2(row.amountMinor)}</span>
     </button>
-    {open && <Detail row={row} options={options} busy={busy} onDecide={onDecide} />}
+    </div>
+    {open && <Detail row={row} options={options} busy={busy} onDecide={onDecide} loadHistory={loadHistory} />}
   </li>
 }
 
@@ -146,10 +173,26 @@ function Row({ row, options, busy, onDecide, environment }: { row: ExplorerRow; 
  * no bank evidence exists. Everything here is a SUGGESTION until the owner confirms it, and confirming changes no balance, ledger or report.
  */
 export default function SpendingExplorer() {
-  const { load, data, rows, filters, update, reset, busy, message, decide, loadMore } = useSpendingExplorer()
+  const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore } = useSpendingExplorer()
   const [showFilters, setShowFilters] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [batchNote, setBatchNote] = useState<string | null>(null)
   if (load !== 'ready' || !data || data.viewCounts.all === 0) return null
   const a = data.analytics
+  // Which rows may be approved together is decided by the SERVER; this only mirrors its rule so the checkboxes appear on the right rows.
+  const batchBuckets = data.options.batchBuckets ?? []
+  const approvable = (r: ExplorerRow) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high'
+    && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
+  const eligible = rows.filter(approvable)
+  const chosen = [...selected].filter(id => eligible.some(r => r.id === id))
+  const toggle = (id: string) => setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  const approveSelected = async () => {
+    const ids = chosen.slice(0, data.options.maxBatch ?? 50)
+    if (!ids.length) return
+    const out = await decideBatch(ids)
+    setSelected(new Set())
+    setBatchNote(out ? batchSummary(out) : null)
+  }
   const active = (['bucket', 'account', 'scope', 'review', 'confidence', 'project', 'search', 'min', 'max'] as const).filter(k => filters[k]).length + (filters.days !== DEFAULT_FILTERS.days ? 1 : 0) + (filters.accounts !== DEFAULT_FILTERS.accounts ? 1 : 0)
   return <section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -184,9 +227,17 @@ export default function SpendingExplorer() {
       <label className="text-xs">Max amount ($)<input inputMode="decimal" className={`${field} mt-1 w-full`} value={filters.max} onChange={e => update({ max: e.target.value })} /></label>
     </div>}
 
+    {data.reviewCounts && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-review-counts">Reviewed {data.reviewCounts.reviewed} · Unreviewed {data.reviewCounts.unreviewed} · Excluded {data.reviewCounts.excluded}</p>}
+    {eligible.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="spending-batch-bar">
+      <button type="button" className={btn} disabled={busy} onClick={() => setSelected(new Set(eligible.slice(0, data.options.maxBatch ?? 50).map(r => r.id)))} data-testid="spending-select-all">Select {Math.min(eligible.length, data.options.maxBatch ?? 50)} confident matches</button>
+      {chosen.length > 0 && <button type="button" className={btn} disabled={busy} onClick={() => setSelected(new Set())}>Clear</button>}
+      <button type="button" className={`${btn} bg-white/10`} disabled={busy || chosen.length === 0} onClick={() => void approveSelected()} data-testid="spending-approve-selected">Approve {chosen.length} selected</button>
+      <p className="w-full text-xs text-[var(--text-secondary)]">Only confident everyday expense categories can be approved together. Payroll, transfers, owner draws, personal items, deposits and refunds always need your individual decision. Approving labels bank evidence only.</p>
+    </div>}
+    {batchNote && <p className="mt-1 text-xs" data-testid="spending-batch-note" role="status">{batchNote}</p>}
     {message && <p role="alert" className="mt-2 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
     {rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} />)}</ul>}
+      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={selected.has(r.id)} onToggle={toggle} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
   </section>
 }

@@ -10,7 +10,7 @@ import { authedJsonHeaders } from '@/services/authedFetch'
 
 const URL_BASE = '/.netlify/functions/plaid-spending'
 
-export type ExplorerView = 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
+export type ExplorerView = 'review_queue' | 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
 export type Confidence = 'high' | 'possible' | 'low'
 export interface Target { type: string | null; id: string | null; label: string | null }
 export interface ExplorerRow {
@@ -34,7 +34,9 @@ export interface Analytics {
   suggestions: Array<{ id: string; basis: 'heuristic'; title: string; detail: string }>
 }
 export interface Options {
-  buckets: Array<{ key: string; label: string; hint: string }>
+  buckets: Array<{ key: string; label: string; hint: string; flow?: 'in' | 'out' }>
+  /** Server rule, shown so the browser can preselect: only these buckets can be approved in a batch (and only from a high-confidence suggestion). */
+  batchBuckets?: string[]; maxBatch?: number
   accounts: Array<{ ref: string; label: string; mask: string | null }>
   obligations: Array<{ id: string; label: string; amountMinor: number }>
   commitments: Array<{ id: string; label: string; amountMinor: number; expectedDate: string }>
@@ -43,12 +45,15 @@ export interface Options {
 }
 export type AccountScope = 'mapped' | 'all'
 export interface ExplorerMeta { billCandidates: number; activeObligations: number; scheduledCommitments: number; evidenceRows: number; hiddenUnmapped: number; olderThanPeriod: number; periodFrom: string }
-export interface ExplorerData { asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
+export interface ReviewCounts { reviewed: number; unreviewed: number; excluded: number }
+export interface HistoryEntry { label: string; kind: string; status: string; source: string; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
+export interface BatchResult { confirmed: number; unchanged: number; skipped: number; results: Array<{ id: string; result: string; reason?: string }> }
+export interface ExplorerData { reviewCounts?: ReviewCounts; asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
 
 export interface Filters {
   view: ExplorerView; accounts: AccountScope; days: 30 | 60 | 90; bucket: string; account: string; scope: string; review: string; confidence: string; project: string; search: string; min: string; max: string
 }
-export const DEFAULT_FILTERS: Filters = { view: 'unassigned', accounts: 'mapped', days: 90, bucket: '', account: '', scope: '', review: '', confidence: '', project: '', search: '', min: '', max: '' }
+export const DEFAULT_FILTERS: Filters = { view: 'review_queue', accounts: 'mapped', days: 90, bucket: '', account: '', scope: '', review: '', confidence: '', project: '', search: '', min: '', max: '' }
 
 export type DecisionBody =
   | { action: 'set_bucket'; transactionId: string; bucket: string }
@@ -56,6 +61,7 @@ export type DecisionBody =
   | { action: 'accept_suggestion' | 'reject_suggestion'; transactionId: string; dimension: 'bucket' | 'relationship' }
   | { action: 'undo'; transactionId: string; dimension: 'bucket' | 'relationship' | 'ignore' }
   | { action: 'ignore' | 'unignore'; transactionId: string }
+  | { action: 'confirm_batch'; transactionIds: string[] }
 
 const isoDaysAgo = (asOf: string, days: number): string => new Date(Date.parse(`${asOf}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10)
 const PAGE = 100
@@ -118,7 +124,19 @@ export function useSpendingExplorer() {
     try { await call(URL_BASE, { method: 'POST', body }) } catch (error) { setMessage((error as Error).message) }
     finally { await fetchPage(filters, 0); setBusy(false) }
   }, [fetchPage, filters])
+  /** Selected-batch approval. The SERVER decides which rows are eligible; the answer says how many were approved and why others were left for individual review. */
+  const decideBatch = useCallback(async (transactionIds: string[]): Promise<BatchResult | null> => {
+    setBusy(true); setMessage(null)
+    try { return await call(URL_BASE, { method: 'POST', body: { action: 'confirm_batch', transactionIds } }) as BatchResult }
+    catch (error) { setMessage((error as Error).message); return null }
+    finally { await fetchPage(filters, 0); setBusy(false) }
+  }, [fetchPage, filters])
+  /** The audit trail of one transaction (read-only). */
+  const loadHistory = useCallback(async (transactionId: string): Promise<HistoryEntry[]> => {
+    const out = await call(`${URL_BASE}?history=${encodeURIComponent(transactionId)}`, { method: 'GET' })
+    return Array.isArray(out.history) ? out.history : []
+  }, [])
   const update = useCallback((patch: Partial<Filters>) => setFilters(f => ({ ...f, ...patch })), [])
   const reset = useCallback(() => setFilters(f => ({ ...DEFAULT_FILTERS, view: f.view })), [])
-  return { load, data, rows, filters, update, reset, busy, message, decide, refresh, loadMore }
+  return { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, refresh, loadMore }
 }

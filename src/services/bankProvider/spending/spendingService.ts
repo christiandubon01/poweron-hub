@@ -18,7 +18,7 @@ import { generateRecurrenceDates } from '../../../finance/recurrence'
 import { addDays } from './analytics'
 import { CONFIRMED_INTERPRETATION_CONTRACT } from './contract'
 import { buildRows, filterRows, viewCounts, type AccountScope, type ExplorerQuery, type ExplorerView, EXPLORER_VIEWS } from './explorer'
-import { BUCKETS, isBucketKey, isRelationshipKind, RELATIONSHIP_KINDS, type BucketKey, type Confidence, type RelationshipKind } from './taxonomy'
+import { BATCH_APPROVABLE_BUCKETS, BUCKETS, bucketFitsDirection, bucketLabel, isBucketKey, isRelationshipKind, RELATIONSHIP_KINDS, type BucketKey, type Confidence, type RelationshipKind } from './taxonomy'
 import type { AccountContext, Decision, DebtOption, EvidenceTx, KnownBillCandidate, ProjectOption } from './types'
 
 export interface ObligationRow {
@@ -59,7 +59,9 @@ export interface NewDecision {
 
 export interface SpendingRepo {
   loadContext(organizationId: string, sinceDate: string): Promise<SpendingContext>
-  getEvidence(organizationId: string, id: string): Promise<{ id: string; pending: boolean; removed: boolean } | null>
+  getEvidence(organizationId: string, id: string): Promise<{ id: string; pending: boolean; removed: boolean; amountMinor: number } | null>
+  /** The audit trail of one transaction (every decision ever made, including undone and rejected ones). */
+  historyFor(organizationId: string, txId: string): Promise<HistoryEntry[]>
   /** Confirmed decisions (not rejected/undone) for one transaction. */
   confirmedFor(organizationId: string, txId: string): Promise<Decision[]>
   targetExists(organizationId: string, type: 'obligation' | 'commitment' | 'debt_account' | 'project', id: string): Promise<boolean>
@@ -73,6 +75,7 @@ export interface SpendingRepo {
   insertDecision(row: NewDecision): Promise<{ id: string }>
   markUndone(organizationId: string, decisionId: string, actorUserId: string, reason: string): Promise<void>
 }
+export interface HistoryEntry { kind: string; status: string; category: string | null; source: string; confidence: string | null; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
 export interface SpendingDeps { repo: SpendingRepo; environment?: 'sandbox' | 'production'; log?: (e: { event: string; organizationId: string; outcome?: string; code?: string }) => void; now?: () => number }
 const clock = (d: SpendingDeps) => d.now ? d.now() : Date.now()
 const today = (d: SpendingDeps) => new Date(clock(d)).toISOString().slice(0, 10)
@@ -138,6 +141,16 @@ export function parseQuery(raw: Record<string, unknown>): ExplorerQuery {
   return q
 }
 
+export function reviewCounts(rows: Array<{ review: string; bucket: { state: string }; relationship: { state: string } }>) {
+  let reviewed = 0, unreviewed = 0, excluded = 0
+  for (const r of rows) {
+    if (r.review === 'ignored') excluded += 1
+    else if (r.bucket.state === 'confirmed' || r.relationship.state === 'confirmed') reviewed += 1
+    else unreviewed += 1
+  }
+  return { reviewed, unreviewed, excluded }
+}
+
 export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery: Record<string, unknown> = {}) {
   assertAuthority(actor)
   const asOf = today(deps)
@@ -153,8 +166,11 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
   return {
     asOf, window: { from: base.from, to: q.to ?? asOf },
     analytics, viewCounts: viewCounts(inWindow), total: filtered.length, rows: page,
+    // Reviewed = the owner confirmed a bucket or a relationship. Excluded = the owner set it aside. Unreviewed = everything else (suggested or unknown).
+    reviewCounts: reviewCounts(inWindow),
     options: {
-      buckets: BUCKETS.map(b => ({ key: b.key, label: b.label, hint: b.hint })),
+      buckets: BUCKETS.map(b => ({ key: b.key, label: b.label, hint: b.hint, flow: (b as { flow?: 'in' }).flow ?? 'out' })),
+      batchBuckets: BATCH_APPROVABLE_BUCKETS, maxBatch: MAX_BATCH,
       relationships: RELATIONSHIP_KINDS,
       accounts: ctx.accounts.map(a => ({ ref: a.providerAccountRef, label: a.financialAccountName ?? a.label, mask: a.mask, ownership: a.ownership })),
       obligations: ctx.obligations.filter(o => o.status === 'active').map(o => ({ id: o.id, label: o.name, amountMinor: o.amountMinor })),
@@ -181,6 +197,7 @@ export type DecisionInput =
   | { action: 'accept_suggestion' | 'reject_suggestion'; transactionId?: unknown; dimension?: unknown }
   | { action: 'undo'; transactionId?: unknown; dimension?: unknown }
   | { action: 'ignore' | 'unignore'; transactionId?: unknown }
+  | { action: 'confirm_batch'; transactionIds?: unknown }
 
 const bad = (m: string) => new BankConnectionError('invalid_request', 400, m)
 const requireId = (v: unknown, what: string): string => { if (typeof v !== 'string' || !UUID.test(v)) throw bad(`A valid ${what} is required.`); return v }
@@ -215,6 +232,58 @@ async function relationshipRow(deps: SpendingDeps, actor: BankActor, txId: strin
   return row
 }
 
+export const MAX_BATCH = 50
+export type BatchSkipReason = 'not_found' | 'pending' | 'money_in' | 'no_suggestion' | 'not_high_confidence' | 'needs_individual_review' | 'relationship_suggested' | 'already_decided' | 'failed'
+export interface BatchItemResult { id: string; result: 'confirmed' | 'unchanged' | 'skipped'; reason?: BatchSkipReason; bucket?: string }
+
+/**
+ * SELECTED-BATCH approval. The server decides what is eligible, from the CURRENT evidence and decisions (the browser's idea of a suggestion
+ * is never trusted). Only an ordinary operating-expense CATEGORY suggestion with HIGH confidence on a POSTED money-out transaction is confirmed.
+ * Never confirmed in bulk: pending rows, money in, payroll, personal, transfers, owner draws, projects, bills, debts, or any row that also carries a
+ * relationship suggestion. Those stay in the review queue for an individual decision. Each confirmed row is its own atomic, audited decision
+ * (so a failure on one row never half-saves another); nothing here can create canonical truth.
+ */
+async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknown) {
+  if (!Array.isArray(rawIds) || rawIds.length === 0) throw bad('Select at least one transaction.')
+  const ids = [...new Set(rawIds)]
+  if (ids.length > MAX_BATCH) throw bad(`Approve at most ${MAX_BATCH} transactions at a time.`)
+  for (const id of ids) requireId(id, 'transaction')
+  const org = actor.organizationId
+  const ctx = await deps.repo.loadContext(org, addDays(today(deps), -200)) // organization-scoped: another organization's ids are simply not found
+  const rows = new Map(explorerFromContext(ctx, today(deps)).rows.map(r => [r.id, r]))
+  const results: BatchItemResult[] = []
+  for (const id of ids as string[]) {
+    const row = rows.get(id)
+    const skip = (reason: BatchSkipReason) => results.push({ id, result: 'skipped', reason })
+    if (!row) { skip('not_found'); continue }
+    if (row.pending) { skip('pending'); continue }
+    if (row.direction !== 'money_out') { skip('money_in'); continue }
+    if (row.review === 'ignored' || row.bucket.state === 'confirmed') { skip('already_decided'); continue }
+    if (row.bucket.state !== 'suggested' || !row.bucket.key) { skip('no_suggestion'); continue }
+    if (row.bucket.confidence !== 'high') { skip('not_high_confidence'); continue }
+    if (!BATCH_APPROVABLE_BUCKETS.includes(row.bucket.key)) { skip('needs_individual_review'); continue }
+    if (row.relationship.state === 'suggested') { skip('relationship_suggested'); continue }
+    try {
+      const base = { source: 'rule' as const, confidence: 'high' as Confidence, basis: { mode: 'suggestion_batch', reasons: row.bucket.reasons, confidence: 'high' } }
+      const out = await deps.repo.replaceDecision({ ...fresh(actor, id, 'category', { category: row.bucket.key }), ...base })
+      results.push({ id, result: out.outcome === 'unchanged' ? 'unchanged' : 'confirmed', bucket: row.bucket.key })
+    } catch { skip('failed') }
+  }
+  const confirmed = results.filter(r => r.result === 'confirmed').length
+  logNote(deps, { event: 'spending.batch', organizationId: org, outcome: `confirmed=${confirmed}/${results.length}` })
+  return { outcome: 'batch', confirmed, unchanged: results.filter(r => r.result === 'unchanged').length, skipped: results.filter(r => r.result === 'skipped').length, results }
+}
+
+/** The audit trail of one transaction for the owner: what was decided, by rule or by the owner, and what was later undone. */
+export async function getTransactionHistory(deps: SpendingDeps, actor: BankActor, rawId: unknown) {
+  assertAuthority(actor)
+  const id = requireId(rawId, 'transaction')
+  const ev = await deps.repo.getEvidence(actor.organizationId, id)
+  if (!ev) throw new BankConnectionError('not_found', 404, 'Transaction not found.')
+  const history = (await deps.repo.historyFor(actor.organizationId, id)).map(h => ({ ...h, label: h.kind === 'category' ? bucketLabel(h.category) : h.kind }))
+  return { history }
+}
+
 /**
  * One owner decision. Idempotent: repeating it changes nothing. Replacing a decision is ATOMIC (one database transaction): the previous
  * decision becomes audit history and the new one becomes the only active decision, or nothing changes at all.
@@ -233,6 +302,7 @@ export async function applyDecision(deps: SpendingDeps, actor: BankActor, input:
 async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: DecisionInput) {
   assertAuthority(actor)
   const org = actor.organizationId
+  if (input.action === 'confirm_batch') return confirmBatch(deps, actor, input.transactionIds)
   const txId = requireId((input as { transactionId?: unknown }).transactionId, 'transaction')
   const ev = await deps.repo.getEvidence(org, txId) // organization-scoped: another organization's id is simply "not found"
   if (!ev || ev.removed) throw new BankConnectionError('not_found', 404, 'Transaction not found.')
@@ -246,6 +316,7 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
   switch (input.action) {
     case 'set_bucket': {
       if (!isBucketKey(input.bucket)) throw bad('Choose a spending bucket.')
+      if (!bucketFitsDirection(input.bucket, ev.amountMinor < 0 ? 'money_in' : 'money_out')) throw bad(ev.amountMinor < 0 ? 'That category describes money going out, but this is money coming in.' : 'That category describes money coming in, but this is money going out.')
       return done((await deps.repo.replaceDecision(fresh(actor, txId, 'category', { category: input.bucket }))).outcome)
     }
     case 'set_relationship': {

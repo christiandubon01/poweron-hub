@@ -49,9 +49,10 @@ describe('BANK-5 bucket suggestions (economic bucket)', () => {
     expect(s.get(plain.id)!.bucket).toBeNull() // unknown stays unknown: nothing is invented
     for (const t of [chevron, depot, fee, pfc]) expect(s.get(t.id)!.bucket!.reasons.length).toBeGreaterThan(0)
   })
-  it('inflows get no spending bucket', () => {
-    const dep = tx('CD DEPOSIT', -1000, '2026-10-01')
-    expect(run([dep]).get(dep.id)!.bucket).toBeNull()
+  it('inflows never get an EXPENSE bucket (BANK-6A: at most a "possible" customer-payment interpretation)', () => {
+    const dep = tx('CD DEPOSIT', -1000, '2026-10-01'), plain = tx('SOMETHING ELSE', -1000, '2026-10-01')
+    expect(run([dep]).get(dep.id)!.bucket).toMatchObject({ bucket: 'customer_payment', confidence: 'possible' })
+    expect(run([plain]).get(plain.id)!.bucket).toBeNull()
   })
   it('removed evidence is never classified', () => {
     const gone = tx('CHEVRON', 10, '2026-10-01', { removed: true })
@@ -246,7 +247,7 @@ describe('BANK-5 views and filters', () => {
     expect(filterRows(s.all, { minMinor: 5000 }).map(r => r.id).sort()).toEqual([s.fuel.id, s.deposit.id].sort())
     expect(filterRows(s.all, { account: ACC_PERSONAL })).toHaveLength(0)
     expect(filterRows(s.all, { from: '2026-10-04', to: '2026-10-05' }).map(r => r.id).sort()).toEqual([s.bill.id, s.fuel.id].sort())
-    expect(filterRows(s.all, { review: 'needs_review', scope: 'business' }).map(r => r.id).sort()).toEqual([s.mystery.id, s.deposit.id].sort()) // a plain deposit has nothing suggested, but the Needs Review VIEW is outflows only
+    expect(filterRows(s.all, { review: 'needs_review', scope: 'business' }).map(r => r.id).sort()).toEqual([s.mystery.id]) // the deposit now carries a possible customer-payment suggestion, so it is 'suggested', not unknown
   })
   it('query parsing drops anything it does not recognise', () => {
     expect(parseQuery({ view: 'nope', bucket: 'nope', from: 'x', account: 'x', limit: 99999, offset: -5, minMinor: -3 })).toEqual({ limit: 200, offset: 0 })

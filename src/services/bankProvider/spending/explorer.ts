@@ -10,8 +10,8 @@ import { merchantKey, merchantLabel } from './merchant'
 import { RELATIONSHIP_LABELS, SUBSCRIPTION_BUCKETS, bucketLabel, isBucketKey, type BucketKey, type Confidence, type RelationshipKind, type ReviewState } from './taxonomy'
 import type { AccountContext, Decision, DebtOption, EvidenceTx, ExplorerRow, KnownBillCandidate, ProjectOption, RelationshipTarget } from './types'
 
-export type ExplorerView = 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
-export const EXPLORER_VIEWS: readonly ExplorerView[] = ['all', 'known_bills', 'unassigned', 'repeated_spending', 'needs_review']
+export type ExplorerView = 'review_queue' | 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
+export const EXPLORER_VIEWS: readonly ExplorerView[] = ['review_queue', 'all', 'known_bills', 'unassigned', 'repeated_spending', 'needs_review']
 
 export interface ExplorerQuery {
   view?: ExplorerView
@@ -119,7 +119,7 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     const rel = r.relationship
     const resolved = rel.state === 'confirmed'
       || (rel.state === 'suggested' && rel.kind !== 'unknown' && (rel.kind === 'transfer' ? confidenceAtLeast(rel.confidence, 'possible') : KNOWN_MONEY.has(rel.kind as RelationshipKind) && rel.confidence === 'high'))
-      || (r.bucket.state === 'confirmed' && (r.bucket.key === 'personal_owner' || r.bucket.key === 'transfers'))
+      || (r.bucket.state === 'confirmed' && (r.bucket.key === 'personal_owner' || r.bucket.key === 'transfers' || r.bucket.key === 'owner_draw'))
     r.unassigned = r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && !resolved
     const found = recurring.get(r.merchantKey)
     if (found && r.direction === 'money_out') {
@@ -142,6 +142,8 @@ export function viewCounts(rows: ExplorerRow[]): Record<ExplorerView, number> {
 
 export function inView(r: ExplorerRow, view: ExplorerView): boolean {
   switch (view) {
+    // The owner's work list: everything not yet confirmed or excluded, money in and money out. Pending rows are listed (they can be categorized) but cannot be confirmed as relationships.
+    case 'review_queue': return r.direction !== 'zero' && r.review !== 'confirmed' && r.review !== 'ignored'
     case 'known_bills': return r.direction === 'money_out' && ['obligation', 'debt', 'payroll'].includes(r.relationship.kind) && r.relationship.state !== 'none' && r.review !== 'ignored'
     case 'unassigned': return r.unassigned
     case 'repeated_spending': return r.repeatedPattern

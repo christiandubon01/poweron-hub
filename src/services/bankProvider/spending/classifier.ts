@@ -42,6 +42,10 @@ const PAYROLL_PROCESSORS = re('GUSTO', 'ADP', 'PAYCHEX', 'PAYLOCITY', 'TRINET', 
 const PAYROLL_GENERIC = re('PAYROLL')
 const TRANSFER_KEYWORD = re('TRANSFER', 'XFER', 'ONLINE TRANSFER', 'ACH TRANSFER', 'WIRE TRANSFER')
 const PAYMENT_KEYWORD = re('PAYMENT', 'PMT', 'AUTOPAY', 'AUTO PAY', 'LOAN', 'EPAY')
+const OWNER_DRAW = re('OWNER DRAW', 'OWNERS DRAW', 'OWNER S DRAW', 'MEMBER DRAW', 'OWNER DISTRIBUTION', 'SHAREHOLDER DISTRIBUTION')
+const REFUND_WORDS = re('REFUND', 'RETURN', 'REVERSAL', 'CHARGEBACK')
+const DEPOSIT_WORDS = re('DEPOSIT', 'ZELLE', 'ACH CREDIT', 'MOBILE DEPOSIT', 'CHECK DEPOSIT', 'CUSTOMER', 'PAYMENT FROM', 'REMOTE ONLINE DEPOSIT')
+const CARD_PAYMENT = /\b(?:CREDIT CARD|CARD PAYMENT|CARD PMT|CRCARDPMT|CARD SERVICES|AUTOPAY CARD|CARD AUTOPAY|CARD EPAY|CARD ONLINE PMT)\b/
 const GENERIC_ACCOUNT_WORDS = new Set(['CARD', 'LOAN', 'CREDIT', 'BUSINESS', 'ACCOUNT', 'VISA', 'MASTERCARD', 'AMEX', 'PERSONAL', 'BANK', 'CHECKING', 'SAVINGS'])
 
 // ── Plaid personal_finance_category -> bucket (a DISPLAY mapping of the provider's own classification, never authoritative) ──────
@@ -124,7 +128,8 @@ function bucketFor(tx: EvidenceTx, history: Map<string, Map<BucketKey, number>>)
   }
   let fromRules: BucketSuggestion | null = null
   const rule = MERCHANT_RULES.find(r => r.pattern.test(text))
-  if (FEE_RULE.test(text)) fromRules = { bucket: 'bank_finance_fees', confidence: 'high', basis: 'fee_rule', reasons: ['The description reads like a bank or finance fee.'] }
+  if (OWNER_DRAW.test(text)) fromRules = { bucket: 'owner_draw', confidence: 'possible', basis: 'merchant_rule', reasons: ['The description mentions an owner draw. Confirm it yourself: a draw is not a business expense.'] }
+  else if (FEE_RULE.test(text)) fromRules = { bucket: 'bank_finance_fees', confidence: 'high', basis: 'fee_rule', reasons: ['The description reads like a bank or finance fee.'] }
   else if (PAYROLL_PROCESSORS.test(text)) fromRules = { bucket: 'payroll_people', confidence: 'high', basis: 'payroll', reasons: ['The merchant is a payroll provider.'] }
   else if (rule) fromRules = { bucket: rule.bucket, confidence: 'high', basis: 'merchant_rule', reasons: [`The merchant looks like a ${rule.label}.`] }
   else if (PAYROLL_GENERIC.test(text)) fromRules = { bucket: 'payroll_people', confidence: 'possible', basis: 'payroll', reasons: ['The description mentions payroll.'] }
@@ -237,6 +242,25 @@ function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountCon
   return out
 }
 
+/**
+ * Money coming IN. Never "high": a deposit's wording cannot prove who paid or why, so these are always an individual owner decision.
+ * A refund still needs the owner to pick the original purchase later (BANK-6); here it is only an interpretation.
+ */
+function inflowBucketFor(tx: EvidenceTx): BucketSuggestion | null {
+  const text = searchText(tx.name, tx.merchantName)
+  if (REFUND_WORDS.test(text)) return { bucket: 'refund', confidence: 'possible', basis: 'merchant_rule', reasons: ['The description mentions a refund or return. Confirm it, and later link it to the purchase it reverses.'] }
+  if (DEPOSIT_WORDS.test(text)) return { bucket: 'customer_payment', confidence: 'possible', basis: 'merchant_rule', reasons: ['A deposit or incoming payment. It may be a customer payment, but the wording alone does not say who paid or for what job.'] }
+  return null
+}
+
+/** A payment to a credit card moves money to pay a debt. It is never ordinary business spending, so it leaves the spending totals (still unconfirmed). */
+function cardPaymentSuggestion(tx: EvidenceTx, text: string): RelationshipSuggestion | null {
+  if (tx.amountMinor <= 0) return null
+  const pfcCard = (tx.category?.detailed ?? '').toUpperCase().includes('CREDIT_CARD_PAYMENT')
+  if (!pfcCard && !CARD_PAYMENT.test(text)) return null
+  return { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'possible', reasons: ['This looks like a payment to a credit card. Paying a card is not ordinary business spending; the purchases on the card are what count.'] }
+}
+
 function debtSuggestion(tx: EvidenceTx, debts: DebtOption[], text: string): RelationshipSuggestion | null {
   if (tx.amountMinor <= 0 || !debts.length) return null
   const pfcLoan = (tx.category?.primary ?? '').toUpperCase().startsWith('LOAN_PAYMENTS')
@@ -286,7 +310,7 @@ export function classifyAll(input: ClassifierInput): Map<string, TxSuggestion> {
     const text = searchText(tx.name, tx.merchantName)
     const t = transfers.get(tx.id)
     if (t) { relationships.set(tx.id, t); claimed.add(tx.id); continue }
-    const rel = debtSuggestion(tx, input.debts, text) ?? payrollSuggestion(tx, text)
+    const rel = debtSuggestion(tx, input.debts, text) ?? payrollSuggestion(tx, text) ?? cardPaymentSuggestion(tx, text)
     if (rel) { relationships.set(tx.id, rel); claimed.add(tx.id) }
   }
   for (const [id, s] of matchKnownBills(live, input.accounts, input.bills, claimed)) relationships.set(id, s)
@@ -298,7 +322,7 @@ export function classifyAll(input: ClassifierInput): Map<string, TxSuggestion> {
 
   const out = new Map<string, TxSuggestion>()
   for (const tx of live) {
-    let bucket: BucketSuggestion | null = tx.amountMinor > 0 ? bucketFor(tx, history) : null
+    let bucket: BucketSuggestion | null = tx.amountMinor > 0 ? bucketFor(tx, history) : tx.amountMinor < 0 ? inflowBucketFor(tx) : null
     const relationship = relationships.get(tx.id) ?? null
     if (relationship?.kind === 'transfer') bucket = { bucket: 'transfers', confidence: relationship.confidence, basis: 'transfer', reasons: ['It looks like a movement between accounts.'] }
     else if (relationship?.kind === 'payroll' && !bucket) bucket = { bucket: 'payroll_people', confidence: relationship.confidence, basis: 'payroll', reasons: ['It looks like payroll.'] }
