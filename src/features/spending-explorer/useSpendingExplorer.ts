@@ -15,7 +15,7 @@ export type Confidence = 'high' | 'possible' | 'low'
 export interface Target { type: string | null; id: string | null; label: string | null }
 export interface ExplorerRow {
   id: string; date: string; name: string; merchant: string; amountMinor: number; direction: 'money_out' | 'money_in' | 'zero'; pending: boolean
-  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; mapped: boolean; environment: 'sandbox' | 'production' | null }
+  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; mapped: boolean; environment: 'sandbox' | 'production' | null; financialAccountId?: string | null }
   bucket: { key: string | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[]; basis?: string; mixed?: boolean }
   relationship: { kind: string; label: string; target: Target | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
   review: 'suggested' | 'confirmed' | 'needs_review' | 'ignored'

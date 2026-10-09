@@ -411,6 +411,8 @@ describe.runIf(!!PGliteCtor)('BANK-6C Reviewed view (real PostgreSQL, read-only 
     expect(by(t.hd)).toMatchObject({ merchant: 'THE HOME DEPOT #6', date: '2026-09-02', amountMinor: 12000, bucket: { key: 'materials', state: 'confirmed' }, scope: { value: 'business' } })
     expect(by(t.casa)).toMatchObject({ bucket: { key: 'personal_owner', state: 'confirmed' }, scope: { value: 'personal', source: 'owner' } })
     expect(by(t.dep).relationship).toMatchObject({ kind: 'personal', state: 'confirmed' })
+    // BANK-6D: the read-only financialAccountId is the mapped Cash OS account's stable id (used only to look up its display color)
+    expect(e.rows.every(r => r.account.financialAccountId === w.ids.fin)).toBe(true)
   })
 
   it('keeps the other filters: bucket, search, account and period narrow the Reviewed view', async () => {

@@ -106,7 +106,7 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     return {
       id: tx.id, date: tx.date, name: (tx.name ?? tx.merchantName ?? 'Unnamed transaction').slice(0, 120), merchant: merchantLabel(tx.name, tx.merchantName), merchantKey: merchantKey(tx.name, tx.merchantName),
       amountMinor: tx.amountMinor, direction, pending: tx.pending,
-      account: { ref: tx.providerAccountRef, label: acct?.financialAccountName ?? acct?.label ?? 'Bank account', mask: acct?.mask ?? null, ownership: acct?.ownership ?? null, mappedTo: acct?.financialAccountName ?? null, mapped: !!acct?.financialAccountId, environment: acct?.environment ?? null },
+      account: { ref: tx.providerAccountRef, label: acct?.financialAccountName ?? acct?.label ?? 'Bank account', mask: acct?.mask ?? null, ownership: acct?.ownership ?? null, mappedTo: acct?.financialAccountName ?? null, mapped: !!acct?.financialAccountId, environment: acct?.environment ?? null, financialAccountId: acct?.financialAccountId ?? null },
       bucket, relationship, review, scope, unassigned: false, repeatedPattern: false, pattern: null,
     }
   })

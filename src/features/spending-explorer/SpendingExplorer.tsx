@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
+import { AccountColorDot, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { categoryStripe } from '@/features/display-colors/stripes'
 import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
 const btn = 'min-h-[44px] rounded-lg px-3 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
@@ -46,17 +48,20 @@ function SelectedReview({ items, off, overrides, categoryChoices, categories, bu
   onToggle: (row: ExplorerRow) => void; onCategory: (row: ExplorerRow, key: string) => void; onUncheckCategory: (key: string) => void
 }) {
   const labelOf = (key: string | null) => categoryChoices.find(c => c.key === key)?.label ?? 'Uncategorized'
+  const { categoryColor } = useDisplayColors()
   return <div className="mt-2" data-testid="spending-selected-review">
     <p className="text-xs text-[var(--text-secondary)]">Tap a transaction to check or uncheck it. Only checked transactions are approved. Use the category box to correct a suggestion first. Nothing is saved until you confirm.</p>
     {categories.length > 0 && <div className="mt-2 flex flex-wrap gap-2" data-testid="spending-selected-categories" aria-label="Uncheck a whole category">
       {categories.map(c => <button key={c.key} type="button" className={btn} disabled={busy} onClick={() => onUncheckCategory(c.key)} aria-label={`Uncheck all ${c.label} (${c.count})`} data-testid="spending-uncheck-category">Uncheck all {c.label} ({c.count})</button>)}
     </div>}
     <ul className="mt-2 space-y-2" data-testid="spending-selected-list" aria-label="Transactions in this review">{items.map(r => {
+      // not yet approved, so even the owner's chosen category shows as a faded stripe
       const on = !off.has(r.id)
       const chosenKey = overrides.get(r.id) ?? r.bucket.key
       const changed = overrides.has(r.id) && overrides.get(r.id) !== r.bucket.key
-      return <li key={r.id} data-testid="spending-selected-item" data-checked={on ? 'true' : 'false'} className="rounded-lg border border-[var(--border-primary)] p-2"
-        style={on ? { background: 'color-mix(in srgb, var(--fin-cash) 14%, transparent)', boxShadow: 'inset 4px 0 0 var(--fin-cash)' } : { opacity: 0.7 }}>
+      return <li key={r.id} data-testid="spending-selected-item" data-checked={on ? 'true' : 'false'} className="relative rounded-lg border border-[var(--border-primary)] p-2 pl-3"
+        style={on ? { background: 'color-mix(in srgb, var(--fin-cash) 10%, transparent)', boxShadow: '0 0 0 2px var(--fin-cash-border)' } : { opacity: 0.7 }}>
+        <StripeBar stripe={categoryStripe({ key: chosenKey, state: chosenKey ? 'suggested' : 'none' }, categoryColor)} />
         <label className={`flex min-h-[56px] w-full items-start gap-2 ${busy ? 'opacity-60' : 'cursor-pointer'}`}>
           <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={{ accentColor: 'var(--fin-cash)' }} checked={on} disabled={busy} onChange={() => onToggle(r)} aria-label={`${on ? 'Uncheck' : 'Check'} ${r.merchant}`} data-testid="spending-selected-toggle" /></span>
           <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
@@ -197,14 +202,19 @@ function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRo
 function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
-  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} className="rounded-lg py-2"
-    style={selected ? { background: 'color-mix(in srgb, var(--fin-cash) 16%, transparent)', boxShadow: 'inset 4px 0 0 var(--fin-cash)' } : undefined}>
+  const { categoryColor, tint } = useDisplayColors()
+  // BANK-6D: the category owns the stripe (solid only when CONFIRMED); a selection is shown by a ring + the "✓ Selected" chip, never by the stripe.
+  const stripe = categoryStripe({ key: row.bucket.key, state: row.bucket.state, ignored: row.review === 'ignored' }, categoryColor, tint.rows)
+  const tinted = tintStyle(stripe)
+  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-tint={tinted ? 'on' : 'off'} className="relative rounded-lg py-2 pl-3"
+    style={selected ? { background: tinted?.background ?? 'color-mix(in srgb, var(--fin-cash) 10%, transparent)', boxShadow: '0 0 0 2px var(--fin-cash-border)' } : tinted}>
+    <StripeBar stripe={stripe} />
     <div className="flex items-start gap-2">
     {selectable && <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6 cursor-pointer" style={{ accentColor: 'var(--fin-cash)' }} checked={selected} onChange={() => onToggle(row)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>}
     <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={open} onClick={() => setOpen(o => !o)}>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold">{row.merchant}</span>
-        <span className="block text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · {row.account.mappedTo ?? row.account.label}</span>
+        <span className="block text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{row.account.mappedTo ?? row.account.label}</span>
         <span className="mt-1 flex flex-wrap gap-1">
           {selected && <Chip tone="ok">✓ Selected</Chip>}
           {overrideLabel && <Chip tone="ok">Your category: {overrideLabel}</Chip>}
@@ -234,6 +244,8 @@ export default function SpendingExplorer() {
   const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore, refresh } = useSpendingExplorer()
   const [showFilters, setShowFilters] = useState(false)
   const [mode, setMode] = useState<'explorer' | 'smart'>('explorer')
+  const [showColors, setShowColors] = useState(false)
+  const colorsEnabled = useDisplayColors().enabled
   // The review DRAFT. `selection` holds a snapshot of each row (display only), `off` the ones unchecked, `overrides` the owner's category corrections.
   // Nothing here is a decision: the server re-validates every id and category when the owner confirms.
   const [selection, setSelection] = useState<Map<string, ExplorerRow>>(new Map())
@@ -361,8 +373,10 @@ export default function SpendingExplorer() {
     {filters.view === 'reviewed' && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-reviewed-caption">Transactions you confirmed (marked ✓). Suggestions are not counted as reviewed. Open one to see its decision history or to undo it.</p>}
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <button type="button" className={btn} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">Filters{active ? ` (${active})` : ''}</button>
+      {colorsEnabled && <button type="button" className={btn} aria-expanded={showColors} onClick={() => setShowColors(s => !s)} data-testid="spending-colors-toggle">Colors</button>}
       {active > 0 && <button type="button" className={btn} onClick={reset}>Clear</button>}
     </div>
+    {showColors && <ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label }))} />}
     {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS{data.environment === 'production' ? ' (or from Sandbox test accounts)' : ''} {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
     {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS{data.environment === 'production' ? ' and Sandbox test accounts' : ''}. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
     {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}

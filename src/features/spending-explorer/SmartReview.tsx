@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
+import { StripeBar, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { categoryStripe } from '@/features/display-colors/stripes'
 import { useSmartReview, type SmartBatchResult, type SmartException, type SmartGroup, type SmartRow } from './useSmartReview'
 
 const NS = 'smart'
@@ -32,8 +34,10 @@ function Chip({ children, tone }: { children: React.ReactNode; tone?: 'ok' | 'wa
 
 function ExceptionRow({ row, buckets, busy, onSave }: { row: SmartException; buckets: Array<{ key: string; label: string; flow?: 'in' | 'out' }>; busy: boolean; onSave: (id: string, bucket: string) => void }) {
   const [pick, setPick] = useState('')
+  const { categoryColor } = useDisplayColors()
   const choices = buckets.filter(b => (row.direction === 'money_in' ? (b.flow === 'in' || ['transfers', 'personal_owner', 'other_needs_review'].includes(b.key)) : b.flow !== 'in'))
-  return <li className="py-2" data-testid="smart-exception-row">
+  return <li className="relative py-2 pl-3" data-testid="smart-exception-row">
+    <StripeBar stripe={categoryStripe({ key: row.suggested.key, state: row.suggested.key ? 'suggested' : 'none' }, categoryColor)} />
     <div className="flex items-baseline justify-between gap-3"><span className="min-w-0 truncate text-sm font-semibold">{row.merchant}</span><span className="shrink-0 text-sm">{row.direction === 'money_in' ? '+' : '−'}{usd2(row.amountMinor)}</span></div>
     <p className="text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · {row.why}{row.suggested.label ? ` Suggested: ${row.suggested.label}${row.suggested.confidence ? ` (${CONF[row.suggested.confidence]})` : ''}.` : ''}</p>
     {row.direction !== 'zero' && <div className="mt-1 flex gap-2">
@@ -50,6 +54,7 @@ function ExceptionRow({ row, buckets, busy, onSave }: { row: SmartException; buc
  */
 export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
   const { data, state, busy, message, approve, forget, setBucket, refresh } = useSmartReview()
+  const { categoryColor } = useDisplayColors()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [choices, setChoices] = useState<Map<string, string>>(new Map()) // group id -> category the owner picked for the group
   const [remember, setRemember] = useState<Set<string>>(new Set()) // group ids whose merchant the owner asked to remember
@@ -196,7 +201,8 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       const origin = g.basis === 'owner_rule' ? <Chip tone="ok">Your remembered rule</Chip> : choice ? <Chip tone="ok">Your choice</Chip> : <Chip>Suggestion</Chip>
       const selTotal = sel.reduce((s, r) => s + r.amountMinor, 0)
       const rememberOn = sel.length > 0 && remember.has(g.id)
-      return <li key={g.id} className="rounded-xl border border-[var(--border-primary)] p-3" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
+      return <li key={g.id} className="relative rounded-xl border border-[var(--border-primary)] p-3 pl-4" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
+        <StripeBar stripe={categoryStripe({ key: choice ?? g.bucket.key, state: 'suggested' }, categoryColor)} />
         <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={isOpen} onClick={() => toggleOpen(g.id)} data-testid="smart-group-header">
           <span className="min-w-0"><span className="block truncate text-sm font-semibold">{g.merchant}</span>
             <span className="text-xs text-[var(--text-secondary)]">{g.count} transaction{g.count === 1 ? '' : 's'} · {usd2(g.totalMinor)}</span></span>

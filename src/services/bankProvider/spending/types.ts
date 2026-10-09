@@ -88,7 +88,7 @@ export interface ExplorerRow {
   amountMinor: number
   direction: Direction
   pending: boolean
-  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; /** true only when the owner explicitly mapped this provider account to a Cash OS account */ mapped: boolean; environment: 'sandbox' | 'production' | null }
+  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; /** true only when the owner explicitly mapped this provider account to a Cash OS account */ mapped: boolean; environment: 'sandbox' | 'production' | null; /** BANK-6D: the mapped Cash OS financial account id (read-only, for display colors); null when unmapped */ financialAccountId: string | null }
   bucket: { key: BucketKey | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[]; /** how a SUGGESTION was derived (absent for confirmed/none) */ basis?: BucketSuggestion['basis']; /** mixed-purpose merchant: needs an explicit category before bulk approval */ mixed?: boolean }
   relationship: {
     kind: RelationshipKind | 'unknown'

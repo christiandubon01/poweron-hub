@@ -356,7 +356,7 @@ describe('SpendingExplorer (BANK-5)', () => {
         const cb = r.querySelector('input[type="checkbox"]') as HTMLInputElement
         expect(cb.checked).toBe(true)
         expect(r.textContent).toContain('✓ Selected')
-        expect((r as HTMLElement).style.boxShadow).toMatch(/inset/) // a highlight bar, not colour alone
+        expect((r as HTMLElement).style.boxShadow).toMatch(/^0 0 0 2px/) // BANK-6D: a selection RING (the left edge belongs to the category stripe), plus the chip and the checkbox - never colour alone
       }
       const other = rowEls().find(r => r.textContent!.includes('ZZQ'))!
       expect(other.getAttribute('data-selected')).toBe('false'); expect(other.querySelector('input[type="checkbox"]')).toBeNull()

@@ -7,6 +7,7 @@ import { projectOptionsFromBackup } from '@/finance/cashProjectFacts'
 import { CashOsAccountMenu, CashOsAccountRestore } from './CashOsAccountMenu'
 import BankConnectionCard from '@/features/bank-connection/BankConnectionCard'
 import SpendingExplorer from '@/features/spending-explorer/SpendingExplorer'
+import { AccountColorCard, DisplayColorsProvider } from '@/features/display-colors/DisplayColors'
 
 export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
   const { projection } = snapshot
@@ -83,11 +84,12 @@ export function CashTransactionsView({
   const archivedAccounts = snapshot.accounts.filter(a => a.status === 'archived')
   const transactions = [...snapshot.transactions].sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id)).slice(0, 40)
   const handleMutated = async () => { await onRefresh?.() }
-  return <div className="space-y-5">
+  // BANK-6D: organization-wide display colors, keyed by financial_accounts.id (never a name). Visual only.
+  return <DisplayColorsProvider organizationId={snapshot.setup?.organizationId ?? null} accounts={[...accounts, ...archivedAccounts].map(a => ({ id: a.id, label: a.display_name }))}><div className="space-y-5">
     <BankConnectionCard />
     <SpendingExplorer />
     <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
-      {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <div key={account.id} className="rounded-xl border border-[var(--border-primary)] p-3">
+      {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <AccountColorCard key={account.id} accountId={account.id} className="rounded-xl border border-[var(--border-primary)] p-3 pl-4">
         <div className="flex items-start justify-between gap-1">
           <strong className="leading-snug">{account.display_name}</strong>
           <CashOsAccountMenu account={account} onMutated={handleMutated} />
@@ -96,7 +98,7 @@ export function CashTransactionsView({
           {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
         </span>
         <span className="mt-2 block font-mono">{money(snapshot.accountBalancesMinor[account.id])}</span>
-      </div>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border-primary)] px-4 py-6 text-sm">
+      </AccountColorCard>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border-primary)] px-4 py-6 text-sm">
         <p className="font-semibold text-[var(--text-primary)]">Add your first account</p>
         <p className="mt-1 text-[var(--text-secondary)]">Track where your money lives — checking, savings, cash on hand, credit cards, and loans.</p>
         {onAdd && <button onClick={onAdd} className="mt-3 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600">Add account</button>}
@@ -113,7 +115,7 @@ export function CashTransactionsView({
           {showArchived && (
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {archivedAccounts.map(account => (
-                <div key={account.id} className="rounded-xl border border-dashed border-[var(--border-primary)] p-3 opacity-60">
+                <AccountColorCard key={account.id} accountId={account.id} archived className="rounded-xl border border-dashed border-[var(--border-primary)] p-3 pl-4 opacity-60">
                   <div className="flex items-start justify-between gap-1">
                     <strong className="leading-snug text-[var(--text-secondary)]">{account.display_name}</strong>
                     <CashOsAccountRestore account={account} onMutated={handleMutated} />
@@ -121,7 +123,7 @@ export function CashTransactionsView({
                   <span className="block text-xs text-[var(--text-muted)]">
                     Archived · {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'}
                   </span>
-                </div>
+                </AccountColorCard>
               ))}
             </div>
           )}
@@ -133,7 +135,7 @@ export function CashTransactionsView({
         {transactions.map(tx => <tr key={tx.id} className="border-t border-[var(--border-primary)]"><td className="py-2">{cashDate(tx.transaction_date)}</td><td>{tx.description || kindLabel(tx.transaction_kind)}<span className="block text-xs text-[var(--text-muted)]">{tx.status}</span></td><td>{kindLabel(tx.transaction_kind)}{tx.category ? ` · ${tx.category}` : ''}{tx.project_id ? ` · ${tx.project_id}` : ''}</td><td className="text-right font-mono">{money(tx.amount_minor)}</td></tr>)}
       </tbody></table></div> : <CashEmpty>No ledger transactions were loaded.</CashEmpty>}
     </CashCard>
-  </div>
+  </div></DisplayColorsProvider>
 }
 
 export function CashObligationsView({ snapshot, onRefresh }: { snapshot: CashOsSnapshot; onRefresh?: () => void | Promise<void> }) {
