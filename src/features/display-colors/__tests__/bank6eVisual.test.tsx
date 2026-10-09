@@ -150,13 +150,14 @@ describe('BANK-6E surfaces', () => {
     expect(confirmed.querySelector('span.min-w-\\[44px\\]')).not.toBeNull() // reserved column keeps the merchant aligned
   })
 
-  it('Snapshot: a category dot before each colored category label; the bars keep the existing cash color', async () => {
+  it('Snapshot: a category dot before each colored category label; BANK-6F: each bar takes its category color (neutral when uncolored), never the cash green', async () => {
     const m = memoryStore({ categories: { fuel_vehicle: TEAL } })
     await render(<DisplayColorsProvider store={m.store}><SpendingExplorer /></DisplayColorsProvider>, payload([row()]))
     const [fuel, meals] = qa('[data-testid="spending-bucket"]')
     expect((fuel.querySelector('[data-testid="category-dot"]') as HTMLElement).dataset.color).toBe(TEAL)
     expect(meals.querySelector('[data-testid="category-dot"]')).toBeNull()
-    expect((fuel.querySelector('[aria-hidden="true"] span') as HTMLElement).style.background).toBe('var(--fin-cash)')
+    expect((fuel.querySelector('[data-testid="spending-bucket-bar"]') as HTMLElement).style.background).toBe(TEAL)
+    expect((meals.querySelector('[data-testid="spending-bucket-bar"]') as HTMLElement).style.background).toBe('var(--text-muted)')
   })
 
   it('Colors panel: category descriptions, account details, a live preview (confirmed + suggested), grouped swatches and a "Selected" line', async () => {

@@ -62,9 +62,11 @@ describe('SpendingExplorer (BANK-5)', () => {
   it('glance state: a compact unassigned-spending snapshot with bucket bars, delta, and honest exclusions - and no auto-writes', async () => {
     await mount(payload([row()]))
     expect(host.querySelector('[data-testid="spending-total"]')!.textContent).toMatch(/\$1,284.*31 transactions/)
-    expect(host.querySelector('[data-testid="spending-delta"]')!.textContent).toMatch(/▲ \$284 vs the previous 30 days/)
+    expect(host.querySelector('[data-testid="spending-delta"]')!.textContent).toBe('$284 more than the previous 30 days') // BANK-6F D5: in words, neutral
     expect([...host.querySelectorAll('[data-testid="spending-bucket"]')].map(b => b.getAttribute('data-bucket'))).toEqual(['fuel_vehicle', 'materials', 'software_subscriptions'])
-    expect(host.textContent).toMatch(/1 known bill \(\$38\) matched, not counted above/); expect(host.textContent).toMatch(/1 pending \(\$30\) not counted until posted/)
+    // BANK-6F: known bills and pending are their own tiles; the wording no longer claims every known bill is outside the total (a merely possible bill match stays in it)
+    expect(host.querySelector('[data-testid="spending-tile-bills"]')!.textContent).toBe('Known bills$381 bill, debt or payroll payment · confirmed or suggested')
+    expect(host.querySelector('[data-testid="spending-tile-pending"]')!.textContent).toBe('Pending$301 transaction · not counted until posted')
     expect(host.textContent).toMatch(/Suggestions only\. Nothing here changes your balances, ledger or reports\./)
     expect(posts()).toEqual([]) // looking is never writing
   })

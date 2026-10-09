@@ -11,6 +11,7 @@ vi.mock('@/services/authedFetch', () => ({ authedJsonHeaders: async () => ({ 'Co
 import SpendingExplorer from './SpendingExplorer'
 import SmartReview from './SmartReview'
 import { StatusBadge } from './controls'
+import { sharePct } from './snapshot/SpendingSnapshot'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 const flush = async (ms = 5) => { await act(async () => { await new Promise(r => setTimeout(r, ms)) }) }
@@ -100,5 +101,50 @@ describe('BANK-6F step 2 · semantic layer', () => {
     expect((q('span.block.text-xs', flagged) as HTMLElement).style.color).toBe('var(--fin-warning)')
     await click(qa('[data-testid="smart-row"]')[0])
     expect(qa('[data-testid="smart-row"]')[0].className).toContain('fin-protected-tint')
+  })
+})
+
+describe('BANK-6F step 3 · Spending Snapshot', () => {
+  const b = (key: string, label: string, totalMinor: number, count = 1) => ({ key, label, totalMinor, count, previousMinor: 0, deltaMinor: 0, merchants: 1, repeatedMerchants: 0 })
+  const many = [b('materials', 'Materials', 168000, 9), b('fuel_vehicle', 'Fuel / Vehicle', 98000, 12), b('software_subscriptions', 'Software / Subscriptions', 61000, 6), b('meals', 'Meals', 47000, 8),
+    b('office_admin', 'Office / Admin', 37700, 3), b('bank_finance_fees', 'Bank / Finance Fees', 300, 1), b('taxes', 'Taxes', 0, 0)]
+  const a6 = analytics({ unassigned: { totalMinor: 412000, count: 39, previousMinor: 380000, deltaMinor: 32000, byBucket: many }, unclassified: { totalMinor: 4000, count: 1 } })
+
+  it('shows the server figures exactly (no recomputed totals): headline, count, change in words, known bills, pending, not classified', async () => {
+    await render(<SpendingExplorer />, payload([row()], { analytics: a6 }))
+    expect(q('[data-testid="spending-total"]')!.textContent).toBe('$4,120 · 39 transactions')
+    expect(q('[data-testid="spending-delta"]')!.textContent).toBe('$320 more than the previous 30 days')
+    expect(q('[data-testid="spending-tile-bills"]')!.textContent).toContain('$38')
+    expect(q('[data-testid="spending-tile-pending"]')!.textContent).toContain('$30')
+    expect(q('[data-testid="spending-tile-unclassified"]')!.textContent).toBe('Not classified yet$401 transaction · included in unassigned · stays in review')
+  })
+
+  it('says exactly what "unassigned" counts, matching the server rule (projects, overhead, personal and transfers are excluded; pending and ignored are left out)', async () => {
+    await render(<SpendingExplorer />, payload([row()], { analytics: a6 }))
+    expect(q('[data-testid="spending-definition"]')!.textContent).toBe('Unassigned: posted money going out that is not linked to a bill, debt, payroll, project, transfer, overhead or personal use, and not confidently matched to one. Ignored transactions are left out.')
+  })
+
+  it('every percentage names its denominator, is display-only rounding, and a tiny share is never shown as 0%', async () => {
+    expect([sharePct(168000, 412000), sharePct(300, 412000), sharePct(0, 412000), sharePct(5, 0)]).toEqual(['41%', '<1%', '0%', '0%'])
+    await render(<SpendingExplorer />, payload([row()], { analytics: a6 }))
+    const shares = qa('[data-testid="spending-bucket-share"]').map(e => e.textContent)
+    expect(shares).toEqual(['41% of unassigned · 9 transactions', '24% of unassigned · 12 transactions', '15% of unassigned · 6 transactions', '11% of unassigned · 8 transactions', '9% of unassigned · 3 transactions'])
+    expect(q('[data-testid="spending-composition"]')!.getAttribute('aria-label')).toMatch(/^Share of unassigned spending by category: Materials 41%, .*Bank \/ Finance Fees <1%$/)
+  })
+
+  it('no category is hidden: the first five show, "Show all" reveals the rest, and a zero-amount category is not drawn', async () => {
+    await render(<SpendingExplorer />, payload([row()], { analytics: a6 }))
+    expect(qa('[data-testid="spending-bucket"]')).toHaveLength(5)
+    expect(qa('[data-testid="spending-composition"] span')).toHaveLength(6) // the bar always shows every non-zero category
+    await click(q('[data-testid="spending-buckets-all"]'))
+    expect(qa('[data-testid="spending-bucket"]').map(e => e.dataset.bucket)).toEqual(['materials', 'fuel_vehicle', 'software_subscriptions', 'meals', 'office_admin', 'bank_finance_fees'])
+    expect(q('[data-testid="spending-buckets-all"]')!.textContent).toBe('Show fewer categories')
+  })
+
+  it('the category in use as a filter is marked as a selection (blue, aria-pressed) and the drill-in is unchanged', async () => {
+    await render(<SpendingExplorer />, payload([row()], { analytics: a6 }))
+    await click(q('[data-bucket="fuel_vehicle"]'))
+    const on = q('[data-bucket="fuel_vehicle"]')!
+    expect(on.getAttribute('aria-pressed')).toBe('true'); expect(on.className).toContain('fin-protected-border')
   })
 })

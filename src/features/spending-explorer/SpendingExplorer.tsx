@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
 import { BucketPicker } from './BucketPicker'
+import { SpendingSnapshot } from './snapshot/SpendingSnapshot'
 import { entryType, toneColor } from './entryType'
-import { AccountColorDot, CategoryDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { AccountColorDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
 import { categoryStripe } from '@/features/display-colors/stripes'
 import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
@@ -88,30 +89,6 @@ function SelectedReview({ items, off, overrides, categoryChoices, categories, bu
         </div>
       </li>
     })}</ul>
-  </div>
-}
-
-/** Glance state: where the unassigned money went, as tappable bars. Selecting a bucket drills into its transactions. */
-function Snapshot({ a, selected, onPick }: { a: Analytics; selected: string; onPick: (bucket: string) => void }) {
-  const top = a.unassigned.byBucket.filter(b => b.totalMinor > 0)
-  const max = Math.max(1, ...top.map(b => b.totalMinor))
-  const d = a.unassigned.deltaMinor
-  return <div data-testid="spending-snapshot">
-    <p className={eyebrow}>Unassigned spending · last {a.windowDays} days</p>
-    <p className="mt-1 text-2xl font-semibold" data-testid="spending-total">{usd0(a.unassigned.totalMinor)} <span className="text-sm font-normal text-[var(--text-secondary)]">· {a.unassigned.count} transaction{a.unassigned.count === 1 ? '' : 's'}</span></p>
-    {(a.unassigned.previousMinor > 0 || d !== 0) && <p className="text-xs text-[var(--text-secondary)]" data-testid="spending-delta">{d >= 0 ? '▲' : '▼'} {usd0(d)} vs the previous {a.windowDays} days</p>}
-    {top.length === 0 ? <p className="mt-2 text-sm text-[var(--text-secondary)]">Nothing unassigned in this period.</p> : <ul className="mt-2 space-y-1">{top.slice(0, 6).map(b => <li key={b.key}>
-      <button type="button" onClick={() => onPick(selected === b.key ? '' : b.key)} aria-pressed={selected === b.key} data-testid="spending-bucket" data-bucket={b.key}
-        className={`flex min-h-[44px] w-full items-center gap-3 rounded-lg px-2 text-left [@media(hover:hover)]:hover:bg-[var(--surface-2)] ${selected === b.key ? 'bg-[var(--fin-protected-tint)] ring-2 ring-[var(--fin-protected-border)]' : ''}`}>
-        <span className="flex w-40 shrink-0 items-center gap-2 truncate text-sm"><CategoryDot categoryKey={b.key} /><span className="truncate">{b.label}</span></span>
-        <span className="h-2 flex-1 rounded-full bg-[var(--surface-2)]" aria-hidden="true"><span className="block h-2 rounded-full" style={{ width: `${Math.max(4, Math.round((b.totalMinor / max) * 100))}%`, background: 'var(--fin-cash)' }} /></span>
-        <span className="w-16 shrink-0 text-right text-sm font-semibold">{usd0(b.totalMinor)}</span>
-      </button>
-    </li>)}</ul>}
-    <p className="mt-2 text-xs text-[var(--text-secondary)]">
-      {a.knownBills.count > 0 ? `${a.knownBills.count} known bill${a.knownBills.count === 1 ? '' : 's'} (${usd0(a.knownBills.totalMinor)}) matched, not counted above. ` : ''}
-      {a.pending.count > 0 ? `${a.pending.count} pending (${usd0(a.pending.totalMinor)}) not counted until posted.` : ''}
-    </p>
   </div>
 }
 
@@ -370,7 +347,7 @@ export default function SpendingExplorer() {
       <span className="text-xs text-[var(--text-secondary)]">Suggestions only. Nothing here changes your balances, ledger or reports.</span>
     </div>
     <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
-    <div className="mt-3"><Snapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>
+    <div className="mt-3"><SpendingSnapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>
 
     <div className="mt-4 inline-flex gap-1 rounded-2xl bg-[var(--surface-1)] p-1 ring-1 ring-[var(--border-primary)]" role="group" aria-label="Review mode">
       <button type="button" aria-pressed={mode === 'explorer'} className={`${btn} ${mode === 'explorer' ? btnOn : ''}`} onClick={() => setMode('explorer')} data-testid="spending-mode-explorer">Explorer</button>
