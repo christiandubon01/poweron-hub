@@ -313,3 +313,56 @@ describe('BANK-6F step 5 · unified category sheets and Smart Review', () => {
     expect(posts()).toEqual([])
   })
 })
+
+describe('BANK-6F step 6 · views, search and filters', () => {
+  const gets = () => (globalThis.fetch as any).mock.calls.filter(([, i]: any) => !i || i.method === 'GET').map(([u]: any) => String(u))
+  const lastQuery = () => Object.fromEntries(new URLSearchParams(gets().slice(-1)[0].split('?')[1]))
+  const setSel = async (label: RegExp, v: string) => {
+    const el = qa('[data-testid="spending-filters"] label').find(l => label.test(l.textContent ?? ''))!.querySelector('select') as HTMLSelectElement
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(el, v); el.dispatchEvent(new Event('change', { bubbles: true })) }); await flush()
+  }
+
+  it('D6: all seven views are directly visible tabs (three primary, four in a visible wrapping row); no overflow menu, no sideways scroll', async () => {
+    await render(<SpendingExplorer />, payload([row()]))
+    const list = q('[role="tablist"]')!
+    expect(qa('[role="tab"]', list)).toHaveLength(7)
+    expect(list.className).not.toMatch(/overflow-x/); expect(qa('[role="tablist"] [class*="overflow-x"]')).toHaveLength(0)
+    const groups = [...list.children] as HTMLElement[]
+    expect(groups.map(g => qa('[role="tab"]', g).map(t => t.dataset.testid!.replace('spending-view-', '')))).toEqual([['review_queue', 'reviewed', 'all'], ['known_bills', 'unassigned', 'repeated_spending', 'needs_review']])
+    for (const g of groups) expect(g.className).toContain('flex-wrap')
+  })
+
+  it('each view says exactly what it contains, matching the server rule (Unassigned excludes project-linked spending; Money out to review is money going out)', async () => {
+    await render(<SpendingExplorer />, payload([row()]))
+    const caption = () => (q('[data-testid="spending-view-caption"]') ?? q('[data-testid="spending-reviewed-caption"]'))!.textContent
+    await click(q('[data-testid="spending-view-unassigned"]'))
+    expect(caption()).toBe('Posted money going out that is not linked to a bill, debt, payroll, project, transfer, overhead or personal use, and not confidently matched to one.')
+    await click(q('[data-testid="spending-view-needs_review"]'))
+    expect(caption()).toBe('Money going out that is not yet reviewed or ignored.')
+    await click(q('[data-testid="spending-view-known_bills"]'))
+    expect(caption()).toBe('Money going out with a bill, debt or payroll payment, confirmed or suggested.')
+  })
+
+  it('search and the period are always visible; the filters panel groups the rest with a visible arrow on every menu', async () => {
+    await render(<SpendingExplorer />, payload([row()]))
+    expect(q('[data-testid="spending-search"]')).not.toBeNull(); expect(q('[data-testid="spending-period-90"]')!.getAttribute('aria-pressed')).toBe('true')
+    expect(q('[data-testid="spending-filters"]')).toBeNull()
+    await click(q('[data-testid="spending-filters-toggle"]'))
+    expect(qa('[data-testid="spending-filters"] legend').map(l => l.textContent)).toEqual(['Where', 'What', 'Status', 'Amount'])
+    const selects = qa('[data-testid="spending-filters"] select')
+    expect(selects).toHaveLength(6)
+    for (const s of selects) expect(s.parentElement!.querySelector('svg')).not.toBeNull()
+  })
+
+  it('every active filter is a removable chip; removing one clears only that field (same query otherwise); Clear all is the same reset', async () => {
+    await render(<SpendingExplorer />, payload([row()]))
+    await click(q('[data-testid="spending-filters-toggle"]'))
+    await setSel(/^Category/, 'meals'); await setSel(/^Confidence/, 'high')
+    expect(qa('[data-testid="spending-filter-chip"]').map(c => c.textContent)).toEqual(['Category: Meals', 'Confidence: High'])
+    expect(q('[data-testid="spending-filters-toggle"]')!.textContent).toBe('Filters (2)')
+    await click(q('[aria-label="Remove filter: Category: Meals"]'))
+    expect(lastQuery()).toMatchObject({ confidence: 'high' }); expect(lastQuery().bucket).toBeUndefined()
+    await click(q('[data-testid="spending-filters-clear"]'))
+    expect(lastQuery().confidence).toBeUndefined(); expect(q('[data-testid="spending-filter-chips"]')).toBeNull()
+  })
+})

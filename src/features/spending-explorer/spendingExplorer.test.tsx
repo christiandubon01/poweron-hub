@@ -74,7 +74,8 @@ describe('SpendingExplorer (BANK-5)', () => {
   it('offers the five owner views with counts, and switching a view re-queries the server', async () => {
     await mount(payload([row()]))
     const labels = [...host.querySelectorAll('[role="tab"]')].map(t => t.textContent!.replace(/\s+/g, ' ').trim())
-    expect(labels).toEqual(['To Review 8', 'Reviewed 2', 'All 10', 'Known Bills 1', 'Unassigned Spending 7', 'Repeated Spending 1', 'Needs Review 6']) // an older server without viewCounts.reviewed falls back to reviewCounts.reviewed
+    // BANK-6F D6: all seven views stay directly visible, in the same order with the same counts; "Needs Review" reads "Money out to review" (what the server view is)
+    expect(labels).toEqual(['To review 8', 'Reviewed 2', 'All 10', 'Known bills 1', 'Unassigned spending 7', 'Repeated spending 1', 'Money out to review 6']) // an older server without viewCounts.reviewed falls back to reviewCounts.reviewed
     await click(host.querySelector('[data-testid="spending-view-known_bills"]'))
     expect(gets().slice(-1)[0]).toMatch(/view=known_bills/)
   })
@@ -94,7 +95,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     expect(host.querySelectorAll('[data-testid="spending-select"]')).toHaveLength(0) // confirmed rows are never offered for batch approval
     // the Filters panel still works on top of Reviewed: the view stays "reviewed" and the bucket narrows it
     await click(host.querySelector('[data-testid="spending-filters-toggle"]'))
-    const bucketSelect = [...host.querySelectorAll('label')].find(l => l.textContent!.startsWith('Bucket'))!.querySelector('select') as HTMLSelectElement
+    const bucketSelect = [...host.querySelectorAll('label')].find(l => l.textContent!.startsWith('Category'))!.querySelector('select') as HTMLSelectElement // BANK-6F D7: "Bucket" reads "Category"
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(bucketSelect, 'materials'); bucketSelect.dispatchEvent(new Event('change', { bubbles: true })) }); await flush()
     expect(gets().slice(-1)[0]).toMatch(/view=reviewed/); expect(gets().slice(-1)[0]).toMatch(/bucket=materials/)
   })

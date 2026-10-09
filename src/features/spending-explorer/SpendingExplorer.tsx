@@ -8,10 +8,11 @@ import { SpendingSnapshot } from './snapshot/SpendingSnapshot'
 import { entryType, toneColor } from './entryType'
 import { AccountColorDot, CategoryDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
 import { categoryStripe } from '@/features/display-colors/stripes'
-import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
+import { useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type Options } from './useSpendingExplorer'
 
-import { btn, btnOn, btnPrimary, eyebrow, field, panel, selectedCard } from './ui'
-import { Checkbox, Chip, StatusBadge } from './controls'
+import { btn, btnPrimary, eyebrow, selectedCard } from './ui'
+import { Checkbox, Chip, SegmentedControl, StatusBadge } from './controls'
+import { FilterBar, VIEW_CAPTION, ViewTabs } from './ExplorerControls'
 const usd0 = (minor: number) => `$${Math.round(Math.abs(minor) / 100).toLocaleString('en-US')}`
 const usd2 = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
@@ -26,10 +27,6 @@ export const batchSummary = (r: BatchResult): string => {
   return `Approved ${r.confirmed}${r.unchanged ? ` (${r.unchanged} already approved)` : ''}.${r.skipped ? ` ${r.skipped} left for individual review: ${left}.` : ''}`
 }
 
-const VIEWS: Array<{ key: ExplorerView; label: string }> = [
-  { key: 'review_queue', label: 'To Review' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'all', label: 'All' }, { key: 'known_bills', label: 'Known Bills' }, { key: 'unassigned', label: 'Unassigned Spending' },
-  { key: 'repeated_spending', label: 'Repeated Spending' }, { key: 'needs_review', label: 'Needs Review' },
-]
 
 /** Mirrors the SERVER's batch rule only so the checkboxes appear on the right rows. The server re-decides everything when the owner confirms. */
 const isBatchApprovable = (r: ExplorerRow, batchBuckets: string[]) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high' && !r.bucket.mixed
@@ -267,7 +264,6 @@ export default function SpendingExplorer() {
     setBatchNote(batchSummary(out))
   }
   const showingSelected = reviewing && items.length > 0
-  const active = (['bucket', 'account', 'scope', 'review', 'confidence', 'project', 'search', 'min', 'max'] as const).filter(k => filters[k]).length + (filters.days !== DEFAULT_FILTERS.days ? 1 : 0) + (filters.accounts !== DEFAULT_FILTERS.accounts ? 1 : 0)
   return <section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Spending explorer · bank evidence</h3>
@@ -276,39 +272,17 @@ export default function SpendingExplorer() {
     <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-3"><SpendingSnapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>
 
-    <div className="mt-4 inline-flex gap-1 rounded-2xl bg-[var(--surface-1)] p-1 ring-1 ring-[var(--border-primary)]" role="group" aria-label="Review mode">
-      <button type="button" aria-pressed={mode === 'explorer'} className={`${btn} ${mode === 'explorer' ? btnOn : ''}`} onClick={() => setMode('explorer')} data-testid="spending-mode-explorer">Explorer</button>
-      <button type="button" aria-pressed={mode === 'smart'} className={`${btn} ${mode === 'smart' ? btnOn : ''}`} onClick={() => setMode('smart')} data-testid="spending-mode-smart">Smart Review</button>
-    </div>
+    <SegmentedControl className="mt-4" label="Review mode" value={mode} onChange={setMode} options={[
+      { value: 'explorer', label: 'Explorer', testId: 'spending-mode-explorer' }, { value: 'smart', label: 'Smart Review', testId: 'spending-mode-smart' }]} />
     {mode === 'smart' ? <SmartReview onChanged={() => void refresh()} /> : <>
     <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
-    <div className="mt-1 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Spending views">
-      {VIEWS.map(v => <button key={v.key} type="button" role="tab" aria-selected={filters.view === v.key} data-testid={`spending-view-${v.key}`} onClick={() => update({ view: v.key })}
-        className={`${btn} shrink-0 ${filters.view === v.key ? btnOn : ''}`}>{v.label} <span className="ml-1 rounded-full bg-[var(--surface-2)] px-1.5 text-xs tabular-nums text-[var(--text-secondary)]">{data.viewCounts[v.key] ?? (v.key === 'reviewed' ? data.reviewCounts?.reviewed : undefined)}</span></button>)}
-    </div>
-    {filters.view === 'reviewed' && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-reviewed-caption">Transactions you confirmed (marked ✓). Suggestions are not counted as reviewed. Open one to see its decision history or to undo it.</p>}
-    <div className="mt-2 flex flex-wrap items-center gap-2">
-      <button type="button" className={btn} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">Filters{active ? ` (${active})` : ''}</button>
-      {colorsEnabled && <button type="button" className={btn} aria-expanded={showColors} onClick={() => setShowColors(s => !s)} data-testid="spending-colors-toggle">Colors</button>}
-      {active > 0 && <button type="button" className={btn} onClick={reset}>Clear</button>}
-    </div>
+    <div className="mt-2"><ViewTabs view={filters.view} data={data} onView={view => update({ view })} /></div>
+    <p className="mt-1.5 text-xs text-[var(--text-secondary)]" data-testid={filters.view === 'reviewed' ? 'spending-reviewed-caption' : 'spending-view-caption'}>{VIEW_CAPTION[filters.view]}</p>
+    <div className="mt-3"><FilterBar filters={filters} data={data} update={update} reset={reset} showFilters={showFilters} setShowFilters={setShowFilters} showColors={showColors} setShowColors={setShowColors} colorsEnabled={colorsEnabled} /></div>
     {showColors && <ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label, hint: b.hint }))} />}
     {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS{data.environment === 'production' ? ' (or from Sandbox test accounts)' : ''} {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
     {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS{data.environment === 'production' ? ' and Sandbox test accounts' : ''}. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
     {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}
-    {showFilters && <div className={`mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 ${panel}`} data-testid="spending-filters">
-      <label className="text-xs">Period<select className={`${field} mt-1 w-full`} value={filters.days} onChange={e => update({ days: Number(e.target.value) as 30 | 60 | 90 })}><option value={30}>Last 30 days</option><option value={60}>Last 60 days</option><option value={90}>Last 90 days</option></select></label>
-      <label className="text-xs">Account<select className={`${field} mt-1 w-full`} value={filters.account} onChange={e => update({ account: e.target.value })}><option value="">All accounts</option>{data.options.accounts.map(x => <option key={x.ref} value={x.ref}>{x.label}{x.mask ? ` ••••${x.mask}` : ''}</option>)}</select></label>
-      <label className="text-xs">Bucket<select className={`${field} mt-1 w-full`} value={filters.bucket} onChange={e => update({ bucket: e.target.value })}><option value="">All buckets</option>{data.options.buckets.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}</select></label>
-      <label className="text-xs">Business / personal<select className={`${field} mt-1 w-full`} value={filters.scope} onChange={e => update({ scope: e.target.value })}><option value="">Both</option><option value="business">Business</option><option value="personal">Personal</option><option value="unclear">Unclear</option></select></label>
-      <label className="text-xs">Review<select className={`${field} mt-1 w-full`} value={filters.review} onChange={e => update({ review: e.target.value })}><option value="">Any</option><option value="needs_review">Needs review</option><option value="suggested">Suggested</option><option value="confirmed">Confirmed</option><option value="ignored">Ignored</option></select></label>
-      <label className="text-xs">Confidence<select className={`${field} mt-1 w-full`} value={filters.confidence} onChange={e => update({ confidence: e.target.value })}><option value="">Any</option><option value="high">High</option><option value="possible">Possible</option><option value="low">Low</option></select></label>
-      <label className="text-xs">Project<select className={`${field} mt-1 w-full`} value={filters.project} onChange={e => update({ project: e.target.value })}><option value="">Any</option>{data.options.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-      <label className="text-xs">Merchant search<input className={`${field} mt-1 w-full`} value={filters.search} onChange={e => update({ search: e.target.value })} placeholder="e.g. Home Depot" /></label>
-      <label className="text-xs">Min amount ($)<input inputMode="decimal" className={`${field} mt-1 w-full`} value={filters.min} onChange={e => update({ min: e.target.value })} /></label>
-      <label className="text-xs">Max amount ($)<input inputMode="decimal" className={`${field} mt-1 w-full`} value={filters.max} onChange={e => update({ max: e.target.value })} /></label>
-    </div>}
-
     {data.reviewCounts && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-review-counts">Reviewed {data.reviewCounts.reviewed} · Unreviewed {data.reviewCounts.unreviewed} · Excluded {data.reviewCounts.excluded}</p>}
     {eligible.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="spending-batch-bar">
       <button type="button" className={btn} disabled={busy} onClick={selectConfident} data-testid="spending-select-all">Select {Math.min(eligible.length, maxBatch)} confident matches</button>
