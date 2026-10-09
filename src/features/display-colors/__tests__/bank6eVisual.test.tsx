@@ -127,7 +127,7 @@ describe('BANK-6E surfaces', () => {
     const btn = a.querySelector('button[aria-expanded]')!
     expect(btn.children[0].textContent).toBe('CHEVRON'); expect(btn.children[1].textContent).toBe('−$62.10')
     expect(btn.children[1].className).toContain('tabular-nums')
-    expect(btn.children[2].textContent).toBe('Oct 3 · Wells Fargo Business Checking 6960'); expect(btn.children[2].querySelector('[data-testid="account-color-dot"]')).not.toBeNull()
+    expect(btn.children[2].textContent).toBe('Oct 3 · Wells Fargo Business Checking 6960 ••••0000') // BANK-6F: the account's last four digits, shown once; expect(btn.children[2].querySelector('[data-testid="account-color-dot"]')).not.toBeNull()
     expect(a.querySelector('[data-testid="entry-status"]')!.textContent).toBe('Reviewed'); expect(b.querySelector('[data-testid="entry-status"]')!.textContent).toBe('Suggested')
     expect((a.querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset.stripe).toBe('solid')
     expect((b.querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset.stripe).toBe('faded') // hollow rail
@@ -142,19 +142,22 @@ describe('BANK-6E surfaces', () => {
     ]))
     await click(q('[data-testid="spending-view-all"]'))
     const box = q('[data-testid="spending-select"]') as HTMLInputElement
-    expect(box.style.appearance).toBe('auto') // the global reset in styles/responsive.css otherwise flattens native checkboxes to nothing
+    // BANK-6F: the real checkbox input stays the control (keyboard, screen readers) over a DRAWN box, so the app-wide appearance:none reset cannot hide it
+    expect(box.type).toBe('checkbox'); expect(box.className).toContain('opacity-0'); expect(box.nextElementSibling!.className).toContain('ring-[var(--surface-line)]')
+    await click(box); expect(box.nextElementSibling!.className).toContain('bg-[var(--fin-protected)]') // checked = a filled blue box with a check
     const [confirmed] = qa('[data-testid="spending-row"]')
     expect(confirmed.querySelector('[data-testid="spending-select"]')).toBeNull()
-    expect(confirmed.querySelector('span.min-w-\\[40px\\]')).not.toBeNull() // reserved column keeps the merchant aligned
+    expect(confirmed.querySelector('span.min-w-\\[44px\\]')).not.toBeNull() // reserved column keeps the merchant aligned
   })
 
-  it('Snapshot: a category dot before each colored category label; the bars keep the existing cash color', async () => {
+  it('Snapshot: a category dot before each colored category label; BANK-6F: each bar takes its category color (neutral when uncolored), never the cash green', async () => {
     const m = memoryStore({ categories: { fuel_vehicle: TEAL } })
     await render(<DisplayColorsProvider store={m.store}><SpendingExplorer /></DisplayColorsProvider>, payload([row()]))
     const [fuel, meals] = qa('[data-testid="spending-bucket"]')
     expect((fuel.querySelector('[data-testid="category-dot"]') as HTMLElement).dataset.color).toBe(TEAL)
     expect(meals.querySelector('[data-testid="category-dot"]')).toBeNull()
-    expect((fuel.querySelector('[aria-hidden="true"] span') as HTMLElement).style.background).toBe('var(--fin-cash)')
+    expect((fuel.querySelector('[data-testid="spending-bucket-bar"]') as HTMLElement).style.background).toBe(TEAL)
+    expect((meals.querySelector('[data-testid="spending-bucket-bar"]') as HTMLElement).style.background).toBe('var(--text-muted)')
   })
 
   it('Colors panel: category descriptions, account details, a live preview (confirmed + suggested), grouped swatches and a "Selected" line', async () => {

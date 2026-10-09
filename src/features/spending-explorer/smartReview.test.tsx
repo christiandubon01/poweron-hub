@@ -40,7 +40,8 @@ describe('SmartReview (BANK-6B)', () => {
   const q = (sel: string) => host.querySelector(sel) as HTMLElement | null
   const qa = (sel: string) => [...host.querySelectorAll(sel)] as HTMLElement[]
   const click = async (el: Element | null) => { await act(async () => { (el as HTMLElement).click() }); await flush() }
-  const pick = async (el: HTMLSelectElement, value: string) => { await act(async () => { const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!; set.call(el, value); el.dispatchEvent(new Event('change', { bubbles: true })) }); await flush() }
+  // BANK-6F: categories are chosen in the shared sheet (open, pick, Use). Same draft effect as the old menu; nothing is sent.
+  const pick = async (el: Element | null, value: string) => { await click(el); await click(document.querySelector(`[role="dialog"] [data-option="${value}"]`)); await click(document.querySelector('[data-testid="bucket-picker-apply"]')) }
   const posts = () => fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').map(([, i]) => JSON.parse(i.body))
   const groupEl = (m: string) => qa('[data-testid="smart-group"]').find(g => g.dataset.merchant === m)!
   beforeEach(() => { window.localStorage.clear(); host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host) })
@@ -87,12 +88,12 @@ describe('SmartReview (BANK-6B)', () => {
     await mount(payload())
     const v = groupEl('VONS')
     expect(v.textContent).toContain('Mixed purpose'); expect(v.textContent).toContain('you pick the category')
-    expect((v.querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement).value).toBe('')
+    expect(v.querySelector('[data-testid="smart-group-category"]')!.getAttribute('data-value')).toBe('')
     await click(v.querySelector('[data-testid="smart-group-header"]'))
     await click(v.querySelector('[data-testid="smart-row"]'))
     expect(q('[data-testid="smart-selection-bar"]')).toBeNull()
     expect(q('[data-testid="smart-note"]')!.textContent).toContain('Choose a category')
-    await pick(v.querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement, 'fuel_vehicle')
+    await pick(v.querySelector('[data-testid="smart-group-category"]') , 'fuel_vehicle')
     expect(q('[data-testid="smart-selected-count"]')!.textContent).toBe('1 selected')
     expect(groupEl('VONS').textContent).toContain('Your choice')
   })
@@ -100,7 +101,7 @@ describe('SmartReview (BANK-6B)', () => {
   it('approval needs a confirmation that shows the exact category totals, then sends ids, the owner\'s category choices and nothing else', async () => {
     await mount(payload())
     await click(groupEl('NETLIFY').querySelector('[data-testid="smart-group-select"]'))
-    await pick(groupEl('VONS').querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement, 'fuel_vehicle')
+    await pick(groupEl('VONS').querySelector('[data-testid="smart-group-category"]') , 'fuel_vehicle')
     await click(q('[data-testid="smart-approve"]'))
     expect(posts()).toEqual([]) // nothing is sent before the confirmation
     const bd = q('[data-testid="smart-confirm-breakdown"]')!.textContent!
@@ -182,9 +183,9 @@ describe('SmartReview (BANK-6B)', () => {
     await click(v.querySelector('[data-testid="smart-group-header"]')); await click(v.querySelector('[data-testid="smart-row"]'))
     expect(q('[data-testid="smart-selection-bar"]')).toBeNull()
     expect((groupEl('VONS').querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement).disabled).toBe(true)
-    await pick(groupEl('VONS').querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement, 'fuel_vehicle')
+    await pick(groupEl('VONS').querySelector('[data-testid="smart-group-category"]') , 'fuel_vehicle')
     expect((groupEl('VONS').querySelector('[data-testid="smart-remember-on"]') as HTMLButtonElement).disabled).toBe(false)
-    await pick(groupEl('STAPLES').querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement, 'tools_equipment')
+    await pick(groupEl('STAPLES').querySelector('[data-testid="smart-group-category"]') , 'tools_equipment')
     const st = groupEl('STAPLES')
     expect(st.querySelector('[data-testid="smart-group-selected"]')!.textContent).toContain('2 selected') // the flagged $31.00 row is not included
   })
@@ -222,15 +223,17 @@ describe('SmartReview (BANK-6B)', () => {
     expect(ex.textContent).toContain('Owner draws and personal')
     await click(ex.querySelector('button'))
     expect(ex.querySelector('[role="checkbox"]')).toBeNull()
-    const select = ex.querySelector('select') as HTMLSelectElement
-    await pick(select, 'personal_owner')
-    await click([...ex.querySelectorAll('button')].find(b => b.textContent === 'Save')!)
+    expect(ex.querySelector('select')).toBeNull()
+    await click(ex.querySelector('[data-testid="smart-exception-category"]'))
+    await click(document.querySelector('[role="dialog"] [data-option="personal_owner"]'))
+    expect(posts()).toEqual([]) // choosing in the sheet sends nothing
+    await click(document.querySelector('[data-testid="bucket-picker-apply"]')) // "Save category": the same individual save as before
     expect(posts()).toEqual([{ action: 'set_bucket', transactionId: id(50), bucket: 'personal_owner' }])
   })
 
   it('the selection draft survives a reload (ids and category choices only, in its own storage key) and drops rows that no longer need review', async () => {
     await mount(payload())
-    await pick(groupEl('VONS').querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement, 'fuel_vehicle')
+    await pick(groupEl('VONS').querySelector('[data-testid="smart-group-category"]') , 'fuel_vehicle')
     await click(groupEl('NETLIFY').querySelector('[data-testid="smart-group-select"]'))
     const saved = loadDraft(SCOPE, Date.now(), 'smart')!
     expect(saved.ids).toHaveLength(4); expect(saved.overrides).toEqual({ [vons[0].id]: 'fuel_vehicle' })
@@ -250,7 +253,7 @@ describe('SmartReview (BANK-6B)', () => {
     await mount(p)
     const v = groupEl('VONS')
     expect(v.textContent).toContain('Your remembered rule'); expect(v.textContent).toContain('you pick the category')
-    expect((v.querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement).value).toBe('') // not silently chosen
+    expect(v.querySelector('[data-testid="smart-group-category"]')!.getAttribute('data-value')).toBe('') // not silently chosen
     await click(v.querySelector('[data-testid="smart-group-header"]'))
     await click(v.querySelector('[data-testid="smart-row"]'))
     expect(q('[data-testid="smart-selection-bar"]')).toBeNull() // a row tap alone does not approve-select it
@@ -308,7 +311,9 @@ describe('SmartReview (BANK-6B)', () => {
 
   it('is built for an iPhone: a single column of cards, 44px tap targets, no fixed widths, a sticky summary, and no horizontal overflow classes', () => {
     const src = readFileSync('src/features/spending-explorer/SmartReview.tsx', 'utf8')
-    expect(src).toContain('min-h-[44px]'); expect(src).toContain('sticky bottom-2'); expect(src).toContain('truncate'); expect(src).toContain('flex-wrap')
+    const bar = readFileSync('src/features/spending-explorer/SelectionBar.tsx', 'utf8') // BANK-6F: the sticky summary is the shared SelectionBar
+    expect(src).toContain('min-h-[44px]'); expect(bar).toContain('sticky bottom-[max(0.5rem,env(safe-area-inset-bottom))]'); expect(src).toContain('truncate'); expect(src).toContain('flex-wrap')
+    expect(bar).not.toMatch(/\bw-\[\d{3,}px\]|\bmin-w-\[\d{3,}px\]|whitespace-nowrap|overflow-x-scroll|table/)
     expect(src).not.toMatch(/\bw-\[\d{3,}px\]|\bmin-w-\[\d{3,}px\]|whitespace-nowrap|overflow-x-scroll|table/)
     const buttons = (src.match(/<button/g) ?? []).length
     expect(buttons).toBeLessThan(16)

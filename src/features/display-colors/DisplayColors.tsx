@@ -148,21 +148,22 @@ export function CategoryDot({ categoryKey, hollow = false, className = '' }: { c
  * The category PILL: the explicit, text-first category indicator (BANK-6E).
  *   confirmed -> "✓ Fuel / Vehicle", solid dot, a light wash of the color
  *   suggested -> "Suggested · Fuel / Vehicle", hollow dot, DASHED outline, no fill (a suggestion never looks approved)
+ *   draft     -> "Your choice · Fuel / Vehicle" (BANK-6F D13): the owner picked it but has not approved it yet, so it keeps the dashed, unfilled look
  *   none      -> the plain muted label
  */
-export function CategoryPill({ categoryKey, label, state }: { categoryKey: string | null; label: string; state: 'confirmed' | 'suggested' | 'none' }) {
+export function CategoryPill({ categoryKey, label, state }: { categoryKey: string | null; label: string; state: 'confirmed' | 'suggested' | 'draft' | 'none' }) {
   const { categoryColor } = useDisplayColors()
   const c = categoryKey && state !== 'none' ? categoryColor(categoryKey) : null
   const base = 'inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4'
   if (state === 'confirmed') {
     return <span data-testid="category-pill" data-state="confirmed" className={`${base} ring-1`}
-      style={c ? { background: withAlpha(c, 0.14), boxShadow: `inset 0 0 0 1px ${withAlpha(c, 0.45)}`, color: 'var(--text-primary)' } : { color: 'var(--fin-cash)', boxShadow: 'inset 0 0 0 1px var(--border-primary)' }}>
+      style={c ? { background: withAlpha(c, 0.14), boxShadow: `inset 0 0 0 1px ${withAlpha(c, 0.45)}`, color: 'var(--text-primary)' } : { color: 'var(--text-primary)', boxShadow: 'inset 0 0 0 1px var(--surface-line)' }}>
       {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: c }} />}<span className="truncate">✓ {label}</span>
     </span>
   }
-  if (state === 'suggested') {
-    return <span data-testid="category-pill" data-state="suggested" className={`${base} border border-dashed text-[var(--text-secondary)]`} style={{ borderColor: c ?? 'var(--border-primary)' }}>
-      {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ boxShadow: `inset 0 0 0 1.5px ${c}` }} />}<span className="truncate">Suggested · {label}</span>
+  if (state === 'suggested' || state === 'draft') {
+    return <span data-testid="category-pill" data-state={state} className={`${base} border border-dashed ${state === 'draft' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`} style={{ borderColor: c ?? 'var(--border-primary)' }}>
+      {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ boxShadow: `inset 0 0 0 1.5px ${c}` }} />}<span className="truncate">{state === 'draft' ? 'Your choice' : 'Suggested'} · {label}</span>
     </span>
   }
   return <span data-testid="category-pill" data-state="none" className={`${base} text-[var(--text-secondary)]`} style={{ boxShadow: 'inset 0 0 0 1px var(--border-primary)' }}><span className="truncate">{label}</span></span>
@@ -172,11 +173,11 @@ const focusRing = 'focus-visible:outline focus-visible:outline-2 focus-visible:o
 
 /** Grouped, named swatches (44px targets) with an unmistakable selected state and a "Selected: …" line. */
 export function ColorSwatchPicker({ label, value, onChange, disabled }: { label: string; value: string | null; onChange: (c: string | null) => void; disabled?: boolean }) {
-  const item = `relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl motion-safe:transition-transform motion-safe:hover:scale-105 disabled:opacity-50 ${focusRing}`
+  const item = `relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl motion-safe:transition-transform motion-safe:[@media(hover:hover)]:hover:scale-105 disabled:opacity-50 ${focusRing}`
   return <div role="radiogroup" aria-label={`Color for ${label}`} className="space-y-2" data-testid="color-picker">
     <div className="flex flex-wrap items-center gap-1">
       <button type="button" role="radio" aria-checked={value === null} aria-label="No color" title="No color" disabled={disabled} onClick={() => onChange(null)}
-        className={`${item} gap-1.5 px-2.5 text-xs font-semibold ${value === null ? 'bg-white/10 ring-2 ring-[var(--text-primary)]' : 'ring-1 ring-[var(--border-primary)]'}`}>
+        className={`${item} gap-1.5 px-2.5 text-xs font-semibold ${value === null ? 'bg-[var(--surface-selected)] ring-2 ring-[var(--text-primary)]' : 'ring-1 ring-[var(--border-primary)]'}`}>
         <span aria-hidden="true" className="h-5 w-5 rounded-full border-2 border-dashed border-[var(--text-secondary)]" />None
       </button>
     </div>
@@ -198,7 +199,7 @@ export function ColorSwatchPicker({ label, value, onChange, disabled }: { label:
 function CategoryPreview({ label, color }: { label: string; color: string | null }) {
   const sample = (state: 'confirmed' | 'suggested') => {
     const stripe: Stripe = color ? { kind: state === 'confirmed' ? 'solid' : 'faded', color, tint: false } : { kind: 'none', color: null, tint: false }
-    return <div className="relative flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-[var(--border-primary)] bg-white/[0.02] py-1.5 pl-4 pr-2">
+    return <div className="relative flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-[var(--surface-line)] bg-[var(--surface-1)] py-1.5 pl-4 pr-2">
       <StripeBar stripe={stripe} shape="card-sm" />
       <span className="min-w-0"><span className="block truncate text-xs font-semibold">Sample merchant</span>
         <span className={`mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 text-[10px] font-semibold ${state === 'suggested' ? 'border border-dashed text-[var(--text-secondary)]' : ''}`}
@@ -210,7 +211,7 @@ function CategoryPreview({ label, color }: { label: string; color: string | null
   return <div className="flex flex-col gap-1.5 sm:flex-row" data-testid="color-preview">{sample('confirmed')}{sample('suggested')}</div>
 }
 function AccountPreview({ label, color }: { label: string; color: string | null }) {
-  return <div className="relative rounded-xl border border-[var(--border-primary)] bg-white/[0.02] py-2 pl-5 pr-3" data-testid="color-preview">
+  return <div className="relative rounded-xl border border-[var(--surface-line)] bg-[var(--surface-1)] py-2 pl-5 pr-3" data-testid="color-preview">
     <StripeBar stripe={color ? { kind: 'solid', color, tint: false } : { kind: 'none', color: null, tint: false }} shape="card" />
     <p className="truncate text-sm font-semibold">{color && <span aria-hidden="true" className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px]" style={{ background: color }} />}{label}</p>
     <p className="text-xs tabular-nums text-[var(--text-secondary)]">$12,480.00</p>
@@ -218,8 +219,8 @@ function AccountPreview({ label, color }: { label: string; color: string | null 
 }
 
 function ColorLine({ label, detail, value, onChange, open, onOpen, kind }: { label: string; detail?: string; value: string | null; onChange: (c: string | null) => void; open: boolean; onOpen: () => void; kind: 'category' | 'account' }) {
-  return <li className={`rounded-xl ${open ? 'bg-white/[0.03] ring-1 ring-[var(--border-primary)]' : ''}`} data-testid="color-line">
-    <button type="button" className={`flex min-h-[52px] w-full items-center gap-3 rounded-xl px-2 text-left motion-safe:transition-colors hover:bg-white/[0.04] ${focusRing}`} aria-expanded={open} onClick={onOpen}>
+  return <li className={`rounded-xl ${open ? 'bg-[var(--surface-1)] ring-1 ring-[var(--surface-line)]' : ''}`} data-testid="color-line">
+    <button type="button" className={`flex min-h-[52px] w-full items-center gap-3 rounded-xl px-2 text-left motion-safe:transition-colors [@media(hover:hover)]:hover:bg-[var(--surface-2)] ${focusRing}`} aria-expanded={open} onClick={onOpen}>
       <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{label}</span>
         {detail && <span className="block truncate text-xs text-[var(--text-secondary)]">{detail}</span>}</span>
       <span className="flex shrink-0 items-center gap-2 text-xs text-[var(--text-secondary)]">
@@ -240,7 +241,7 @@ function Toggle({ label, on, onChange, testId }: { label: string; on: boolean; o
   return <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)} data-testid={testId}
     className={`flex min-h-[44px] flex-1 items-center justify-between gap-3 rounded-xl px-3 text-left text-sm ring-1 ring-[var(--border-primary)] ${focusRing}`}>
     <span>{label}</span>
-    <span aria-hidden="true" className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 motion-safe:transition-colors ${on ? 'justify-end bg-[var(--fin-cash-border)]' : 'justify-start bg-white/10'}`}><span className="h-5 w-5 rounded-full bg-[var(--text-primary)] shadow" /></span>
+    <span aria-hidden="true" className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 motion-safe:transition-colors ${on ? 'justify-end bg-[var(--fin-cash-border)]' : 'justify-start bg-[var(--surface-selected)] ring-1 ring-inset ring-[var(--surface-line)]'}`}><span className="h-5 w-5 rounded-full bg-[var(--text-primary)] shadow" /></span>
   </button>
 }
 
@@ -257,9 +258,9 @@ function ImportDeviceColors({ labelOf }: { labelOf: (kind: 'category' | 'account
   if (importNote && !importPlan) return <p className="text-xs" role="status" data-testid="import-note">{importNote}</p>
   if (!importPlan || step === 'declined') return importNote ? <p className="text-xs" role="status" data-testid="import-note">{importNote}</p> : null
   const { additions, conflicts, skipped } = importPlan
-  const btn = 'min-h-[44px] rounded-lg px-3 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
+  const btn = `min-h-[44px] rounded-xl bg-[var(--surface-1)] px-3.5 text-sm font-semibold ring-1 ring-[var(--border-primary)] [@media(hover:hover)]:hover:bg-[var(--surface-2)] disabled:opacity-50 ${focusRing}`
   const nameOf = (hex: string | null) => swatchName(hex) ?? 'No color'
-  return <section className="space-y-2 rounded-lg border border-[var(--border-primary)] p-3" aria-label="Colors saved on this device" data-testid="import-device-colors">
+  return <section className="space-y-2 rounded-xl border border-[var(--surface-line)] p-3" aria-label="Colors saved on this device" data-testid="import-device-colors">
     {importNote && <p className="text-xs" role="status" data-testid="import-note">{importNote}</p>}
     <p className="text-sm">This device has {additions.length + conflicts.length} color{additions.length + conflicts.length === 1 ? '' : 's'} that your organization's shared colors do not have yet.</p>
     {conflicts.length > 0 && <div data-testid="import-conflicts">
@@ -275,7 +276,7 @@ function ImportDeviceColors({ labelOf }: { labelOf: (kind: 'category' | 'account
       : <div role="alertdialog" aria-label="Confirm import" className="space-y-2" data-testid="import-confirm">
           <p className="text-sm">Add {additions.length} new shared color{additions.length === 1 ? '' : 's'} for everyone in your organization.{conflicts.length ? ' Different shared colors stay as they are unless you choose to replace them.' : ''}</p>
           {conflicts.length > 0 && <label className="flex min-h-[44px] items-center gap-2 text-sm">
-            <input type="checkbox" className="h-5 w-5" checked={replace} onChange={e => setReplace(e.target.checked)} data-testid="import-replace" />
+            <input type="checkbox" className="h-5 w-5" style={{ appearance: 'auto', WebkitAppearance: 'checkbox' as never, accentColor: 'var(--fin-protected)' }} checked={replace} onChange={e => setReplace(e.target.checked)} data-testid="import-replace" />
             Also replace the {conflicts.length} shared color{conflicts.length === 1 ? '' : 's'} listed above
           </label>}
           <div className="flex flex-wrap gap-2">
@@ -293,8 +294,8 @@ export function ColorsPanel({ categories }: { categories: Array<{ key: string; l
   if (!enabled) return null
   const labelOf = (kind: 'category' | 'account', key: string) => (kind === 'category' ? categories.find(c => c.key === key)?.label : accounts.find(a => a.id.toLowerCase() === key)?.label) ?? key
   const toggle = (id: string) => setOpen(o => (o === id ? null : id))
-  const heading = 'text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--text-secondary)]'
-  return <div className="mt-2 space-y-4 rounded-2xl border border-[var(--border-primary)] bg-white/[0.015] p-3 sm:p-4" data-testid="colors-panel">
+  const heading = 'text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]'
+  return <div className="mt-2 space-y-4 rounded-2xl border border-[var(--surface-line)] bg-[var(--surface-1)] p-3 sm:p-4" data-testid="colors-panel">
     <div>
       <p className="text-sm font-semibold">Colors</p>
       <p className="text-xs text-[var(--text-secondary)]">Colors only help you recognise things at a glance. They never mean approved or reviewed, and they change nothing in your records.
