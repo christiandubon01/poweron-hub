@@ -219,13 +219,28 @@ CREATE TRIGGER bank_spending_audit_category_color AFTER INSERT OR UPDATE OR DELE
   FOR EACH ROW EXECUTE FUNCTION public.bank_spending_audit_category_color();
 REVOKE ALL ON FUNCTION public.bank_spending_audit_category_color() FROM PUBLIC,anon,authenticated;
 
--- Protect direct inserts and atomic interpretation RPCs alike; archived custom leaves cannot race assignment.
+-- Guard new confirmations, including direct suggested -> confirmed updates.
+-- Run after trg_fpx_00_immutable and before trg_fpx_10_validate. Existing
+-- identity immutability still rejects combined key/org/kind/status changes.
+-- Non-confirming updates (including atomic replacement undo/history) remain valid.
+-- Narrow definer: locked reads only. FOR SHARE needs UPDATE privileges, which
+-- owners must not receive on controls. Explicit caller checks preserve authority;
+-- direct EXECUTE is revoked and no financial/metadata row is written here.
 CREATE FUNCTION public.bank_spending_guard_custom_assignment() RETURNS TRIGGER
-LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.status = 'confirmed' OR NEW.status IS DISTINCT FROM 'confirmed' THEN
+      RETURN NEW;
+    END IF;
+  END IF;
   IF NEW.kind = 'category' AND NEW.status = 'confirmed' AND NEW.category NOT IN
     ('materials','fuel_vehicle','tools_equipment','software_subscriptions','insurance','payroll_people','permits_fees',
      'marketing','meals','office_admin','bank_finance_fees','personal_owner','taxes','transfers','owner_draw','customer_payment','refund','other_needs_review') THEN
+    IF current_setting('role',true) IS DISTINCT FROM 'service_role' AND
+      (NEW.organization_id IS DISTINCT FROM public.user_org_id() OR NOT public.is_org_admin_for(NEW.organization_id)) THEN
+      RAISE EXCEPTION 'HIERARCHY_FORBIDDEN' USING ERRCODE = '42501';
+    END IF;
     PERFORM 1 FROM public.bank_spending_hierarchy_controls WHERE organization_id = NEW.organization_id AND writes_enabled FOR SHARE;
     IF NOT FOUND THEN RAISE EXCEPTION 'HIERARCHY_WRITES_DISABLED' USING ERRCODE = '42501'; END IF;
     PERFORM 1 FROM public.bank_spending_category_definitions WHERE organization_id = NEW.organization_id AND key = NEW.category AND NOT builtin AND NOT archived FOR SHARE;
@@ -233,7 +248,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END; $$;
-CREATE TRIGGER bank_spending_guard_custom_assignment BEFORE INSERT ON public.financial_provider_interpretations
+CREATE TRIGGER trg_fpx_01_bank6g_custom_confirmation BEFORE INSERT OR UPDATE ON public.financial_provider_interpretations
   FOR EACH ROW EXECUTE FUNCTION public.bank_spending_guard_custom_assignment();
 REVOKE ALL ON FUNCTION public.bank_spending_guard_custom_assignment() FROM PUBLIC,anon,authenticated;
 -- Single-statement, service-only report source. A cap is explicitly incomplete, never a total.
