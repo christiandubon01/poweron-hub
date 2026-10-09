@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
-import { StripeBar, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { CategoryPill, StripeBar, useDisplayColors } from '@/features/display-colors/DisplayColors'
 import { categoryStripe } from '@/features/display-colors/stripes'
 import { useSmartReview, type SmartBatchResult, type SmartException, type SmartGroup, type SmartRow } from './useSmartReview'
 
@@ -201,15 +201,15 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       const origin = g.basis === 'owner_rule' ? <Chip tone="ok">Your remembered rule</Chip> : choice ? <Chip tone="ok">Your choice</Chip> : <Chip>Suggestion</Chip>
       const selTotal = sel.reduce((s, r) => s + r.amountMinor, 0)
       const rememberOn = sel.length > 0 && remember.has(g.id)
-      return <li key={g.id} className="relative rounded-xl border border-[var(--border-primary)] p-3 pl-4" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
-        <StripeBar stripe={categoryStripe({ key: choice ?? g.bucket.key, state: 'suggested' }, categoryColor)} />
+      return <li key={g.id} className="relative rounded-xl border border-[var(--border-primary)] p-3 pl-5" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
+        <StripeBar stripe={categoryStripe({ key: choice ?? g.bucket.key, state: 'suggested' }, categoryColor)} shape="card" />
         <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={isOpen} onClick={() => toggleOpen(g.id)} data-testid="smart-group-header">
           <span className="min-w-0"><span className="block truncate text-sm font-semibold">{g.merchant}</span>
             <span className="text-xs text-[var(--text-secondary)]">{g.count} transaction{g.count === 1 ? '' : 's'} · {usd2(g.totalMinor)}</span></span>
           <span className="shrink-0 text-xs text-[var(--text-secondary)]">{isOpen ? 'Hide' : 'Show'}</span>
         </button>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          <Chip>{g.bucket.label}</Chip><Chip tone={g.confidence === 'high' ? 'ok' : 'muted'}>{CONF[g.confidence]}</Chip>{origin}
+          <CategoryPill categoryKey={choice ?? g.bucket.key} label={choice ? labelOf(choice) : g.bucket.label} state="suggested" /><Chip tone={g.confidence === 'high' ? 'ok' : 'muted'}>{CONF[g.confidence]}</Chip>{origin}
           {g.mixed && <Chip tone="warn">Mixed purpose</Chip>}{g.flaggedCount > 0 && <Chip tone="warn">{g.flaggedCount} to check</Chip>}
         </div>
         {g.needsChoice && <p className="mt-1 text-xs text-[var(--text-secondary)]">{g.mixed ? `${g.merchant} is used for different purposes, so you pick the category.` : 'This is not a confident match, so you pick the category.'}</p>}

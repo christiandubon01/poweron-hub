@@ -4,7 +4,7 @@
  * BANK-6D: which stripe an entry shows. PURE and presentational: it reads the review state the server already decided and never changes it.
  *
  *   confirmed category with a color      -> SOLID stripe in the category color (the only case that may also get the optional full-entry tint)
- *   suggested category with a color      -> FADED (dashed) stripe in the category color, never tinted: a suggestion must not look approved
+ *   suggested category with a color      -> HOLLOW (outlined) rail in the category color, never tinted: a suggestion must not look approved
  *   a category with no color assigned    -> no stripe (nothing to show)
  *   unknown / "Other / Needs Review" / ignored -> NEUTRAL stripe, never a category color
  *
@@ -32,12 +32,15 @@ export function accountStripe(color: string | null, tintEnabled = false): Stripe
   return color ? { kind: 'solid', color, tint: tintEnabled } : { kind: 'none', color: null, tint: false }
 }
 
-/** Inline styles for the stripe element and the tint. Kept here so every surface (Explorer, Smart Review, accounts, later redesigns) looks the same. */
+/**
+ * Inline styles for the rail. BANK-6E: confirmed = SOLID rail; suggested = HOLLOW (outlined) rail, a SHAPE difference so color never implies approval;
+ * unknown / ignored = neutral rail; a category or account without a color = a faint hairline rail.
+ */
 export const TINT_PERCENT = 10
-export function stripeStyle(s: Stripe): Record<string, string> | null {
-  if (s.kind === 'none') return null
+export function stripeStyle(s: Stripe): Record<string, string> {
+  if (s.kind === 'none') return { background: 'var(--border-primary)', opacity: '0.45' }
   if (s.kind === 'neutral') return { background: 'var(--border-primary)' }
-  if (s.kind === 'faded') return { backgroundImage: `repeating-linear-gradient(to bottom, ${s.color} 0 5px, transparent 5px 9px)`, opacity: '0.75' }
+  if (s.kind === 'faded') return { background: 'transparent', boxShadow: `inset 0 0 0 1.5px ${s.color}` }
   return { background: s.color as string }
 }
 /** A subtle tint (plain rgba: works on every Safari version, no color-mix needed). Text contrast is unaffected at this strength. */

@@ -110,7 +110,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     const [a, b, c] = [...host.querySelectorAll('[data-testid="spending-row"]')] as HTMLElement[]
     expect(a.querySelector('[data-testid="spending-category-needs-review"]')!.textContent).toBe('Relationship reviewed · Category needs review')
     expect(chips(a)).toContain('✓ Debt payment · Chase Ink Card')
-    expect(chips(a)).toContain('Materials · suggested'); expect(chips(a)).not.toContain('✓ Materials') // the suggestion is not shown as approved
+    expect(chips(a)).toContain('Suggested · Materials'); expect(chips(a)).not.toContain('✓ Materials') // the suggestion is not shown as approved
     expect(b.querySelector('[data-testid="spending-category-needs-review"]')).not.toBeNull()
     expect(c.querySelector('[data-testid="spending-category-needs-review"]')).toBeNull(); expect(chips(c)).toContain('✓ Materials') // a confirmed category keeps its label
     // outside the Reviewed tab the extra label is not shown (no change to the other views)
@@ -172,7 +172,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     await mount(payload([row(), row({ id: 'r2', merchant: 'HOME DEPOT', pending: true, bucket: { key: 'materials', label: 'Materials', state: 'confirmed', confidence: 'high', reasons: ['You confirmed this.'] },
       relationship: { kind: 'project', label: 'Project', target: { type: 'project', id: 'p1', label: 'Desert Willow Remodel' }, state: 'confirmed', confidence: 'high', reasons: [] }, review: 'confirmed', unassigned: false })]))
     const rows = [...host.querySelectorAll('[data-testid="spending-row"]')]
-    expect(rows[0].textContent).toMatch(/Fuel \/ Vehicle · suggested/); expect(rows[0].textContent).toMatch(/Unassigned/); expect(rows[0].textContent).toMatch(/−\$62\.10/)
+    expect(rows[0].textContent).toMatch(/Suggested · Fuel \/ Vehicle/); expect(rows[0].textContent).toMatch(/Unassigned/); expect(rows[0].textContent).toMatch(/−\$62\.10/)
     expect(rows[1].getAttribute('data-pending')).toBe('true'); expect(rows[1].textContent).toMatch(/Pending/)
     expect(rows[1].textContent).toMatch(/✓ Materials/); expect(rows[1].textContent).toMatch(/✓ Project · Desert Willow Remodel/)
   })

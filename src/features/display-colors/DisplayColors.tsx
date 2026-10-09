@@ -5,11 +5,11 @@
  * Reusable on purpose: the Bank Connection panel and Spending Explorer redesigns can mount the same provider and blocks. Visual only.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { SWATCHES, swatchName } from './palette'
+import { SWATCH_GROUPS, SWATCHES, swatchName, withAlpha } from './palette'
 import { createDeviceColorStore, createSharedColorStore, EMPTY_COLORS, loadTint, planImport, saveTint, type ColorMaps, type ColorStorage, type ColorTarget, type DisplayColorStore, type ImportEntry, type TintPrefs } from './colorStore'
 import { accountStripe, stripeStyle, tintStyle, type Stripe } from './stripes'
 
-export interface ColorAccount { id: string; label: string }
+export interface ColorAccount { id: string; label: string; /** e.g. "Business · Checking" (shown under the name in the Colors panel) */ detail?: string }
 export interface ImportPlan { additions: ImportEntry[]; conflicts: ImportEntry[]; skipped: number }
 interface Ctx {
   enabled: boolean
@@ -115,11 +115,15 @@ export function DisplayColorsProvider({ children, accounts = [], organizationId,
   return <ColorCtx.Provider value={value}>{children}</ColorCtx.Provider>
 }
 
-/** The thin left stripe. The parent must be `relative`. Decorative: the entry's text already says what it is. */
-export function StripeBar({ stripe }: { stripe: Stripe }) {
-  const style = stripeStyle(stripe)
+/**
+ * The left color RAIL (BANK-6E). The parent must be `relative`. `card` sits flush in a rounded-xl card, `card-sm` in a rounded-lg one, `inset` floats
+ * in a plain list row. Decorative: the entry's own text always says what it is (confirmed / suggested / needs review / ignored).
+ */
+export function StripeBar({ stripe, shape = 'inset' }: { stripe: Stripe; shape?: 'card' | 'card-sm' | 'inset' }) {
+  // A floating capsule (BANK-6E): wide enough that the HOLLOW suggested rail reads as an outline, not as a thinner solid line.
+  const place = shape === 'card' ? 'bottom-2 left-1.5 top-2 w-[7px]' : shape === 'card-sm' ? 'bottom-1.5 left-1 top-1.5 w-[6px]' : 'bottom-1 left-0 top-1 w-[6px]'
   return <span aria-hidden="true" data-testid="color-stripe" data-stripe={stripe.kind} data-color={stripe.color ?? ''}
-    className="pointer-events-none absolute bottom-1 left-0 top-1 w-1 rounded-full" style={style ?? { display: 'none' }} />
+    className={`pointer-events-none absolute rounded-full ${place}`} style={stripeStyle(stripe)} />
 }
 export { tintStyle }
 
@@ -128,38 +132,115 @@ export function AccountColorDot({ accountId }: { accountId: string | null | unde
   const { accountColor } = useDisplayColors()
   const c = accountColor(accountId)
   if (!c) return null
-  return <span aria-hidden="true" data-testid="account-color-dot" data-color={c} className="mr-1 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: c }} />
+  return <span aria-hidden="true" data-testid="account-color-dot" data-color={c} className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px] align-[-1px]" style={{ background: c, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)' }} />
 }
 
+/** A category color dot (solid when confirmed / a plain indicator, hollow ring when the category is only a suggestion). Nothing when uncolored. */
+export function CategoryDot({ categoryKey, hollow = false, className = '' }: { categoryKey: string | null | undefined; hollow?: boolean; className?: string }) {
+  const { categoryColor } = useDisplayColors()
+  const c = categoryKey ? categoryColor(categoryKey) : null
+  if (!c) return null
+  return <span aria-hidden="true" data-testid="category-dot" data-color={c} className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${className}`}
+    style={hollow ? { boxShadow: `inset 0 0 0 2px ${c}` } : { background: c }} />
+}
+
+/**
+ * The category PILL: the explicit, text-first category indicator (BANK-6E).
+ *   confirmed -> "✓ Fuel / Vehicle", solid dot, a light wash of the color
+ *   suggested -> "Suggested · Fuel / Vehicle", hollow dot, DASHED outline, no fill (a suggestion never looks approved)
+ *   none      -> the plain muted label
+ */
+export function CategoryPill({ categoryKey, label, state }: { categoryKey: string | null; label: string; state: 'confirmed' | 'suggested' | 'none' }) {
+  const { categoryColor } = useDisplayColors()
+  const c = categoryKey && state !== 'none' ? categoryColor(categoryKey) : null
+  const base = 'inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4'
+  if (state === 'confirmed') {
+    return <span data-testid="category-pill" data-state="confirmed" className={`${base} ring-1`}
+      style={c ? { background: withAlpha(c, 0.14), boxShadow: `inset 0 0 0 1px ${withAlpha(c, 0.45)}`, color: 'var(--text-primary)' } : { color: 'var(--fin-cash)', boxShadow: 'inset 0 0 0 1px var(--border-primary)' }}>
+      {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: c }} />}<span className="truncate">✓ {label}</span>
+    </span>
+  }
+  if (state === 'suggested') {
+    return <span data-testid="category-pill" data-state="suggested" className={`${base} border border-dashed text-[var(--text-secondary)]`} style={{ borderColor: c ?? 'var(--border-primary)' }}>
+      {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ boxShadow: `inset 0 0 0 1.5px ${c}` }} />}<span className="truncate">Suggested · {label}</span>
+    </span>
+  }
+  return <span data-testid="category-pill" data-state="none" className={`${base} text-[var(--text-secondary)]`} style={{ boxShadow: 'inset 0 0 0 1px var(--border-primary)' }}><span className="truncate">{label}</span></span>
+}
+
+const focusRing = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--text-primary)]'
+
+/** Grouped, named swatches (44px targets) with an unmistakable selected state and a "Selected: …" line. */
 export function ColorSwatchPicker({ label, value, onChange, disabled }: { label: string; value: string | null; onChange: (c: string | null) => void; disabled?: boolean }) {
-  const item = 'flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg ring-1 ring-[var(--border-primary)] disabled:opacity-50'
-  return <div role="radiogroup" aria-label={`Color for ${label}`} className="flex flex-wrap gap-1.5" data-testid="color-picker">
-    <button type="button" role="radio" aria-checked={value === null} aria-label="No color" title="No color" disabled={disabled} onClick={() => onChange(null)}
-      className={`${item} px-2 text-xs ${value === null ? 'ring-2 ring-[var(--text-primary)]' : ''}`}>None</button>
-    {SWATCHES.map(s => <button key={s.id} type="button" role="radio" aria-checked={value === s.hex} aria-label={s.name} title={s.name} disabled={disabled} onClick={() => onChange(s.hex)}
-      className={`${item} ${value === s.hex ? 'ring-2 ring-[var(--text-primary)]' : ''}`} data-swatch={s.id}>
-      <span aria-hidden="true" className="h-6 w-6 rounded-full" style={{ background: s.hex }} />
-    </button>)}
+  const item = `relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl motion-safe:transition-transform motion-safe:hover:scale-105 disabled:opacity-50 ${focusRing}`
+  return <div role="radiogroup" aria-label={`Color for ${label}`} className="space-y-2" data-testid="color-picker">
+    <div className="flex flex-wrap items-center gap-1">
+      <button type="button" role="radio" aria-checked={value === null} aria-label="No color" title="No color" disabled={disabled} onClick={() => onChange(null)}
+        className={`${item} gap-1.5 px-2.5 text-xs font-semibold ${value === null ? 'bg-white/10 ring-2 ring-[var(--text-primary)]' : 'ring-1 ring-[var(--border-primary)]'}`}>
+        <span aria-hidden="true" className="h-5 w-5 rounded-full border-2 border-dashed border-[var(--text-secondary)]" />None
+      </button>
+    </div>
+    {SWATCH_GROUPS.map(g => <div key={g.id}>
+      <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--text-secondary)]">{g.name}</p>
+      <div className="flex flex-wrap gap-0.5">{SWATCHES.filter(s => s.group === g.id).map(s => {
+        const on = value === s.hex
+        return <button key={s.id} type="button" role="radio" aria-checked={on} aria-label={s.name} title={s.name} disabled={disabled} onClick={() => onChange(s.hex)} className={item} data-swatch={s.id}>
+          <span aria-hidden="true" className="flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold text-white"
+            style={{ background: s.hex, boxShadow: on ? `0 0 0 2px var(--bg-card), 0 0 0 4px var(--text-primary)` : '0 1px 2px rgba(0,0,0,0.35)', textShadow: '0 1px 1px rgba(0,0,0,0.5)' }}>{on ? '✓' : ''}</span>
+        </button>
+      })}</div>
+    </div>)}
+    <p className="text-xs text-[var(--text-secondary)]" aria-live="polite" data-testid="picker-selected">Selected: <span className="font-semibold text-[var(--text-primary)]">{swatchName(value) ?? 'No color'}</span></p>
   </div>
 }
 
-function ColorLine({ label, value, onChange, open, onOpen }: { label: string; value: string | null; onChange: (c: string | null) => void; open: boolean; onOpen: () => void }) {
-  return <li className="py-1.5" data-testid="color-line">
-    <button type="button" className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left text-sm" aria-expanded={open} onClick={onOpen}>
-      <span className="min-w-0 truncate">{label}</span>
+/** Live preview of how a category color will look on real entries: confirmed AND suggested, side by side. */
+function CategoryPreview({ label, color }: { label: string; color: string | null }) {
+  const sample = (state: 'confirmed' | 'suggested') => {
+    const stripe: Stripe = color ? { kind: state === 'confirmed' ? 'solid' : 'faded', color, tint: false } : { kind: 'none', color: null, tint: false }
+    return <div className="relative flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-[var(--border-primary)] bg-white/[0.02] py-1.5 pl-4 pr-2">
+      <StripeBar stripe={stripe} shape="card-sm" />
+      <span className="min-w-0"><span className="block truncate text-xs font-semibold">Sample merchant</span>
+        <span className={`mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 text-[10px] font-semibold ${state === 'suggested' ? 'border border-dashed text-[var(--text-secondary)]' : ''}`}
+          style={state === 'confirmed' ? (color ? { background: withAlpha(color, 0.14), boxShadow: `inset 0 0 0 1px ${withAlpha(color, 0.45)}` } : { boxShadow: 'inset 0 0 0 1px var(--border-primary)' }) : { borderColor: color ?? 'var(--border-primary)' }}>
+          {state === 'confirmed' ? `✓ ${label}` : `Suggested · ${label}`}</span></span>
+      <span className="shrink-0 text-xs font-semibold tabular-nums">−$42.00</span>
+    </div>
+  }
+  return <div className="flex flex-col gap-1.5 sm:flex-row" data-testid="color-preview">{sample('confirmed')}{sample('suggested')}</div>
+}
+function AccountPreview({ label, color }: { label: string; color: string | null }) {
+  return <div className="relative rounded-xl border border-[var(--border-primary)] bg-white/[0.02] py-2 pl-5 pr-3" data-testid="color-preview">
+    <StripeBar stripe={color ? { kind: 'solid', color, tint: false } : { kind: 'none', color: null, tint: false }} shape="card" />
+    <p className="truncate text-sm font-semibold">{color && <span aria-hidden="true" className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px]" style={{ background: color }} />}{label}</p>
+    <p className="text-xs tabular-nums text-[var(--text-secondary)]">$12,480.00</p>
+  </div>
+}
+
+function ColorLine({ label, detail, value, onChange, open, onOpen, kind }: { label: string; detail?: string; value: string | null; onChange: (c: string | null) => void; open: boolean; onOpen: () => void; kind: 'category' | 'account' }) {
+  return <li className={`rounded-xl ${open ? 'bg-white/[0.03] ring-1 ring-[var(--border-primary)]' : ''}`} data-testid="color-line">
+    <button type="button" className={`flex min-h-[52px] w-full items-center gap-3 rounded-xl px-2 text-left motion-safe:transition-colors hover:bg-white/[0.04] ${focusRing}`} aria-expanded={open} onClick={onOpen}>
+      <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{label}</span>
+        {detail && <span className="block truncate text-xs text-[var(--text-secondary)]">{detail}</span>}</span>
       <span className="flex shrink-0 items-center gap-2 text-xs text-[var(--text-secondary)]">
-        {value ? <span aria-hidden="true" className="h-4 w-4 rounded-full" style={{ background: value }} /> : null}{swatchName(value) ?? 'No color'}
+        {value ? <span aria-hidden="true" className="h-6 w-6 rounded-full" style={{ background: value, boxShadow: '0 1px 2px rgba(0,0,0,0.35)' }} />
+          : <span aria-hidden="true" className="h-6 w-6 rounded-full border-2 border-dashed border-[var(--border-primary)]" />}
+        <span className="w-16 truncate">{swatchName(value) ?? 'No color'}</span>
+        <span aria-hidden="true" className={`motion-safe:transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
       </span>
     </button>
-    {open && <div className="mt-1"><ColorSwatchPicker label={label} value={value} onChange={c => { onChange(c) }} /></div>}
+    {open && <div className="space-y-3 px-2 pb-3 pt-1">
+      {kind === 'category' ? <CategoryPreview label={label} color={value} /> : <AccountPreview label={label} color={value} />}
+      <ColorSwatchPicker label={label} value={value} onChange={onChange} />
+    </div>}
   </li>
 }
 
 function Toggle({ label, on, onChange, testId }: { label: string; on: boolean; onChange: (v: boolean) => void; testId: string }) {
   return <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)} data-testid={testId}
-    className="flex min-h-[44px] w-full items-center justify-between gap-3 rounded-lg px-1 text-left text-sm">
+    className={`flex min-h-[44px] flex-1 items-center justify-between gap-3 rounded-xl px-3 text-left text-sm ring-1 ring-[var(--border-primary)] ${focusRing}`}>
     <span>{label}</span>
-    <span aria-hidden="true" className={`inline-flex h-6 w-10 items-center rounded-full p-0.5 ring-1 ring-[var(--border-primary)] ${on ? 'justify-end bg-white/15' : 'justify-start'}`}><span className="h-5 w-5 rounded-full bg-[var(--text-secondary)]" /></span>
+    <span aria-hidden="true" className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 motion-safe:transition-colors ${on ? 'justify-end bg-[var(--fin-cash-border)]' : 'justify-start bg-white/10'}`}><span className="h-5 w-5 rounded-full bg-[var(--text-primary)] shadow" /></span>
   </button>
 }
 
@@ -206,29 +287,35 @@ function ImportDeviceColors({ labelOf }: { labelOf: (kind: 'category' | 'account
   </section>
 }
 
-export function ColorsPanel({ categories }: { categories: Array<{ key: string; label: string }> }) {
+export function ColorsPanel({ categories }: { categories: Array<{ key: string; label: string; hint?: string }> }) {
   const { enabled, colors, accounts, tint, setTint, setColor, storage, error } = useDisplayColors()
   const [open, setOpen] = useState<string | null>(null)
   if (!enabled) return null
   const labelOf = (kind: 'category' | 'account', key: string) => (kind === 'category' ? categories.find(c => c.key === key)?.label : accounts.find(a => a.id.toLowerCase() === key)?.label) ?? key
   const toggle = (id: string) => setOpen(o => (o === id ? null : id))
-  return <div className="mt-2 space-y-3 rounded-xl border border-[var(--border-primary)] p-3" data-testid="colors-panel">
-    <p className="text-xs text-[var(--text-secondary)]">Colors only help you recognise things at a glance. They never mean approved or reviewed, and they change nothing in your records.
-      {storage === 'device' ? ' Colors are saved on this device for now.' : storage === 'shared' ? ' Colors are shared with your organization.' : ''}</p>
+  const heading = 'text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--text-secondary)]'
+  return <div className="mt-2 space-y-4 rounded-2xl border border-[var(--border-primary)] bg-white/[0.015] p-3 sm:p-4" data-testid="colors-panel">
+    <div>
+      <p className="text-sm font-semibold">Colors</p>
+      <p className="text-xs text-[var(--text-secondary)]">Colors only help you recognise things at a glance. They never mean approved or reviewed, and they change nothing in your records.
+        {storage === 'device' ? ' Colors are saved on this device for now.' : storage === 'shared' ? ' Colors are shared with your organization.' : ''}</p>
+    </div>
     {error && <p role="alert" className="text-xs" style={{ color: 'var(--fin-negative)' }}>{error}</p>}
     <ImportDeviceColors labelOf={labelOf} />
     <div>
-      <Toggle label="Tint confirmed transactions" on={tint.rows} onChange={v => setTint({ rows: v })} testId="tint-rows" />
-      <Toggle label="Tint account cards" on={tint.accounts} onChange={v => setTint({ accounts: v })} testId="tint-accounts" />
-      <p className="text-xs text-[var(--text-secondary)]">The thin stripe always shows. Tint applies only to confirmed categories, never to suggestions. Tint settings stay on this device.</p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Toggle label="Tint confirmed transactions" on={tint.rows} onChange={v => setTint({ rows: v })} testId="tint-rows" />
+        <Toggle label="Tint account cards" on={tint.accounts} onChange={v => setTint({ accounts: v })} testId="tint-accounts" />
+      </div>
+      <p className="mt-1 text-xs text-[var(--text-secondary)]">The color rail always shows. Tint applies only to confirmed categories, never to suggestions. Tint settings stay on this device.</p>
     </div>
     <section aria-label="Expense category colors">
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Expense categories</p>
-      <ul className="divide-y divide-[var(--border-primary)]">{categories.map(c => <ColorLine key={c.key} label={c.label} value={colors.categories[c.key] ?? null} open={open === `c:${c.key}`} onOpen={() => toggle(`c:${c.key}`)} onChange={v => void setColor('category', c.key, v)} />)}</ul>
+      <p className={heading}>Expense categories · {categories.length}</p>
+      <ul className="mt-1 space-y-0.5">{categories.map(c => <ColorLine key={c.key} kind="category" label={c.label} detail={c.hint} value={colors.categories[c.key] ?? null} open={open === `c:${c.key}`} onOpen={() => toggle(`c:${c.key}`)} onChange={v => void setColor('category', c.key, v)} />)}</ul>
     </section>
     {accounts.length > 0 && <section aria-label="Account colors">
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Accounts</p>
-      <ul className="divide-y divide-[var(--border-primary)]">{accounts.map(a => <ColorLine key={a.id} label={a.label} value={colors.accounts[a.id.toLowerCase()] ?? null} open={open === `a:${a.id}`} onOpen={() => toggle(`a:${a.id}`)} onChange={v => void setColor('account', a.id, v)} />)}</ul>
+      <p className={heading}>Accounts · {accounts.length}</p>
+      <ul className="mt-1 space-y-0.5">{accounts.map(a => <ColorLine key={a.id} kind="account" label={a.label} detail={a.detail} value={colors.accounts[a.id.toLowerCase()] ?? null} open={open === `a:${a.id}`} onOpen={() => toggle(`a:${a.id}`)} onChange={v => void setColor('account', a.id, v)} />)}</ul>
     </section>}
   </div>
 }
@@ -239,6 +326,6 @@ export function AccountColorCard({ accountId, className = '', archived = false, 
   const stripe = accountStripe(accountColor(accountId), tint.accounts && !archived)
   const t = tintStyle(stripe)
   return <div className={`relative ${className}`} style={t} data-testid="account-card" data-account-id={accountId} data-tint={t ? 'on' : 'off'}>
-    <StripeBar stripe={stripe} />{children}
+    <StripeBar stripe={stripe} shape="card" />{children}
   </div>
 }

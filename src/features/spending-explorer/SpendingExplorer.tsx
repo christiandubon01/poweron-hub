@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
-import { AccountColorDot, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { AccountColorDot, CategoryDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
 import { categoryStripe } from '@/features/display-colors/stripes'
 import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
@@ -35,6 +35,9 @@ const REL_KINDS: Array<{ key: string; label: string }> = [
 const isBatchApprovable = (r: ExplorerRow, batchBuckets: string[]) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high' && !r.bucket.mixed
   && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
 
+/** Native checkboxes are flattened by the app-wide `appearance: none` reset (styles/responsive.css); restore the platform checkbox here. */
+const CHECKBOX: React.CSSProperties = { accentColor: 'var(--fin-cash)', appearance: 'auto', WebkitAppearance: 'checkbox' as never }
+
 const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}${usd2(r.amountMinor)}`
 
 /**
@@ -59,11 +62,11 @@ function SelectedReview({ items, off, overrides, categoryChoices, categories, bu
       const on = !off.has(r.id)
       const chosenKey = overrides.get(r.id) ?? r.bucket.key
       const changed = overrides.has(r.id) && overrides.get(r.id) !== r.bucket.key
-      return <li key={r.id} data-testid="spending-selected-item" data-checked={on ? 'true' : 'false'} className="relative rounded-lg border border-[var(--border-primary)] p-2 pl-3"
+      return <li key={r.id} data-testid="spending-selected-item" data-checked={on ? 'true' : 'false'} className="relative rounded-lg border border-[var(--border-primary)] p-2 pl-4"
         style={on ? { background: 'color-mix(in srgb, var(--fin-cash) 10%, transparent)', boxShadow: '0 0 0 2px var(--fin-cash-border)' } : { opacity: 0.7 }}>
-        <StripeBar stripe={categoryStripe({ key: chosenKey, state: chosenKey ? 'suggested' : 'none' }, categoryColor)} />
+        <StripeBar stripe={categoryStripe({ key: chosenKey, state: chosenKey ? 'suggested' : 'none' }, categoryColor)} shape="card-sm" />
         <label className={`flex min-h-[56px] w-full items-start gap-2 ${busy ? 'opacity-60' : 'cursor-pointer'}`}>
-          <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={{ accentColor: 'var(--fin-cash)' }} checked={on} disabled={busy} onChange={() => onToggle(r)} aria-label={`${on ? 'Uncheck' : 'Check'} ${r.merchant}`} data-testid="spending-selected-toggle" /></span>
+          <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={CHECKBOX} checked={on} disabled={busy} onChange={() => onToggle(r)} aria-label={`${on ? 'Uncheck' : 'Check'} ${r.merchant}`} data-testid="spending-selected-toggle" /></span>
           <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
             <span className="min-w-0">
               <span className="block truncate text-sm font-semibold">{r.merchant}</span>
@@ -97,7 +100,7 @@ function Snapshot({ a, selected, onPick }: { a: Analytics; selected: string; onP
     {top.length === 0 ? <p className="mt-2 text-sm text-[var(--text-secondary)]">Nothing unassigned in this period.</p> : <ul className="mt-2 space-y-1">{top.slice(0, 6).map(b => <li key={b.key}>
       <button type="button" onClick={() => onPick(selected === b.key ? '' : b.key)} aria-pressed={selected === b.key} data-testid="spending-bucket" data-bucket={b.key}
         className={`flex min-h-[44px] w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-white/5 ${selected === b.key ? 'ring-1 ring-[var(--fin-cash)]' : ''}`}>
-        <span className="w-40 shrink-0 truncate text-sm">{b.label}</span>
+        <span className="flex w-40 shrink-0 items-center gap-2 truncate text-sm"><CategoryDot categoryKey={b.key} /><span className="truncate">{b.label}</span></span>
         <span className="h-2 flex-1 rounded bg-white/10" aria-hidden="true"><span className="block h-2 rounded" style={{ width: `${Math.max(4, Math.round((b.totalMinor / max) * 100))}%`, background: 'var(--fin-cash)' }} /></span>
         <span className="w-16 shrink-0 text-right text-sm font-semibold">{usd0(b.totalMinor)}</span>
       </button>
@@ -199,37 +202,40 @@ function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRo
   </div>
 }
 
-function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView, checkboxColumn }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; /** keep merchants aligned when some rows in the list have a checkbox */ checkboxColumn?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
   const { categoryColor, tint } = useDisplayColors()
   // BANK-6D: the category owns the stripe (solid only when CONFIRMED); a selection is shown by a ring + the "✓ Selected" chip, never by the stripe.
   const stripe = categoryStripe({ key: row.bucket.key, state: row.bucket.state, ignored: row.review === 'ignored' }, categoryColor, tint.rows)
   const tinted = tintStyle(stripe)
-  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-tint={tinted ? 'on' : 'off'} className="relative rounded-lg py-2 pl-3"
+  const status = row.review === 'confirmed' ? 'Reviewed' : row.review === 'ignored' ? 'Ignored' : row.review === 'suggested' ? 'Suggested' : 'Needs review'
+  // BANK-6E entry card: rail (category), merchant + amount on one line, date · account (with its color dot), then explicit text pills.
+  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-tint={tinted ? 'on' : 'off'}
+    className={`relative rounded-xl border border-[var(--border-primary)] py-2 pl-5 pr-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.18)] motion-safe:transition-colors ${tinted || selected ? '' : 'bg-white/[0.02] hover:bg-white/[0.045]'} ${row.review === 'ignored' ? 'opacity-70' : ''}`}
     style={selected ? { background: tinted?.background ?? 'color-mix(in srgb, var(--fin-cash) 10%, transparent)', boxShadow: '0 0 0 2px var(--fin-cash-border)' } : tinted}>
-    <StripeBar stripe={stripe} />
-    <div className="flex items-start gap-2">
-    {selectable && <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6 cursor-pointer" style={{ accentColor: 'var(--fin-cash)' }} checked={selected} onChange={() => onToggle(row)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>}
-    <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold">{row.merchant}</span>
-        <span className="block text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{row.account.mappedTo ?? row.account.label}</span>
-        <span className="mt-1 flex flex-wrap gap-1">
+    <StripeBar stripe={stripe} shape="card" />
+    <div className="flex items-start gap-1.5">
+    {selectable ? <label className="-ml-1 flex min-h-[44px] min-w-[40px] items-center justify-center"><input type="checkbox" className="h-5 w-5 cursor-pointer" style={CHECKBOX} checked={selected} onChange={() => onToggle(row)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>
+      : checkboxColumn && <span aria-hidden="true" className="-ml-1 min-w-[40px]" />}
+    <button type="button" className="grid min-h-[44px] w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--text-primary)]" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+      <span className="min-w-0 truncate text-[15px] font-semibold leading-6 tracking-[-0.01em]">{row.merchant}</span>
+      <span className={`text-[15px] font-semibold leading-6 tabular-nums ${row.pending ? 'opacity-70' : ''}`} style={{ color: out ? undefined : 'var(--fin-cash)' }}>{out ? '−' : '+'}{usd2(row.amountMinor)}</span>
+      <span className="min-w-0 truncate text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{row.account.mappedTo ?? row.account.label}</span>
+      <span className="text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]" data-testid="entry-status">{status}</span>
+      <span className="col-span-2 mt-1.5 flex flex-wrap gap-1">
           {selected && <Chip tone="ok">✓ Selected</Chip>}
           {overrideLabel && <Chip tone="ok">Your category: {overrideLabel}</Chip>}
           {row.pending && <Chip tone="warn">Pending</Chip>}
           {row.account.environment === 'sandbox' && environment === 'production' && <Chip>Sandbox</Chip>}
           {row.review === 'ignored' ? <Chip>Ignored</Chip> : <>
-            {row.bucket.label && <Chip tone={row.bucket.state === 'confirmed' ? 'ok' : 'muted'}>{row.bucket.state === 'confirmed' ? '✓ ' : ''}{row.bucket.label}{row.bucket.state === 'suggested' ? ` · suggested` : ''}</Chip>}
+            {row.bucket.label && <CategoryPill categoryKey={row.bucket.key} label={row.bucket.label} state={row.bucket.state} />}
             <Chip tone={row.relationship.state === 'confirmed' ? 'ok' : 'muted'}>{row.relationship.state === 'none' ? (out ? 'Unassigned' : row.relationship.label) : `${row.relationship.state === 'confirmed' ? '✓ ' : ''}${row.relationship.label}${row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}${row.relationship.state === 'suggested' ? ' · suggested' : ''}`}</Chip>
             {reviewedView && row.relationship.state === 'confirmed' && row.bucket.state !== 'confirmed' && <span data-testid="spending-category-needs-review"><Chip tone="warn">Relationship reviewed · Category needs review</Chip></span>}
             {reviewedView && <Chip tone={row.scope.value === 'unclear' ? 'muted' : 'ok'}>{row.scope.value === 'business' ? 'Business' : row.scope.value === 'personal' ? 'Personal' : 'Business or personal: unclear'}</Chip>}
             {row.pattern && out && (row.pattern.kind === 'obligation_like' ? <Chip tone="warn">Looks like a recurring bill</Chip> : <Chip>Repeats {row.pattern.cadence}</Chip>)}
           </>}
-        </span>
       </span>
-      <span className={`shrink-0 text-sm font-semibold ${row.pending ? 'opacity-70' : ''}`} style={{ color: out ? undefined : 'var(--fin-cash)' }}>{out ? '−' : '+'}{usd2(row.amountMinor)}</span>
     </button>
     </div>
     {open && <Detail row={row} options={options} busy={busy} onDecide={onDecide} loadHistory={loadHistory} />}
@@ -376,7 +382,7 @@ export default function SpendingExplorer() {
       {colorsEnabled && <button type="button" className={btn} aria-expanded={showColors} onClick={() => setShowColors(s => !s)} data-testid="spending-colors-toggle">Colors</button>}
       {active > 0 && <button type="button" className={btn} onClick={reset}>Clear</button>}
     </div>
-    {showColors && <ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label }))} />}
+    {showColors && <ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label, hint: b.hint }))} />}
     {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS{data.environment === 'production' ? ' (or from Sandbox test accounts)' : ''} {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
     {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS{data.environment === 'production' ? ' and Sandbox test accounts' : ''}. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
     {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}
@@ -403,7 +409,7 @@ export default function SpendingExplorer() {
     {showingSelected
       ? <SelectedReview items={items} off={off} overrides={overrides} categoryChoices={categoryChoices} categories={categories} busy={busy} onToggle={toggle} onCategory={setCategory} onUncheckCategory={uncheckCategory} />
       : rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
+      : <ul className="mt-2 space-y-1.5" data-testid="spending-list">{rows.map(r => <Row key={r.id} checkboxColumn={rows.some(approvable)} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
     {pendingRestore.size > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-pending-restore">{pendingRestore.size} saved selection{pendingRestore.size === 1 ? ' is' : 's are'} on transactions not loaded yet. {pendingRestore.size === 1 ? 'It returns' : 'They return'} if {pendingRestore.size === 1 ? 'it loads' : 'they load'}; use Show more.</p>}
     {items.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="spending-selection-bar" role="region" aria-label="Selected transactions">
