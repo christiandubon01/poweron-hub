@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
-import { AccountColorDot, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { BucketPicker } from './BucketPicker'
+import { entryType, toneColor } from './entryType'
+import { AccountColorDot, CategoryDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
 import { categoryStripe } from '@/features/display-colors/stripes'
 import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
-const btn = 'min-h-[44px] rounded-lg px-3 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
-const field = 'min-h-[44px] rounded-lg bg-transparent px-2 text-sm ring-1 ring-[var(--border-primary)]'
+import { btn, btnOn, btnPrimary, eyebrow, field, panel } from './ui'
 const usd0 = (minor: number) => `$${Math.round(Math.abs(minor) / 100).toLocaleString('en-US')}`
 const usd2 = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
@@ -35,6 +36,12 @@ const REL_KINDS: Array<{ key: string; label: string }> = [
 const isBatchApprovable = (r: ExplorerRow, batchBuckets: string[]) => r.direction === 'money_out' && !r.pending && r.review !== 'ignored' && r.bucket.state === 'suggested' && r.bucket.confidence === 'high' && !r.bucket.mixed
   && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
 
+/** Native checkboxes are flattened by the app-wide `appearance: none` reset (styles/responsive.css); restore the platform checkbox here. */
+const CHECKBOX: React.CSSProperties = { accentColor: 'var(--fin-cash)', appearance: 'auto', WebkitAppearance: 'checkbox' as never }
+
+/** The categories that fit the direction of the money (unchanged rule: money in gets money-in categories, transfers, personal and "unknown"). */
+const bucketChoicesFor = (row: ExplorerRow, options: Options) => options.buckets.filter(b => (row.direction === 'money_in' ? (b.flow === 'in' || ['transfers', 'personal_owner', 'other_needs_review'].includes(b.key)) : b.flow !== 'in'))
+
 const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}${usd2(r.amountMinor)}`
 
 /**
@@ -59,11 +66,11 @@ function SelectedReview({ items, off, overrides, categoryChoices, categories, bu
       const on = !off.has(r.id)
       const chosenKey = overrides.get(r.id) ?? r.bucket.key
       const changed = overrides.has(r.id) && overrides.get(r.id) !== r.bucket.key
-      return <li key={r.id} data-testid="spending-selected-item" data-checked={on ? 'true' : 'false'} className="relative rounded-lg border border-[var(--border-primary)] p-2 pl-3"
+      return <li key={r.id} data-testid="spending-selected-item" data-checked={on ? 'true' : 'false'} className="relative rounded-lg border border-[var(--border-primary)] p-2 pl-4"
         style={on ? { background: 'color-mix(in srgb, var(--fin-cash) 10%, transparent)', boxShadow: '0 0 0 2px var(--fin-cash-border)' } : { opacity: 0.7 }}>
-        <StripeBar stripe={categoryStripe({ key: chosenKey, state: chosenKey ? 'suggested' : 'none' }, categoryColor)} />
+        <StripeBar stripe={categoryStripe({ key: chosenKey, state: chosenKey ? 'suggested' : 'none' }, categoryColor)} shape="card-sm" />
         <label className={`flex min-h-[56px] w-full items-start gap-2 ${busy ? 'opacity-60' : 'cursor-pointer'}`}>
-          <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={{ accentColor: 'var(--fin-cash)' }} checked={on} disabled={busy} onChange={() => onToggle(r)} aria-label={`${on ? 'Uncheck' : 'Check'} ${r.merchant}`} data-testid="spending-selected-toggle" /></span>
+          <span className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6" style={CHECKBOX} checked={on} disabled={busy} onChange={() => onToggle(r)} aria-label={`${on ? 'Uncheck' : 'Check'} ${r.merchant}`} data-testid="spending-selected-toggle" /></span>
           <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
             <span className="min-w-0">
               <span className="block truncate text-sm font-semibold">{r.merchant}</span>
@@ -91,14 +98,14 @@ function Snapshot({ a, selected, onPick }: { a: Analytics; selected: string; onP
   const max = Math.max(1, ...top.map(b => b.totalMinor))
   const d = a.unassigned.deltaMinor
   return <div data-testid="spending-snapshot">
-    <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Unassigned spending · last {a.windowDays} days</p>
+    <p className={eyebrow}>Unassigned spending · last {a.windowDays} days</p>
     <p className="mt-1 text-2xl font-semibold" data-testid="spending-total">{usd0(a.unassigned.totalMinor)} <span className="text-sm font-normal text-[var(--text-secondary)]">· {a.unassigned.count} transaction{a.unassigned.count === 1 ? '' : 's'}</span></p>
     {(a.unassigned.previousMinor > 0 || d !== 0) && <p className="text-xs text-[var(--text-secondary)]" data-testid="spending-delta">{d >= 0 ? '▲' : '▼'} {usd0(d)} vs the previous {a.windowDays} days</p>}
     {top.length === 0 ? <p className="mt-2 text-sm text-[var(--text-secondary)]">Nothing unassigned in this period.</p> : <ul className="mt-2 space-y-1">{top.slice(0, 6).map(b => <li key={b.key}>
       <button type="button" onClick={() => onPick(selected === b.key ? '' : b.key)} aria-pressed={selected === b.key} data-testid="spending-bucket" data-bucket={b.key}
         className={`flex min-h-[44px] w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-white/5 ${selected === b.key ? 'ring-1 ring-[var(--fin-cash)]' : ''}`}>
-        <span className="w-40 shrink-0 truncate text-sm">{b.label}</span>
-        <span className="h-2 flex-1 rounded bg-white/10" aria-hidden="true"><span className="block h-2 rounded" style={{ width: `${Math.max(4, Math.round((b.totalMinor / max) * 100))}%`, background: 'var(--fin-cash)' }} /></span>
+        <span className="flex w-40 shrink-0 items-center gap-2 truncate text-sm"><CategoryDot categoryKey={b.key} /><span className="truncate">{b.label}</span></span>
+        <span className="h-2 flex-1 rounded-full bg-white/[0.08]" aria-hidden="true"><span className="block h-2 rounded-full" style={{ width: `${Math.max(4, Math.round((b.totalMinor / max) * 100))}%`, background: 'var(--fin-cash)' }} /></span>
         <span className="w-16 shrink-0 text-right text-sm font-semibold">{usd0(b.totalMinor)}</span>
       </button>
     </li>)}</ul>}
@@ -117,9 +124,9 @@ function Signals({ a }: { a: Analytics }) {
     <button type="button" className="min-h-[44px] text-sm font-semibold underline-offset-2 hover:underline" aria-expanded={open} onClick={() => setOpen(o => !o)} data-testid="spending-signals-toggle">{open ? 'Hide' : 'Show'} money-bleed signals ({n})</button>
     {open && <div className="mt-1 space-y-3" data-testid="spending-signals">
       {a.unclassified.count > 0 && <p className="text-xs text-[var(--text-secondary)]" data-testid="spending-unclassified-note">{usd0(a.unclassified.totalMinor)} across {a.unclassified.count} transaction{a.unclassified.count === 1 ? '' : 's'} is not classified yet. It stays in review and is not counted as wasteful spending.</p>}
-      {a.suggestions.length > 0 && <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Possible issues <span className="font-normal normal-case">(a heuristic: check before acting)</span></p>
+      {a.suggestions.length > 0 && <div><p className={eyebrow}>Possible issues <span className="font-normal normal-case">(a heuristic: check before acting)</span></p>
         <ul className="mt-1 space-y-1">{a.suggestions.map(s => <li key={s.id} className="rounded-lg border border-[var(--border-primary)] p-2 text-sm"><p className="font-semibold">{s.title}</p><p className="text-xs text-[var(--text-secondary)]">{s.detail}</p></li>)}</ul></div>}
-      {a.observations.length > 0 && <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Measured <span className="font-normal normal-case">(straight from your bank evidence)</span></p>
+      {a.observations.length > 0 && <div><p className={eyebrow}>Measured <span className="font-normal normal-case">(straight from your bank evidence)</span></p>
         <ul className="mt-1 space-y-1">{a.observations.map(o => <li key={o.id} className="text-sm">{o.text}</li>)}</ul></div>}
     </div>}
   </div>
@@ -144,7 +151,7 @@ function History({ id, load }: { id: string; load: (id: string) => Promise<Histo
 }
 
 function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRow; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide']; loadHistory: (id: string) => Promise<HistoryEntry[]> }) {
-  const [bucket, setBucket] = useState(row.bucket.state === 'confirmed' ? row.bucket.key ?? '' : '')
+  const [picking, setPicking] = useState(false)
   const [kind, setKind] = useState(row.relationship.state === 'confirmed' && row.relationship.kind !== 'unknown' ? row.relationship.kind : '')
   const [target, setTarget] = useState('')
   const needsTarget = kind === 'obligation' || kind === 'project' || kind === 'debt'
@@ -155,26 +162,32 @@ function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRo
     const [type, ...rest] = target.split(':'); const id = rest.join(':')
     void onDecide({ action: 'set_relationship', transactionId: row.id, kind, ...(needsTarget ? { targetType: kind === 'obligation' ? type : undefined, targetId: id } : {}) })
   }
-  return <div className="mt-2 space-y-3 rounded-lg border border-[var(--border-primary)] p-3" data-testid="spending-detail">
+  return <div className={`mt-2 space-y-4 ${panel}`} data-testid="spending-detail">
     <p className="text-xs text-[var(--text-secondary)]">Bank description: {row.name} · {row.account.label}{row.account.mask ? ` ••••${row.account.mask}` : ''}</p>
     {row.pending && <p className="text-xs" style={{ color: 'var(--fin-warning)' }}>Pending: it can be categorized or ignored, but not given a relationship until it posts.</p>}
 
     <section aria-label="What was this money for?">
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">What was it for?</p>
+      <p className={eyebrow}>What was it for?</p>
       {row.bucket.state === 'suggested' && <div className="my-1 text-sm"><p>Suggested: <strong>{row.bucket.label}</strong> <Chip>{CONF[row.bucket.confidence ?? 'low']} confidence</Chip></p>
         <ul className="list-disc pl-5 text-xs text-[var(--text-secondary)]">{row.bucket.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
         <div className="mt-1 flex flex-wrap gap-2"><button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'accept_suggestion', transactionId: row.id, dimension: 'bucket' })}>Confirm {row.bucket.label}</button>
           <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'reject_suggestion', transactionId: row.id, dimension: 'bucket' })}>Not this</button></div></div>}
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="sr-only" htmlFor={`b-${row.id}`}>Spending bucket</label>
-        <select id={`b-${row.id}`} className={`${field} min-w-0 flex-1`} value={bucket} onChange={e => setBucket(e.target.value)}><option value="">Choose a bucket…</option>{options.buckets.filter(b => (row.direction === 'money_in' ? (b.flow === 'in' || ['transfers', 'personal_owner', 'other_needs_review'].includes(b.key)) : b.flow !== 'in')).map(b => <option key={b.key} value={b.key}>{b.label}</option>)}</select>
-        <button type="button" className={btn} disabled={busy || !bucket || bucket === row.bucket.key && row.bucket.state === 'confirmed'} onClick={() => void onDecide({ action: 'set_bucket', transactionId: row.id, bucket })}>Save bucket</button>
+      {/* BANK-6E: the category is chosen in a modal (BucketPicker); Apply sends the same set_bucket decision as before. */}
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1 text-sm" data-testid="detail-category">{row.bucket.state === 'confirmed' && row.bucket.label
+          ? <CategoryPill categoryKey={row.bucket.key} label={row.bucket.label} state="confirmed" />
+          : <span className="text-[var(--text-secondary)]">No category confirmed yet</span>}</span>
+        <button type="button" className={btn} disabled={busy} onClick={() => setPicking(true)} data-testid="detail-change-category">{row.bucket.state === 'confirmed' ? 'Change category…' : 'Choose category…'}</button>
         {row.bucket.state === 'confirmed' && <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'undo', transactionId: row.id, dimension: 'bucket' })}>Undo</button>}
       </div>
+      <BucketPicker open={picking} busy={busy} options={bucketChoicesFor(row, options)}
+        currentKey={row.bucket.state === 'confirmed' ? row.bucket.key : null} suggestedKey={row.bucket.state === 'suggested' ? row.bucket.key : null}
+        context={`${row.merchant} · ${row.direction === 'money_out' ? '−' : '+'}${usd2(row.amountMinor)} · ${shortDate(row.date)}`}
+        onClose={() => setPicking(false)} onApply={key => { setPicking(false); void onDecide({ action: 'set_bucket', transactionId: row.id, bucket: key }) }} />
     </section>
 
     <section aria-label="What does it belong to?">
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">What does it belong to?</p>
+      <p className={eyebrow}>What does it belong to?</p>
       {row.relationship.state === 'suggested' && <div className="my-1 text-sm"><p>Suggested: <strong>{row.relationship.label}{row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}</strong> <Chip>{CONF[row.relationship.confidence ?? 'low']} confidence</Chip></p>
         <ul className="list-disc pl-5 text-xs text-[var(--text-secondary)]">{row.relationship.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
         {!row.pending && <div className="mt-1 flex flex-wrap gap-2"><button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'accept_suggestion', transactionId: row.id, dimension: 'relationship' })}>Confirm</button>
@@ -194,42 +207,48 @@ function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRo
         ? <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'unignore', transactionId: row.id })}>Stop ignoring</button>
         : <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'ignore', transactionId: row.id })}>Ignore this transaction</button>}
     </div>
-    <section aria-label="History"><p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Decision history</p><History id={row.id} load={loadHistory} /></section>
+    <section aria-label="History"><p className={eyebrow}>Decision history</p><History id={row.id} load={loadHistory} /></section>
     <p className="text-xs text-[var(--text-secondary)]">These choices label bank evidence only. They do not change your balances, ledger, bills, projects or reports.</p>
   </div>
 }
 
-function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView, checkboxColumn }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; /** keep merchants aligned when some rows in the list have a checkbox */ checkboxColumn?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
   const { categoryColor, tint } = useDisplayColors()
   // BANK-6D: the category owns the stripe (solid only when CONFIRMED); a selection is shown by a ring + the "✓ Selected" chip, never by the stripe.
   const stripe = categoryStripe({ key: row.bucket.key, state: row.bucket.state, ignored: row.review === 'ignored' }, categoryColor, tint.rows)
   const tinted = tintStyle(stripe)
-  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-tint={tinted ? 'on' : 'off'} className="relative rounded-lg py-2 pl-3"
+  const status = row.review === 'confirmed' ? 'Reviewed' : row.review === 'ignored' ? 'Ignored' : row.review === 'suggested' ? 'Suggested' : 'Needs review'
+  const type = entryType(row) // display only: from the interpretation, never from the amount sign alone
+  // BANK-6E entry card: rail (category), merchant + amount on one line, date · account (with its color dot), then explicit text pills.
+  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-tint={tinted ? 'on' : 'off'}
+    className={`relative rounded-xl border border-[var(--border-primary)] py-2 pl-5 pr-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.18)] motion-safe:transition-colors ${tinted || selected ? '' : 'bg-white/[0.02] hover:bg-white/[0.045]'} ${row.review === 'ignored' ? 'opacity-70' : ''}`}
     style={selected ? { background: tinted?.background ?? 'color-mix(in srgb, var(--fin-cash) 10%, transparent)', boxShadow: '0 0 0 2px var(--fin-cash-border)' } : tinted}>
-    <StripeBar stripe={stripe} />
-    <div className="flex items-start gap-2">
-    {selectable && <label className="flex min-h-[44px] min-w-[44px] items-center justify-center"><input type="checkbox" className="h-6 w-6 cursor-pointer" style={{ accentColor: 'var(--fin-cash)' }} checked={selected} onChange={() => onToggle(row)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>}
-    <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold">{row.merchant}</span>
-        <span className="block text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{row.account.mappedTo ?? row.account.label}</span>
-        <span className="mt-1 flex flex-wrap gap-1">
+    <StripeBar stripe={stripe} shape="card" />
+    <div className="flex items-start gap-1.5">
+    {selectable ? <label className="-ml-1 flex min-h-[44px] min-w-[40px] items-center justify-center"><input type="checkbox" className="h-5 w-5 cursor-pointer" style={CHECKBOX} checked={selected} onChange={() => onToggle(row)} aria-label={`Select ${row.merchant} for batch approval`} data-testid="spending-select" /></label>
+      : checkboxColumn && <span aria-hidden="true" className="-ml-1 min-w-[40px]" />}
+    <button type="button" className="grid min-h-[44px] w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--text-primary)]" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+      <span className="min-w-0 truncate text-[15px] font-semibold leading-6 tracking-[-0.01em]">{row.merchant}</span>
+      <span className={`text-right text-[15px] font-semibold leading-6 tabular-nums ${row.pending ? 'opacity-70' : ''}`} style={{ color: toneColor(type.tone) }} data-testid="entry-amount">{out ? '−' : '+'}{usd2(row.amountMinor)}</span>
+      <span className="min-w-0 truncate text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{row.account.mappedTo ?? row.account.label}</span>
+      <span className="flex items-center justify-end gap-1 text-right text-xs font-semibold" style={{ color: toneColor(type.tone) ?? 'var(--text-secondary)' }} data-testid="entry-type" data-kind={type.kind}>
+        <span aria-hidden="true" className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none ring-1 ring-current">{type.glyph}</span>{type.label}</span>
+      <span className="col-span-2 mt-1.5 flex flex-wrap items-center gap-1">
           {selected && <Chip tone="ok">✓ Selected</Chip>}
           {overrideLabel && <Chip tone="ok">Your category: {overrideLabel}</Chip>}
           {row.pending && <Chip tone="warn">Pending</Chip>}
           {row.account.environment === 'sandbox' && environment === 'production' && <Chip>Sandbox</Chip>}
           {row.review === 'ignored' ? <Chip>Ignored</Chip> : <>
-            {row.bucket.label && <Chip tone={row.bucket.state === 'confirmed' ? 'ok' : 'muted'}>{row.bucket.state === 'confirmed' ? '✓ ' : ''}{row.bucket.label}{row.bucket.state === 'suggested' ? ` · suggested` : ''}</Chip>}
+            {row.bucket.label && <CategoryPill categoryKey={row.bucket.key} label={row.bucket.label} state={row.bucket.state} />}
             <Chip tone={row.relationship.state === 'confirmed' ? 'ok' : 'muted'}>{row.relationship.state === 'none' ? (out ? 'Unassigned' : row.relationship.label) : `${row.relationship.state === 'confirmed' ? '✓ ' : ''}${row.relationship.label}${row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}${row.relationship.state === 'suggested' ? ' · suggested' : ''}`}</Chip>
             {reviewedView && row.relationship.state === 'confirmed' && row.bucket.state !== 'confirmed' && <span data-testid="spending-category-needs-review"><Chip tone="warn">Relationship reviewed · Category needs review</Chip></span>}
             {reviewedView && <Chip tone={row.scope.value === 'unclear' ? 'muted' : 'ok'}>{row.scope.value === 'business' ? 'Business' : row.scope.value === 'personal' ? 'Personal' : 'Business or personal: unclear'}</Chip>}
             {row.pattern && out && (row.pattern.kind === 'obligation_like' ? <Chip tone="warn">Looks like a recurring bill</Chip> : <Chip>Repeats {row.pattern.cadence}</Chip>)}
           </>}
-        </span>
+          <span className="ml-auto pl-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-secondary)]" data-testid="entry-status">{status}</span>
       </span>
-      <span className={`shrink-0 text-sm font-semibold ${row.pending ? 'opacity-70' : ''}`} style={{ color: out ? undefined : 'var(--fin-cash)' }}>{out ? '−' : '+'}{usd2(row.amountMinor)}</span>
     </button>
     </div>
     {open && <Detail row={row} options={options} busy={busy} onDecide={onDecide} loadHistory={loadHistory} />}
@@ -360,15 +379,15 @@ export default function SpendingExplorer() {
     <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-3"><Snapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>
 
-    <div className="mt-4 flex gap-2" role="group" aria-label="Review mode">
-      <button type="button" aria-pressed={mode === 'explorer'} className={`${btn} ${mode === 'explorer' ? 'bg-white/10' : ''}`} onClick={() => setMode('explorer')} data-testid="spending-mode-explorer">Explorer</button>
-      <button type="button" aria-pressed={mode === 'smart'} className={`${btn} ${mode === 'smart' ? 'bg-white/10' : ''}`} onClick={() => setMode('smart')} data-testid="spending-mode-smart">Smart Review</button>
+    <div className="mt-4 inline-flex gap-1 rounded-2xl bg-white/[0.02] p-1 ring-1 ring-[var(--border-primary)]" role="group" aria-label="Review mode">
+      <button type="button" aria-pressed={mode === 'explorer'} className={`${btn} ${mode === 'explorer' ? btnOn : ''}`} onClick={() => setMode('explorer')} data-testid="spending-mode-explorer">Explorer</button>
+      <button type="button" aria-pressed={mode === 'smart'} className={`${btn} ${mode === 'smart' ? btnOn : ''}`} onClick={() => setMode('smart')} data-testid="spending-mode-smart">Smart Review</button>
     </div>
     {mode === 'smart' ? <SmartReview onChanged={() => void refresh()} /> : <>
     <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-1 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Spending views">
       {VIEWS.map(v => <button key={v.key} type="button" role="tab" aria-selected={filters.view === v.key} data-testid={`spending-view-${v.key}`} onClick={() => update({ view: v.key })}
-        className={`${btn} shrink-0 ${filters.view === v.key ? 'bg-white/10' : ''}`}>{v.label} <span className="text-[var(--text-secondary)]">{data.viewCounts[v.key] ?? (v.key === 'reviewed' ? data.reviewCounts?.reviewed : undefined)}</span></button>)}
+        className={`${btn} shrink-0 ${filters.view === v.key ? btnOn : ''}`}>{v.label} <span className="ml-1 rounded-full bg-white/[0.06] px-1.5 text-xs tabular-nums text-[var(--text-secondary)]">{data.viewCounts[v.key] ?? (v.key === 'reviewed' ? data.reviewCounts?.reviewed : undefined)}</span></button>)}
     </div>
     {filters.view === 'reviewed' && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-reviewed-caption">Transactions you confirmed (marked ✓). Suggestions are not counted as reviewed. Open one to see its decision history or to undo it.</p>}
     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -376,11 +395,11 @@ export default function SpendingExplorer() {
       {colorsEnabled && <button type="button" className={btn} aria-expanded={showColors} onClick={() => setShowColors(s => !s)} data-testid="spending-colors-toggle">Colors</button>}
       {active > 0 && <button type="button" className={btn} onClick={reset}>Clear</button>}
     </div>
-    {showColors && <ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label }))} />}
+    {showColors && <ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label, hint: b.hint }))} />}
     {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS{data.environment === 'production' ? ' (or from Sandbox test accounts)' : ''} {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
     {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS{data.environment === 'production' ? ' and Sandbox test accounts' : ''}. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
     {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}
-    {showFilters && <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-testid="spending-filters">
+    {showFilters && <div className={`mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 ${panel}`} data-testid="spending-filters">
       <label className="text-xs">Period<select className={`${field} mt-1 w-full`} value={filters.days} onChange={e => update({ days: Number(e.target.value) as 30 | 60 | 90 })}><option value={30}>Last 30 days</option><option value={60}>Last 60 days</option><option value={90}>Last 90 days</option></select></label>
       <label className="text-xs">Account<select className={`${field} mt-1 w-full`} value={filters.account} onChange={e => update({ account: e.target.value })}><option value="">All accounts</option>{data.options.accounts.map(x => <option key={x.ref} value={x.ref}>{x.label}{x.mask ? ` ••••${x.mask}` : ''}</option>)}</select></label>
       <label className="text-xs">Bucket<select className={`${field} mt-1 w-full`} value={filters.bucket} onChange={e => update({ bucket: e.target.value })}><option value="">All buckets</option>{data.options.buckets.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}</select></label>
@@ -403,7 +422,7 @@ export default function SpendingExplorer() {
     {showingSelected
       ? <SelectedReview items={items} off={off} overrides={overrides} categoryChoices={categoryChoices} categories={categories} busy={busy} onToggle={toggle} onCategory={setCategory} onUncheckCategory={uncheckCategory} />
       : rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
+      : <ul className="mt-2 space-y-1.5" data-testid="spending-list">{rows.map(r => <Row key={r.id} checkboxColumn={rows.some(approvable)} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
     {pendingRestore.size > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-pending-restore">{pendingRestore.size} saved selection{pendingRestore.size === 1 ? ' is' : 's are'} on transactions not loaded yet. {pendingRestore.size === 1 ? 'It returns' : 'They return'} if {pendingRestore.size === 1 ? 'it loads' : 'they load'}; use Show more.</p>}
     {items.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="spending-selection-bar" role="region" aria-label="Selected transactions">
@@ -415,14 +434,14 @@ export default function SpendingExplorer() {
             <p className="flex justify-between gap-3 border-t border-[var(--border-primary)] pt-2 text-sm font-semibold" data-testid="spending-confirm-total"><span>Total going out</span><span>{usd2(totalOutMinor)}</span></p>
             <p className="text-xs text-[var(--text-secondary)]">This labels these bank records with the categories shown. It does not change your balances, ledger, bills, payroll or reports, and each one can be undone.</p>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={`${btn} bg-white/10`} disabled={busy} onClick={() => void approveSelected()} data-testid="spending-confirm-approve">Confirm approval</button>
+              <button type="button" className={btnPrimary} disabled={busy} onClick={() => void approveSelected()} data-testid="spending-confirm-approve">Confirm approval</button>
               <button type="button" className={btn} disabled={busy} onClick={() => setConfirming(false)} data-testid="spending-confirm-cancel">Cancel</button>
             </div>
           </section>
         : <div className="flex flex-wrap gap-2">
             <button type="button" className={btn} disabled={busy} aria-pressed={showingSelected} onClick={() => setReviewing(r => !r)} data-testid="spending-review-selected">{showingSelected ? 'Back to review queue' : 'Review selected'}</button>
             <button type="button" className={btn} disabled={busy} onClick={clearSelection} data-testid="spending-clear-selection">Clear selection</button>
-            <button type="button" className={`${btn} bg-white/10`} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
+            <button type="button" className={btnPrimary} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
           </div>}
     </div>}
     </>}

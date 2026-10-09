@@ -61,7 +61,8 @@ describe('BANK-6D palette and stripe rules (pure)', () => {
     expect(categoryStripe({ key: null, state: 'none' }, colorOf, true).kind).toBe('neutral')
     expect(categoryStripe({ key: 'fuel_vehicle', state: 'confirmed', ignored: true }, colorOf, true)).toEqual({ kind: 'neutral', color: null, tint: false })
     expect(tintStyle(categoryStripe({ key: 'fuel_vehicle', state: 'suggested' }, colorOf, true))).toBeUndefined()
-    expect(stripeStyle({ kind: 'faded', color: TEAL, tint: false })!.backgroundImage).toContain('repeating-linear-gradient') // dashed: a second cue besides color
+    expect(stripeStyle({ kind: 'faded', color: TEAL, tint: false })).toEqual({ background: 'transparent', boxShadow: `inset 0 0 0 1.5px ${TEAL}` }) // BANK-6E: a HOLLOW rail for suggestions (a shape cue, not just color)
+    expect(stripeStyle({ kind: 'solid', color: TEAL, tint: false })).toEqual({ background: TEAL })
     expect(accountStripe(GOLD, true)).toEqual({ kind: 'solid', color: GOLD, tint: true }); expect(accountStripe(null, true).kind).toBe('none')
   })
 
@@ -124,7 +125,7 @@ describe('BANK-6D surfaces', () => {
       relationship: { kind: 'overhead', label: 'General overhead', target: null, state: 'confirmed', confidence: 'high', reasons: [] } }), // relationship-only reviewed
   ]
 
-  it('Explorer rows: solid stripe for confirmed, dashed for suggested and relationship-only, neutral for unknown and ignored; text cues unchanged; no tint by default', async () => {
+  it('Explorer rows: solid rail for confirmed, hollow rail for suggested and relationship-only, neutral for unknown and ignored; text cues unchanged; no tint by default', async () => {
     const m = memoryStore({ categories: { fuel_vehicle: TEAL, meals: ROSE } })
     await render(<DisplayColorsProvider store={m.store}><SpendingExplorer /></DisplayColorsProvider>, payload(rows))
     await click(q('[data-testid="spending-view-all"]'))
@@ -133,7 +134,7 @@ describe('BANK-6D surfaces', () => {
     expect(stripe('r2').dataset).toMatchObject({ stripe: 'faded', color: ROSE })
     expect(stripe('r3').dataset.stripe).toBe('neutral'); expect(stripe('r4').dataset.stripe).toBe('neutral')
     expect(stripe('r5').dataset.stripe).toBe('faded') // relationship confirmed, category still a suggestion: never solid
-    expect(rowById('r2').textContent).toContain('Meals · suggested'); expect(rowById('r1').textContent).toContain('✓ Fuel / Vehicle')
+    expect(rowById('r2').textContent).toContain('Suggested · Meals'); expect(rowById('r1').textContent).toContain('✓ Fuel / Vehicle')
     expect(qa('[data-testid="spending-row"]').every(r => r.dataset.tint === 'off')).toBe(true)
     expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toEqual([])
   })
@@ -270,7 +271,7 @@ describe('BANK-6D surfaces', () => {
 
   it('Cash OS mounts one provider scoped to its organization and keyed by financial_accounts.id (never names) around the bank panel, Explorer and account cards', () => {
     const src = readFileSync('src/components/v15r/cash-os/CashOsViews.tsx', 'utf8')
-    expect(src).toMatch(/<DisplayColorsProvider organizationId=\{snapshot\.setup\?\.organizationId \?\? null\} accounts=\{\[\.\.\.accounts, \.\.\.archivedAccounts\]\.map\(a => \(\{ id: a\.id, label: a\.display_name \}\)\)\}>/) // scoped to the Cash OS organization
+    expect(src).toMatch(/<DisplayColorsProvider organizationId=\{snapshot\.setup\?\.organizationId \?\? null\} accounts=\{\[\.\.\.accounts, \.\.\.archivedAccounts\]\.map\(a => \(\{ id: a\.id, label: a\.display_name, detail: /) // scoped to the Cash OS organization, keyed by account id
     expect((src.match(/<AccountColorCard key=\{account\.id\} accountId=\{account\.id\}/g) ?? []).length).toBe(2)
   })
 })
@@ -285,6 +286,7 @@ describe('BANK-6D organization scoping and device-color import', () => {
   const q = (s: string) => host.querySelector(s) as HTMLElement | null
   const click = async (el: Element | null) => { await act(async () => { (el as HTMLElement).click() }); await flush() }
   const probe = () => JSON.parse(q('[data-testid="probe"]')!.textContent!)
+  const until = async (ok: () => boolean) => { for (let i = 0; i < 100 && !ok(); i++) await flush(); expect(ok()).toBe(true) }
   beforeEach(() => { window.localStorage.clear(); host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host) })
   afterEach(() => { act(() => root.unmount()); host.remove() })
 
@@ -313,6 +315,7 @@ describe('BANK-6D organization scoping and device-color import', () => {
     const offline = { from: () => ({ select: async () => ({ data: null, error: { code: '42P01', message: 'relation "cash_os_display_colors" does not exist' } }) }), rpc: async () => ({ data: null, error: { code: '42883' } }) }
     vi.doMock('@/lib/supabase', () => ({ supabase: offline }))
     await render(<DisplayColorsProvider organizationId={ORG_A}><Probe /></DisplayColorsProvider>)
+    await until(() => q('[data-testid="probe"]')!.dataset.storage === 'device') // the store is imported lazily: wait for it, do not race it
     expect(probe().categories).toEqual({ meals: ROSE }); expect(q('[data-testid="probe"]')!.dataset.storage).toBe('device')
     await render(<DisplayColorsProvider organizationId={ORG_B}><Probe /></DisplayColorsProvider>)
     expect(probe().categories).toEqual({})

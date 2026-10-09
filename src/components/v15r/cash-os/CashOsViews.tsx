@@ -7,7 +7,7 @@ import { projectOptionsFromBackup } from '@/finance/cashProjectFacts'
 import { CashOsAccountMenu, CashOsAccountRestore } from './CashOsAccountMenu'
 import BankConnectionCard from '@/features/bank-connection/BankConnectionCard'
 import SpendingExplorer from '@/features/spending-explorer/SpendingExplorer'
-import { AccountColorCard, DisplayColorsProvider } from '@/features/display-colors/DisplayColors'
+import { AccountColorCard, AccountColorDot, DisplayColorsProvider } from '@/features/display-colors/DisplayColors'
 
 export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
   const { projection } = snapshot
@@ -66,6 +66,8 @@ function kindLabel(kind: string | null | undefined): string {
   return labels[kind] ?? kind.replace(/_/g, ' ')
 }
 
+const ACCOUNT_TYPE_LABEL: Record<string, string> = { checking: 'Checking', savings: 'Savings', cash: 'Cash', credit_card: 'Credit card', loan: 'Loan', other_asset: 'Other asset', other_liability: 'Other liability' }
+
 const addBtn = (onAdd: () => void) => (
   <button onClick={onAdd} className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">+ Add</button>
 )
@@ -85,13 +87,13 @@ export function CashTransactionsView({
   const transactions = [...snapshot.transactions].sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || b.id.localeCompare(a.id)).slice(0, 40)
   const handleMutated = async () => { await onRefresh?.() }
   // BANK-6D: organization-wide display colors, keyed by financial_accounts.id (never a name). Visual only.
-  return <DisplayColorsProvider organizationId={snapshot.setup?.organizationId ?? null} accounts={[...accounts, ...archivedAccounts].map(a => ({ id: a.id, label: a.display_name }))}><div className="space-y-5">
+  return <DisplayColorsProvider organizationId={snapshot.setup?.organizationId ?? null} accounts={[...accounts, ...archivedAccounts].map(a => ({ id: a.id, label: a.display_name, detail: `${a.ownership_context === 'business' ? 'Business' : 'Personal'} · ${ACCOUNT_TYPE_LABEL[a.account_type] ?? 'Account'}${a.status === 'archived' ? ' · Archived' : ''}` }))}><div className="space-y-5">
     <BankConnectionCard />
     <SpendingExplorer />
     <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
-      {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <AccountColorCard key={account.id} accountId={account.id} className="rounded-xl border border-[var(--border-primary)] p-3 pl-4">
+      {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <AccountColorCard key={account.id} accountId={account.id} className="rounded-xl border border-[var(--border-primary)] p-3 pl-5">
         <div className="flex items-start justify-between gap-1">
-          <strong className="leading-snug">{account.display_name}</strong>
+          <strong className="leading-snug"><AccountColorDot accountId={account.id} />{account.display_name}</strong>
           <CashOsAccountMenu account={account} onMutated={handleMutated} />
         </div>
         <span className="block text-xs text-[var(--text-muted)]">
@@ -115,7 +117,7 @@ export function CashTransactionsView({
           {showArchived && (
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {archivedAccounts.map(account => (
-                <AccountColorCard key={account.id} accountId={account.id} archived className="rounded-xl border border-dashed border-[var(--border-primary)] p-3 pl-4 opacity-60">
+                <AccountColorCard key={account.id} accountId={account.id} archived className="rounded-xl border border-dashed border-[var(--border-primary)] p-3 pl-5 opacity-60">
                   <div className="flex items-start justify-between gap-1">
                     <strong className="leading-snug text-[var(--text-secondary)]">{account.display_name}</strong>
                     <CashOsAccountRestore account={account} onMutated={handleMutated} />
