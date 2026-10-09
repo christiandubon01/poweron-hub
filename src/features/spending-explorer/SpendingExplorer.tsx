@@ -21,7 +21,7 @@ export const batchSummary = (r: BatchResult): string => {
 const CONF: Record<string, string> = { high: 'High', possible: 'Possible', low: 'Low' }
 
 const VIEWS: Array<{ key: ExplorerView; label: string }> = [
-  { key: 'review_queue', label: 'To Review' }, { key: 'all', label: 'All' }, { key: 'known_bills', label: 'Known Bills' }, { key: 'unassigned', label: 'Unassigned Spending' },
+  { key: 'review_queue', label: 'To Review' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'all', label: 'All' }, { key: 'known_bills', label: 'Known Bills' }, { key: 'unassigned', label: 'Unassigned Spending' },
   { key: 'repeated_spending', label: 'Repeated Spending' }, { key: 'needs_review', label: 'Needs Review' },
 ]
 const REL_KINDS: Array<{ key: string; label: string }> = [
@@ -194,7 +194,7 @@ function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRo
   </div>
 }
 
-function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel }: { row: ExplorerRow; overrideLabel?: string | null; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
+function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
   return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} className="rounded-lg py-2"
@@ -213,6 +213,8 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
           {row.review === 'ignored' ? <Chip>Ignored</Chip> : <>
             {row.bucket.label && <Chip tone={row.bucket.state === 'confirmed' ? 'ok' : 'muted'}>{row.bucket.state === 'confirmed' ? '✓ ' : ''}{row.bucket.label}{row.bucket.state === 'suggested' ? ` · suggested` : ''}</Chip>}
             <Chip tone={row.relationship.state === 'confirmed' ? 'ok' : 'muted'}>{row.relationship.state === 'none' ? (out ? 'Unassigned' : row.relationship.label) : `${row.relationship.state === 'confirmed' ? '✓ ' : ''}${row.relationship.label}${row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}${row.relationship.state === 'suggested' ? ' · suggested' : ''}`}</Chip>
+            {reviewedView && row.relationship.state === 'confirmed' && row.bucket.state !== 'confirmed' && <span data-testid="spending-category-needs-review"><Chip tone="warn">Relationship reviewed · Category needs review</Chip></span>}
+            {reviewedView && <Chip tone={row.scope.value === 'unclear' ? 'muted' : 'ok'}>{row.scope.value === 'business' ? 'Business' : row.scope.value === 'personal' ? 'Personal' : 'Business or personal: unclear'}</Chip>}
             {row.pattern && out && (row.pattern.kind === 'obligation_like' ? <Chip tone="warn">Looks like a recurring bill</Chip> : <Chip>Repeats {row.pattern.cadence}</Chip>)}
           </>}
         </span>
@@ -354,8 +356,9 @@ export default function SpendingExplorer() {
     <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-1 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Spending views">
       {VIEWS.map(v => <button key={v.key} type="button" role="tab" aria-selected={filters.view === v.key} data-testid={`spending-view-${v.key}`} onClick={() => update({ view: v.key })}
-        className={`${btn} shrink-0 ${filters.view === v.key ? 'bg-white/10' : ''}`}>{v.label} <span className="text-[var(--text-secondary)]">{data.viewCounts[v.key]}</span></button>)}
+        className={`${btn} shrink-0 ${filters.view === v.key ? 'bg-white/10' : ''}`}>{v.label} <span className="text-[var(--text-secondary)]">{data.viewCounts[v.key] ?? (v.key === 'reviewed' ? data.reviewCounts?.reviewed : undefined)}</span></button>)}
     </div>
+    {filters.view === 'reviewed' && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-reviewed-caption">Transactions you confirmed (marked ✓). Suggestions are not counted as reviewed. Open one to see its decision history or to undo it.</p>}
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <button type="button" className={btn} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">Filters{active ? ` (${active})` : ''}</button>
       {active > 0 && <button type="button" className={btn} onClick={reset}>Clear</button>}
@@ -386,7 +389,7 @@ export default function SpendingExplorer() {
     {showingSelected
       ? <SelectedReview items={items} off={off} overrides={overrides} categoryChoices={categoryChoices} categories={categories} busy={busy} onToggle={toggle} onCategory={setCategory} onUncheckCategory={uncheckCategory} />
       : rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} />)}</ul>}
+      : <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="spending-list">{rows.map(r => <Row key={r.id} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
     {pendingRestore.size > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-pending-restore">{pendingRestore.size} saved selection{pendingRestore.size === 1 ? ' is' : 's are'} on transactions not loaded yet. {pendingRestore.size === 1 ? 'It returns' : 'They return'} if {pendingRestore.size === 1 ? 'it loads' : 'they load'}; use Show more.</p>}
     {items.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="spending-selection-bar" role="region" aria-label="Selected transactions">

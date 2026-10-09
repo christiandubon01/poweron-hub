@@ -10,7 +10,7 @@ import { authedJsonHeaders } from '@/services/authedFetch'
 
 const URL_BASE = '/.netlify/functions/plaid-spending'
 
-export type ExplorerView = 'review_queue' | 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
+export type ExplorerView = 'review_queue' | 'reviewed' | 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
 export type Confidence = 'high' | 'possible' | 'low'
 export interface Target { type: string | null; id: string | null; label: string | null }
 export interface ExplorerRow {

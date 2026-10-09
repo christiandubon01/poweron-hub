@@ -383,3 +383,58 @@ describe('BANK-6B migration 157 and static guarantees', () => {
     expect(MAX_BATCH).toBe(100)
   })
 })
+
+describe.runIf(!!PGliteCtor)('BANK-6C Reviewed view (real PostgreSQL, read-only filter over existing decisions)', () => {
+  let w: Awaited<ReturnType<typeof build>>
+  const t: Record<string, string> = {}
+  let baseline = ''
+  const explore = (q: Record<string, unknown> = {}, actor = owner) => getExplorer(w.deps, actor, { limit: 200, ...q })
+  beforeAll(async () => {
+    w = await build()
+    t.net = await w.tx('NETLIFY', 19, '2026-09-01'); t.hd = await w.tx('THE HOME DEPOT #6', 120, '2026-09-02'); t.casa = await w.tx('CASA BLANCA RESTAURANT', 100, '2026-09-03')
+    t.dep = await w.tx('MOBILE DEPOSIT', -2500, '2026-09-04'); t.mystery = await w.tx('ZZQ HOLDINGS', 40, '2026-09-05'); t.adobe = await w.tx('ADOBE', 55, '2026-09-06')
+    await applyDecision(w.deps, owner, { action: 'confirm_batch', transactionIds: [t.net, t.hd], categoryOverrides: { [t.hd]: 'materials' } } as any)
+    await applyDecision(w.deps, owner, { action: 'set_bucket', transactionId: t.casa, bucket: 'personal_owner' })
+    await applyDecision(w.deps, owner, { action: 'set_relationship', transactionId: t.dep, kind: 'personal' })
+    await applyDecision(w.deps, owner, { action: 'ignore', transactionId: t.mystery })
+    baseline = await w.canonical()
+  }, 180_000)
+  afterAll(async () => { await w?.db?.close?.() })
+
+  it('shows only transactions with an active confirmed decision (category or relationship), never suggestions or excluded rows, and its count equals the Reviewed count', async () => {
+    const e = await explore({ view: 'reviewed' })
+    expect(e.rows.map(r => r.id).sort()).toEqual([t.net, t.hd, t.casa, t.dep].sort())
+    expect(e.rows.map(r => r.id)).not.toContain(t.adobe) // a high-confidence suggestion is not "reviewed"
+    expect(e.rows.map(r => r.id)).not.toContain(t.mystery) // excluded is not reviewed
+    expect(e.viewCounts.reviewed).toBe(4); expect(e.reviewCounts.reviewed).toBe(4); expect(e.total).toBe(4)
+    const by = (id: string) => e.rows.find(r => r.id === id)!
+    expect(by(t.hd)).toMatchObject({ merchant: 'THE HOME DEPOT #6', date: '2026-09-02', amountMinor: 12000, bucket: { key: 'materials', state: 'confirmed' }, scope: { value: 'business' } })
+    expect(by(t.casa)).toMatchObject({ bucket: { key: 'personal_owner', state: 'confirmed' }, scope: { value: 'personal', source: 'owner' } })
+    expect(by(t.dep).relationship).toMatchObject({ kind: 'personal', state: 'confirmed' })
+  })
+
+  it('keeps the other filters: bucket, search, account and period narrow the Reviewed view', async () => {
+    expect((await explore({ view: 'reviewed', bucket: 'materials' })).rows.map(r => r.id)).toEqual([t.hd])
+    expect((await explore({ view: 'reviewed', search: 'netlify' })).rows.map(r => r.id)).toEqual([t.net])
+    expect((await explore({ view: 'reviewed', account: w.ids.acct })).total).toBe(4)
+    expect((await explore({ view: 'reviewed', from: '2026-09-03' })).rows.map(r => r.id).sort()).toEqual([t.casa, t.dep].sort())
+  })
+
+  it('undo moves a transaction out of Reviewed and the count follows; approving moves one in; history is kept', async () => {
+    expect(await applyDecision(w.deps, owner, { action: 'undo', transactionId: t.hd, dimension: 'bucket' })).toEqual({ outcome: 'undone' })
+    let e = await explore({ view: 'reviewed' })
+    expect(e.rows.map(r => r.id)).not.toContain(t.hd); expect(e.viewCounts.reviewed).toBe(3); expect(e.reviewCounts.reviewed).toBe(3)
+    expect((await getTransactionHistory(w.deps, owner, t.hd)).history.map(h => h.status)).toEqual(['undone'])
+    await applyDecision(w.deps, owner, { action: 'confirm_batch', transactionIds: [t.adobe] } as any)
+    e = await explore({ view: 'reviewed' })
+    expect(e.rows.map(r => r.id)).toContain(t.adobe); expect(e.viewCounts.reviewed).toBe(4)
+  })
+
+  it('is organization-scoped and read-only: another organization sees nothing, and no canonical record changed', async () => {
+    expect((await explore({ view: 'reviewed' }, ownerB)).total).toBe(0)
+    const before = (await w.q(`SELECT count(*)::int n FROM public.financial_provider_interpretations`))[0].n
+    await explore({ view: 'reviewed' }); await explore({ view: 'reviewed', bucket: 'materials' })
+    expect((await w.q(`SELECT count(*)::int n FROM public.financial_provider_interpretations`))[0].n).toBe(before)
+    expect(await w.canonical()).toBe(baseline)
+  })
+})

@@ -72,9 +72,75 @@ describe('SpendingExplorer (BANK-5)', () => {
   it('offers the five owner views with counts, and switching a view re-queries the server', async () => {
     await mount(payload([row()]))
     const labels = [...host.querySelectorAll('[role="tab"]')].map(t => t.textContent!.replace(/\s+/g, ' ').trim())
-    expect(labels).toEqual(['To Review 8', 'All 10', 'Known Bills 1', 'Unassigned Spending 7', 'Repeated Spending 1', 'Needs Review 6'])
+    expect(labels).toEqual(['To Review 8', 'Reviewed 2', 'All 10', 'Known Bills 1', 'Unassigned Spending 7', 'Repeated Spending 1', 'Needs Review 6']) // an older server without viewCounts.reviewed falls back to reviewCounts.reviewed
     await click(host.querySelector('[data-testid="spending-view-known_bills"]'))
     expect(gets().slice(-1)[0]).toMatch(/view=known_bills/)
+  })
+
+  const chips = (el: Element) => [...el.querySelectorAll('span.rounded-full')].map(c => c.textContent)
+  it('BANK-6C: the Reviewed tab shows its count, re-queries view=reviewed, marks confirmed decisions, shows business/personal, and keeps other filters', async () => {
+    const confirmed = row({ id: 'c1', name: 'THE HOME DEPOT #6', merchant: 'THE HOME DEPOT #6', amountMinor: 12000, review: 'confirmed', bucket: { key: 'materials', label: 'Materials', state: 'confirmed', confidence: 'high', reasons: ['You confirmed this.'] } })
+    const personal = row({ id: 'c2', merchant: 'CASA BLANCA RESTAURANT', amountMinor: 10000, review: 'confirmed', scope: { value: 'personal', source: 'owner' }, bucket: { key: 'personal_owner', label: 'Personal / Owner', state: 'confirmed', confidence: 'high', reasons: [] } })
+    await mount(payload([confirmed, personal], { viewCounts: { review_queue: 8, reviewed: 58, all: 10, known_bills: 1, unassigned: 7, repeated_spending: 1, needs_review: 6 } }))
+    expect(host.querySelector('[data-testid="spending-view-reviewed"]')!.textContent!.replace(/\s+/g, ' ').trim()).toBe('Reviewed 58')
+    await click(host.querySelector('[data-testid="spending-view-reviewed"]'))
+    expect(gets().slice(-1)[0]).toMatch(/view=reviewed/)
+    expect(host.querySelector('[data-testid="spending-reviewed-caption"]')!.textContent).toMatch(/you confirmed.*Suggestions are not counted as reviewed.*undo/)
+    const rows = [...host.querySelectorAll('[data-testid="spending-row"]')] as HTMLElement[]
+    expect(rows[0].textContent).toContain('✓ Materials'); expect(rows[0].textContent).not.toContain('suggested'); expect(chips(rows[0])).toContain('Business')
+    expect(rows[1].textContent).toContain('✓ Personal / Owner'); expect(chips(rows[1])).toContain('Personal')
+    expect(host.querySelectorAll('[data-testid="spending-select"]')).toHaveLength(0) // confirmed rows are never offered for batch approval
+    // the Filters panel still works on top of Reviewed: the view stays "reviewed" and the bucket narrows it
+    await click(host.querySelector('[data-testid="spending-filters-toggle"]'))
+    const bucketSelect = [...host.querySelectorAll('label')].find(l => l.textContent!.startsWith('Bucket'))!.querySelector('select') as HTMLSelectElement
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(bucketSelect, 'materials'); bucketSelect.dispatchEvent(new Event('change', { bubbles: true })) }); await flush()
+    expect(gets().slice(-1)[0]).toMatch(/view=reviewed/); expect(gets().slice(-1)[0]).toMatch(/bucket=materials/)
+  })
+
+  it('BANK-6C: a relationship-only confirmation is labelled "Category needs review" and its suggested category is never shown as approved', async () => {
+    const relOnly = row({ id: 'r9', merchant: 'WELLS FARGO CREDIT CARD AUTOPAY', amountMinor: 35000, review: 'suggested',
+      bucket: { key: 'materials', label: 'Materials', state: 'suggested', confidence: 'high', reasons: [] },
+      relationship: { kind: 'debt', label: 'Debt payment', target: { type: 'debt_account', id: 'd1', label: 'Chase Ink Card' }, state: 'confirmed', confidence: 'high', reasons: ['You confirmed this.'] } })
+    const unsuggested = row({ id: 'r10', merchant: 'ZZQ HOLDINGS', review: 'needs_review', bucket: { key: 'other_needs_review', label: 'Other / Needs Review', state: 'none', confidence: null, reasons: [] },
+      relationship: { kind: 'overhead', label: 'General overhead', target: null, state: 'confirmed', confidence: 'high', reasons: [] } })
+    const both = row({ id: 'r11', merchant: 'THE HOME DEPOT #6', review: 'confirmed', bucket: { key: 'materials', label: 'Materials', state: 'confirmed', confidence: 'high', reasons: [] },
+      relationship: { kind: 'overhead', label: 'General overhead', target: null, state: 'confirmed', confidence: 'high', reasons: [] } })
+    await mount(payload([relOnly, unsuggested, both]))
+    await click(host.querySelector('[data-testid="spending-view-reviewed"]'))
+    const [a, b, c] = [...host.querySelectorAll('[data-testid="spending-row"]')] as HTMLElement[]
+    expect(a.querySelector('[data-testid="spending-category-needs-review"]')!.textContent).toBe('Relationship reviewed · Category needs review')
+    expect(chips(a)).toContain('✓ Debt payment · Chase Ink Card')
+    expect(chips(a)).toContain('Materials · suggested'); expect(chips(a)).not.toContain('✓ Materials') // the suggestion is not shown as approved
+    expect(b.querySelector('[data-testid="spending-category-needs-review"]')).not.toBeNull()
+    expect(c.querySelector('[data-testid="spending-category-needs-review"]')).toBeNull(); expect(chips(c)).toContain('✓ Materials') // a confirmed category keeps its label
+    // outside the Reviewed tab the extra label is not shown (no change to the other views)
+    await click(host.querySelector('[data-testid="spending-view-review_queue"]'))
+    expect(host.querySelector('[data-testid="spending-category-needs-review"]')).toBeNull()
+  })
+
+  it('BANK-6C: the scope chip appears only in the Reviewed tab', async () => {
+    await mount(payload([row()]))
+    expect(chips(host.querySelector('[data-testid="spending-row"]')!)).not.toContain('Business')
+  })
+
+  it('BANK-6C: undo from the Reviewed tab uses the existing undo action, then re-reads the server so the row and the count update', async () => {
+    const confirmed = row({ id: 'c1', merchant: 'THE HOME DEPOT #6', amountMinor: 12000, review: 'confirmed', bucket: { key: 'materials', label: 'Materials', state: 'confirmed', confidence: 'high', reasons: ['You confirmed this.'] } })
+    const before = payload([confirmed], { viewCounts: { review_queue: 8, reviewed: 1, all: 10, known_bills: 1, unassigned: 7, repeated_spending: 1, needs_review: 6 } })
+    const after = payload([], { viewCounts: { review_queue: 9, reviewed: 0, all: 10, known_bills: 1, unassigned: 7, repeated_spending: 1, needs_review: 6 }, reviewCounts: { reviewed: 0, unreviewed: 9, excluded: 0 } })
+    let undone = false
+    fetchMock = vi.fn(async (_url: string, init?: any) => {
+      if (init?.method === 'POST') { undone = true; return { ok: true, status: 200, json: async () => ({ outcome: 'undone' }) } }
+      return { ok: true, status: 200, json: async () => (undone ? after : before) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await act(async () => { root.render(<SpendingExplorer />) }); await flush()
+    await click(host.querySelector('[data-testid="spending-view-reviewed"]'))
+    await click(host.querySelector('[data-testid="spending-row"] button[aria-expanded]'))
+    await click([...host.querySelectorAll('[data-testid="spending-detail"] button')].find(b => b.textContent === 'Undo')!)
+    expect(posts()).toEqual([{ action: 'undo', transactionId: 'c1', dimension: 'bucket' }])
+    expect(gets().slice(-1)[0]).toMatch(/view=reviewed/) // the same view is re-read from the server
+    expect(host.querySelectorAll('[data-testid="spending-row"]')).toHaveLength(0)
+    expect(host.querySelector('[data-testid="spending-view-reviewed"]')!.textContent!.replace(/\s+/g, ' ').trim()).toBe('Reviewed 0')
   })
 
   it('selecting a bucket drills into that bucket (unassigned view + bucket filter) and a second tap clears it', async () => {

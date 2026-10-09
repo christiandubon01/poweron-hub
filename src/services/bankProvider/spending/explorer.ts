@@ -10,8 +10,8 @@ import { merchantKey, merchantLabel } from './merchant'
 import { RELATIONSHIP_LABELS, SUBSCRIPTION_BUCKETS, bucketLabel, isBucketKey, type BucketKey, type Confidence, type RelationshipKind, type ReviewState } from './taxonomy'
 import type { AccountContext, Decision, DebtOption, EvidenceTx, ExplorerRow, KnownBillCandidate, ProjectOption, RelationshipTarget } from './types'
 
-export type ExplorerView = 'review_queue' | 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
-export const EXPLORER_VIEWS: readonly ExplorerView[] = ['review_queue', 'all', 'known_bills', 'unassigned', 'repeated_spending', 'needs_review']
+export type ExplorerView = 'review_queue' | 'reviewed' | 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
+export const EXPLORER_VIEWS: readonly ExplorerView[] = ['review_queue', 'reviewed', 'all', 'known_bills', 'unassigned', 'repeated_spending', 'needs_review']
 
 export interface ExplorerQuery {
   view?: ExplorerView
@@ -146,6 +146,8 @@ export function inView(r: ExplorerRow, view: ExplorerView): boolean {
   switch (view) {
     // The owner's work list: everything not yet confirmed or excluded, money in and money out. Pending rows are listed (they can be categorized) but cannot be confirmed as relationships.
     case 'review_queue': return r.direction !== 'zero' && r.review !== 'confirmed' && r.review !== 'ignored'
+    // BANK-6C: what the owner has already decided. Exactly the "Reviewed" of reviewCounts: an ACTIVE (not undone) confirmed category or relationship, not excluded.
+    case 'reviewed': return r.review !== 'ignored' && (r.bucket.state === 'confirmed' || r.relationship.state === 'confirmed')
     case 'known_bills': return r.direction === 'money_out' && ['obligation', 'debt', 'payroll'].includes(r.relationship.kind) && r.relationship.state !== 'none' && r.review !== 'ignored'
     case 'unassigned': return r.unassigned
     case 'repeated_spending': return r.repeatedPattern
