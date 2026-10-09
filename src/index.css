@@ -24,6 +24,8 @@
     --fin-protected: #7dd3fc; --fin-protected-border: rgba(125, 211, 252, 0.45); --fin-protected-tint: rgba(125, 211, 252, 0.07);
     --fin-negative: #fca5a5;  --fin-negative-border: rgba(248, 113, 113, 0.55);  --fin-negative-tint: rgba(248, 113, 113, 0.09);
     --fin-warning: #fcd34d;   --fin-warning-border: rgba(252, 211, 77, 0.5);    --fin-warning-tint: rgba(252, 211, 77, 0.08);
+    /* Theme-safe surfaces (BANK-6F): a quiet fill, a hover / pressed fill, a selected fill, and a card outline that stays visible in both themes. */
+    --surface-1: rgba(255, 255, 255, 0.025); --surface-2: rgba(255, 255, 255, 0.06); --surface-selected: rgba(255, 255, 255, 0.09); --surface-line: #374151;
   }
 
   [data-theme="light"] {
@@ -42,6 +44,7 @@
     --fin-protected: #0369a1; --fin-protected-border: rgba(3, 105, 161, 0.45); --fin-protected-tint: rgba(3, 105, 161, 0.07);
     --fin-negative: #b91c1c;  --fin-negative-border: rgba(185, 28, 28, 0.5);   --fin-negative-tint: rgba(185, 28, 28, 0.07);
     --fin-warning: #b45309;   --fin-warning-border: rgba(180, 83, 9, 0.5);     --fin-warning-tint: rgba(180, 83, 9, 0.07);
+    --surface-1: rgba(15, 23, 42, 0.03);     --surface-2: rgba(15, 23, 42, 0.06);   --surface-selected: rgba(15, 23, 42, 0.09);   --surface-line: #cbd5e1;
   }
 
   html, body {
