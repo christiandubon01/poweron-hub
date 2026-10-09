@@ -6,9 +6,9 @@ const e = (direction: EntryLike['direction'], bucket: [string | null, EntryLike[
 
 describe('BANK-6E entry type (display only, never from the amount sign alone)', () => {
   it('confirmed interpretations are stated plainly', () => {
-    expect(entryType(e('money_in', ['customer_payment', 'confirmed']))).toMatchObject({ kind: 'income', label: 'Income', tone: 'in', glyph: '↓', certain: true })
+    expect(entryType(e('money_in', ['customer_payment', 'confirmed']))).toMatchObject({ kind: 'income', label: 'Income', tone: 'in', glyph: '↑', certain: true })
     expect(entryType(e('money_in', ['refund', 'confirmed']))).toMatchObject({ kind: 'refund', label: 'Refund', glyph: '↩' })
-    expect(entryType(e('money_out', ['materials', 'confirmed']))).toMatchObject({ kind: 'expense', label: 'Expense', tone: 'out', glyph: '↑' })
+    expect(entryType(e('money_out', ['materials', 'confirmed']))).toMatchObject({ kind: 'expense', label: 'Expense', tone: 'out', glyph: '↓' })
     expect(entryType(e('money_out', ['materials', 'suggested'], ['transfer', 'confirmed']))).toMatchObject({ kind: 'transfer', label: 'Transfer', tone: 'neutral', glyph: '⇄' })
     expect(entryType(e('money_out', [null, 'none'], ['debt', 'confirmed']))).toMatchObject({ kind: 'debt_payment', label: 'Debt payment' })
     expect(entryType(e('money_out', ['owner_draw', 'confirmed']))).toMatchObject({ kind: 'owner_draw', label: 'Owner draw' })

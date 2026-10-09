@@ -122,7 +122,7 @@ describe('BANK-6E income / expense presentation on entries', () => {
     await act(async () => { root.render(<SpendingExplorer />) }); await flush()
     await act(async () => { (host.querySelector('[data-testid="spending-view-all"]') as HTMLElement).click() }); await flush()
     const types = [...host.querySelectorAll('[data-testid="entry-type"]')].map(t => [(t as HTMLElement).dataset.kind, t.textContent])
-    expect(types).toEqual([['expense', '↑Expense'], ['income', '↓Income'], ['transfer', '⇄Likely transfer'], ['refund', '↩Refund'], ['money_in', '↓Money in']])
+    expect(types).toEqual([['expense', '↓Expense'], ['income', '↑Income'], ['transfer', '⇄Likely transfer'], ['refund', '↩Refund'], ['money_in', '↑Money in']])
     const amounts = [...host.querySelectorAll('[data-testid="entry-amount"]')] as HTMLElement[]
     expect(amounts[0].style.color).toBe(''); expect(amounts[1].style.color).toBe('var(--fin-cash)'); expect(amounts[2].style.color).toBe('var(--text-secondary)')
     expect(amounts[1].textContent).toBe('+$2,500.00')

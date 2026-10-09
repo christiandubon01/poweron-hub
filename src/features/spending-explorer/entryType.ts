@@ -23,15 +23,15 @@ export interface EntryLike {
 }
 
 const BASE: Record<EntryKind, { label: string; glyph: string; tone: EntryTone }> = {
-  income: { label: 'Income', glyph: '↓', tone: 'in' },
+  income: { label: 'Income', glyph: '↑', tone: 'in' },
   refund: { label: 'Refund', glyph: '↩', tone: 'in' },
   transfer: { label: 'Transfer', glyph: '⇄', tone: 'neutral' },
-  expense: { label: 'Expense', glyph: '↑', tone: 'out' },
-  debt_payment: { label: 'Debt payment', glyph: '↑', tone: 'out' },
-  owner_draw: { label: 'Owner draw', glyph: '↑', tone: 'out' },
-  payroll: { label: 'Payroll', glyph: '↑', tone: 'out' },
-  money_in: { label: 'Money in', glyph: '↓', tone: 'in' },
-  money_out: { label: 'Money out', glyph: '↑', tone: 'out' },
+  expense: { label: 'Expense', glyph: '↓', tone: 'out' },
+  debt_payment: { label: 'Debt payment', glyph: '↓', tone: 'out' },
+  owner_draw: { label: 'Owner draw', glyph: '↓', tone: 'out' },
+  payroll: { label: 'Payroll', glyph: '↓', tone: 'out' },
+  money_in: { label: 'Money in', glyph: '↑', tone: 'in' },
+  money_out: { label: 'Money out', glyph: '↓', tone: 'out' },
   zero: { label: 'No amount', glyph: '·', tone: 'neutral' },
 }
 const make = (kind: EntryKind, certain: boolean): EntryType => {
