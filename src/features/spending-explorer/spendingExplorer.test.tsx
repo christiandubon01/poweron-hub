@@ -75,7 +75,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     await mount(payload([row()]))
     const labels = [...host.querySelectorAll('[role="tab"]')].map(t => t.textContent!.replace(/\s+/g, ' ').trim())
     // BANK-6F D6: all seven views stay directly visible, in the same order with the same counts; "Needs Review" reads "Money out to review" (what the server view is)
-    expect(labels).toEqual(['To review 8', 'Reviewed 2', 'All 10', 'Known bills 1', 'Unassigned spending 7', 'Repeated spending 1', 'Money out to review 6']) // an older server without viewCounts.reviewed falls back to reviewCounts.reviewed
+    expect(labels).toEqual(['Awaiting review 8', 'Reviewed 2', 'All 10', 'Known bills 1', 'Unassigned spending 7', 'Repeated spending 1', 'Money out to review 6']) // an older server without viewCounts.reviewed falls back to reviewCounts.reviewed
     await click(host.querySelector('[data-testid="spending-view-known_bills"]'))
     expect(gets().slice(-1)[0]).toMatch(/view=known_bills/)
   })

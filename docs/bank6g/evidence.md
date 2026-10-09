@@ -1,5 +1,20 @@
 # BANK-6G UI evidence
 
+## Latest clarity-pass evidence
+
+Synthetic actual-Explorer captures; no live financial data or transaction writes. Chromium touch viewport, not native Safari/WebKit.
+
+| View | Evidence |
+|---|---|
+| Workflow, scope and 30/90-day explanation | [Review](screenshots/clarity-review-dark.png) |
+| Direction-scoped activity | [Money Out](screenshots/clarity-money-out-dark.png) · [Money In](screenshots/clarity-money-in-dark.png) |
+| Refund drill-down and Back / Clear selection | [Refund](screenshots/clarity-refund-drill.png) |
+| Parent / leaf navigation | [Business leaf](screenshots/clarity-business-leaf-dark.png) |
+| Light theme / smaller touch widths | [Light](screenshots/clarity-business-light.png) · [768](screenshots/clarity-light-768.png) · [390](screenshots/clarity-light-390.png) |
+
+[Browser checks](screenshots/clarity-browser-evidence.json): direction/list consistency, Back/Clear preserving direction, no horizontal overflow and no page errors.
+
+
 ## Latest unified Explorer evidence
 
 The images below supersede the earlier separate-report presentation; earlier images are retained as historical evidence. Actual SpendingExplorer is rendered with synthetic read-only fetch fixtures. No production data or transaction writes. Chromium touch testing is not Safari certification.

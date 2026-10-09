@@ -247,20 +247,25 @@ export default function SpendingExplorer() {
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Spending explorer · bank evidence</h3>
       <span className="text-xs text-[var(--text-secondary)]">{population==='review'?'Suggestions only. Nothing here changes your balances, ledger or reports.':'Bank evidence only. Category decisions do not change balances or post accounting entries.'}</span>
     </div>
-    <SegmentedControl className="mt-4" label="Review mode" value={mode} onChange={setMode} options={[
-      {value:'explorer',label:'Explorer',testId:'spending-mode-explorer'},{value:'smart',label:'Smart Review',testId:'spending-mode-smart'}]} />
+    <p className={`${eyebrow} mt-4`}>Workflow</p>
+    <SegmentedControl className="mt-2" label="Review mode" value={mode} onChange={setMode} options={[
+      {value:'explorer',label:'Explore',testId:'spending-mode-explorer'},{value:'smart',label:'Smart Review',testId:'spending-mode-smart'}]} />
     {mode==='explorer' && <>
-      <SegmentedControl className="mt-3" label="Explorer scope" value={population} onChange={setPopulation} options={[
-        {value:'review',label:'Review & filters',testId:'spending-scope-review'},...REPORT_SCOPES.map(m=>({value:m.key,label:m.label,testId:`spending-scope-${m.key}`}))]} />
+      <div className="mt-4 border-t border-[var(--surface-line)] pt-3"><p className={eyebrow}>Spending scope</p>
+      <SegmentedControl className="mt-2" label="Explorer scope" value={population} onChange={setPopulation} options={[
+        ...REPORT_SCOPES.map(m=>({value:m.key,label:m.label,testId:`spending-scope-${m.key}`}))]} />
+      <button className={`${btn} mt-2`} aria-pressed={population==='review'} data-testid="spending-scope-review" onClick={()=>setPopulation('review')}>Transaction review</button><p className="mt-1 text-xs text-[var(--text-secondary)]">Category review is an owner decision. An unresolved financial link is a separate question. Unassigned Spending is a defined spending population, not a queue.</p></div>
       <div className="mt-3"><FilterBar filters={filters} data={data} update={update} reset={reset} showFilters={showFilters} setShowFilters={setShowFilters} showColors={showColors} setShowColors={setShowColors} colorsEnabled={colorsEnabled} /></div>
     </>}
     {mode==='smart' && <button className={`${btn} mt-3`} onClick={()=>setShowColors(v=>!v)} aria-expanded={showColors}>Colors · Classification settings</button>}
     {showColors && <ExplorerClassificationSettings />}
     {mode==='smart'?<SmartReview onChanged={refreshAll}/>:population!=='review'?<>
       {message && <p role="alert" className="mt-2 text-sm">{message}</p>}
-      {reportError?<p role="alert" className="mt-3">{reportError}</p>:!report?<p className="mt-3">Loading complete evidence…</p>:<ReportView report={report} renderRow={r=><Row key={r.id} row={r} options={data.options} busy={busy || !!r.removed} onDecide={async body=>{await decide(body);setReportRevision(n=>n+1)}} loadHistory={loadHistory} environment={data.environment} selectable={false} selected={false} onToggle={()=>{}} reviewedView />}/>}
+      {reportError?<p role="alert" className="mt-3">{reportError}</p>:!report?<p className="mt-3">Loading complete evidence…</p>:<ReportView report={report} accountLabel={data.options.accounts.find(x=>x.ref===filters.account)?.label} renderRow={r=><Row key={r.id} row={r} options={data.options} busy={busy || !!r.removed} onDecide={async body=>{await decide(body);setReportRevision(n=>n+1)}} loadHistory={loadHistory} environment={data.environment} selectable={false} selected={false} onToggle={()=>{}} reviewedView />}/>}
     </>:<>
     <p className="mt-3 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
+    <p className="mt-2 rounded-xl bg-[var(--surface-1)] px-3 py-2 text-sm font-semibold" data-testid="review-date-account-scope">Transaction list: {reportScope.from} — {reportScope.to} · {filters.account ? data.options.accounts.find(x=>x.ref===filters.account)?.label ?? 'Selected account' : filters.accounts==='all'?'All connected accounts':'Mapped accounts'}</p>
+    <p className="mt-1 text-xs text-[var(--text-secondary)]">The unassigned snapshot always covers the last {a.windowDays} days; this list and spending scopes use your selected {filters.days}-day period. A 90-day total includes older transactions that a 30-day snapshot does not. Different populations and filters can also change totals.</p>
     {data.coverage?.complete===false?<p role="alert" className="mt-3 text-sm">Incomplete review coverage · {data.coverage.reason} Review counts describe loaded evidence only; Snapshot totals are withheld.</p>:<div className="mt-3"><SpendingSnapshot a={a} selected={filters.bucket} onPick={bucket=>update({bucket,view:bucket?'unassigned':filters.view,...(data.hierarchy?.available && bucket && [30,60,90].includes(a.windowDays)?{days:a.windowDays as 30|60|90}:{})})}/><Signals a={a}/></div>}
     <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-2"><ViewTabs view={filters.view} data={data} onView={view => update({ view })} /></div>

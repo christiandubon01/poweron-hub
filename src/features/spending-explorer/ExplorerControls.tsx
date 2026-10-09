@@ -20,7 +20,7 @@ import { DEFAULT_FILTERS, type ExplorerData, type ExplorerView, type Filters } f
 import { SegmentedControl, SelectField } from './controls'
 import { btn, btnQuiet, focusRing, panel } from './ui'
 
-const PRIMARY: Array<{ key: ExplorerView; label: string }> = [{ key: 'review_queue', label: 'To review' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'all', label: 'All' }]
+const PRIMARY: Array<{ key: ExplorerView; label: string }> = [{ key: 'review_queue', label: 'Awaiting review' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'all', label: 'All' }]
 const MORE: Array<{ key: ExplorerView; label: string }> = [
   { key: 'known_bills', label: 'Known bills' }, { key: 'unassigned', label: 'Unassigned spending' }, { key: 'repeated_spending', label: 'Repeated spending' }, { key: 'needs_review', label: 'Money out to review' },
 ]
@@ -93,7 +93,7 @@ export function FilterBar({ filters, data, update, reset, showFilters, setShowFi
           className="min-h-[44px] min-w-0 flex-1 bg-transparent text-base outline-none sm:text-sm" style={{ appearance: 'none' }} />
       </label>
       <SegmentedControl label="Period" value={String(filters.days) as '30' | '60' | '90'} onChange={v => update({ days: Number(v) as 30 | 60 | 90 })} testIdPrefix="spending-period"
-        options={[{ value: '30', label: '30 days' }, { value: '60', label: '60' }, { value: '90', label: '90' }]} />
+        options={[{ value: '30', label: '30 days' }, { value: '60', label: '60 days' }, { value: '90', label: '90 days' }]} />
       <button type="button" className={`${btn} inline-flex items-center gap-1.5`} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">
         <SlidersHorizontal size={16} aria-hidden="true" />Filters{active ? ` (${active})` : ''}</button>
       {colorsEnabled && <button type="button" className={`${btn} inline-flex items-center gap-1.5`} aria-expanded={showColors} onClick={() => setShowColors(s => !s)} data-testid="spending-colors-toggle"><Palette size={16} aria-hidden="true" />Colors</button>}

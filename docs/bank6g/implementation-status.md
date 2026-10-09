@@ -1,5 +1,16 @@
 # BANK-6G release acceptance checkpoint
 
+## Explorer clarity pass — 2026-10-09 (latest)
+
+Owner reviewed the unified Explorer on native iPad Safari. This focused pass retains its single presentation and existing populations. Workflow (Explore / Smart Review) now has its own heading, separate from the three spending scopes (All Activity / Business Spending / Unassigned Spending). Transaction review is a separate control; Awaiting review replaces To review without changing its query/count. Category-review counts use the category confirmation state; confirmed incoming financial relationships are not mistaken for confirmed categories. Copy distinguishes category decisions, unresolved financial links and the unchanged Unassigned Spending population. Touch-open explanatory details retain accounting/evidence qualifications.
+
+Dates/account scope are prominent. The review view explicitly explains its fixed 30-day unassigned snapshot versus the selected 30/60/90-day list/reporting window, and that populations/filters can also differ. Specific account labels are shown when selected. All Activity direction now filters the complete preclassified population before totals, parent/leaf breakdown and transaction drill-down. Money In includes incoming refunds/transfers/ignored activity; Money Out retains outgoing activity. No netting or duplicate expense posting. The opposite direction remains a clearly labelled whole-scope context total. Bucket breadcrumbs provide Back and Clear selection; these preserve direction/date/account/status filters. Matching count/amount and review/unresolved-link counts describe the selected drill-down. Colors and existing transaction actions remain unchanged.
+
+Checks: 206 tests / 13 files passed; targeted UI recheck 16 tests / 2 files and final contract/navigation recheck 62 tests / 2 files passed. TypeScript passed; production build passed (existing bundle/browser-data warnings only). Eight synthetic Chromium touch screenshots cover review, incoming/outgoing activity, refund navigation, business leaf breakdown, both themes, and widths 1024/768/390. No horizontal overflow or page errors. This pass has not been certified in native Safari/WebKit; owner Safari acceptance remains required. See [clarity-browser-evidence.json](screenshots/clarity-browser-evidence.json) and the latest [evidence index](evidence.md).
+
+No migrations, production financial data changes, custom-write activation, reporting engine changes, or new classification/ledger. Main is fast-forwarded only after checks pass. Published deployment SHA remains a separate confirmation from a successful push. Overall BANK-6G completion remains 97% pending owner acceptance and separately approved custom-write activation. Rollback is code-only to e5fa5a62668c3dd9ce2bbf4085ce246353442e9d, preserving installed schema, decisions, color metadata and audit history.
+
+
 ## Unified Explorer correction — 2026-10-09 (latest)
 
 This checkpoint supersedes the installation/deployment statements below, which are retained as history. The owner confirms BANK-6G migration is installed. This correction does not execute SQL, alter the schema, enable custom writes or change financial records. Overall completion: **97%**, pending Published deployment confirmation and native iPad owner acceptance.
