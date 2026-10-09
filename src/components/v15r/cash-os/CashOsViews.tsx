@@ -8,6 +8,7 @@ import { CashOsAccountMenu, CashOsAccountRestore } from './CashOsAccountMenu'
 import BankConnectionCard from '@/features/bank-connection/BankConnectionCard'
 import SpendingExplorer from '@/features/spending-explorer/SpendingExplorer'
 import { AccountColorCard, AccountColorDot, DisplayColorsProvider } from '@/features/display-colors/DisplayColors'
+import { Chip } from '@/features/spending-explorer/controls'
 
 export function CashCalendarView({ snapshot }: { snapshot: CashOsSnapshot }) {
   const { projection } = snapshot
@@ -68,8 +69,9 @@ function kindLabel(kind: string | null | undefined): string {
 
 const ACCOUNT_TYPE_LABEL: Record<string, string> = { checking: 'Checking', savings: 'Savings', cash: 'Cash', credit_card: 'Credit card', loan: 'Loan', other_asset: 'Other asset', other_liability: 'Other liability' }
 
+// BANK-6F D11: keeps the Cash OS orange add action, at a 44px touch target; hover only where hover exists.
 const addBtn = (onAdd: () => void) => (
-  <button onClick={onAdd} className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600">+ Add</button>
+  <button onClick={onAdd} className="min-h-[44px] rounded-xl bg-orange-500 px-4 text-sm font-semibold text-white [@media(hover:hover)]:hover:bg-orange-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--text-primary)]">+ Add</button>
 )
 
 export function CashTransactionsView({
@@ -91,15 +93,20 @@ export function CashTransactionsView({
     <BankConnectionCard />
     <SpendingExplorer />
     <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
-      {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <AccountColorCard key={account.id} accountId={account.id} className="rounded-xl border border-[var(--border-primary)] p-3 pl-5">
+      {/* BANK-6F: account cards in the Cash OS card language. The balance is the same money() value as before; only its typeface changed. */}
+      {accounts.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{accounts.map(account => <AccountColorCard key={account.id} accountId={account.id} className="flex flex-col gap-2 rounded-xl border border-[var(--surface-line)] bg-[var(--surface-1)] p-3.5 pl-6">
         <div className="flex items-start justify-between gap-1">
-          <strong className="leading-snug"><AccountColorDot accountId={account.id} />{account.display_name}</strong>
+          <div className="min-w-0">
+            <strong className="block break-words text-[15px] leading-snug"><AccountColorDot accountId={account.id} />{account.display_name}</strong>
+            <span className="block text-xs text-[var(--text-secondary)]" data-testid="account-card-type">{account.ownership_context === 'business' ? 'Business' : 'Personal'} · {ACCOUNT_TYPE_LABEL[account.account_type] ?? 'Account'}</span>
+          </div>
           <CashOsAccountMenu account={account} onMutated={handleMutated} />
         </div>
-        <span className="block text-xs text-[var(--text-muted)]">
-          {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'} · {account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}
+        <span className="block text-[22px] font-semibold leading-7 tabular-nums tracking-[-0.01em]" data-testid="account-card-balance">{money(snapshot.accountBalancesMinor[account.id])}</span>
+        <span className="flex flex-wrap gap-1.5">
+          <Chip>{account.account_class === 'asset' ? 'Asset' : 'Liability'}</Chip>
+          <Chip>{account.include_in_cash ? 'Included in cash' : 'Excluded from cash'}</Chip>
         </span>
-        <span className="mt-2 block font-mono">{money(snapshot.accountBalancesMinor[account.id])}</span>
       </AccountColorCard>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border-primary)] px-4 py-6 text-sm">
         <p className="font-semibold text-[var(--text-primary)]">Add your first account</p>
         <p className="mt-1 text-[var(--text-secondary)]">Track where your money lives — checking, savings, cash on hand, credit cards, and loans.</p>
@@ -110,19 +117,19 @@ export function CashTransactionsView({
           <button
             type="button"
             onClick={() => setShowArchived(v => !v)}
-            className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+            className="min-h-[44px] rounded-xl px-2 text-xs font-semibold text-[var(--text-secondary)] [@media(hover:hover)]:hover:text-[var(--text-primary)]"
           >
             {showArchived ? '▲ Hide archived' : `▼ Show ${archivedAccounts.length} archived account${archivedAccounts.length !== 1 ? 's' : ''}`}
           </button>
           {showArchived && (
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {archivedAccounts.map(account => (
-                <AccountColorCard key={account.id} accountId={account.id} archived className="rounded-xl border border-dashed border-[var(--border-primary)] p-3 pl-5 opacity-60">
+                <AccountColorCard key={account.id} accountId={account.id} archived className="rounded-xl border border-dashed border-[var(--surface-line)] p-3.5 pl-6 opacity-70">
                   <div className="flex items-start justify-between gap-1">
                     <strong className="leading-snug text-[var(--text-secondary)]">{account.display_name}</strong>
                     <CashOsAccountRestore account={account} onMutated={handleMutated} />
                   </div>
-                  <span className="block text-xs text-[var(--text-muted)]">
+                  <span className="block text-xs text-[var(--text-secondary)]">
                     Archived · {account.ownership_context === 'business' ? 'Business' : 'Personal'} · {account.account_class === 'asset' ? 'Asset' : 'Liability'}
                   </span>
                 </AccountColorCard>

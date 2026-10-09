@@ -127,7 +127,7 @@ describe('BANK-6E surfaces', () => {
     const btn = a.querySelector('button[aria-expanded]')!
     expect(btn.children[0].textContent).toBe('CHEVRON'); expect(btn.children[1].textContent).toBe('−$62.10')
     expect(btn.children[1].className).toContain('tabular-nums')
-    expect(btn.children[2].textContent).toBe('Oct 3 · Wells Fargo Business Checking 6960'); expect(btn.children[2].querySelector('[data-testid="account-color-dot"]')).not.toBeNull()
+    expect(btn.children[2].textContent).toBe('Oct 3 · Wells Fargo Business Checking 6960 ••••0000') // BANK-6F: the account's last four digits, shown once; expect(btn.children[2].querySelector('[data-testid="account-color-dot"]')).not.toBeNull()
     expect(a.querySelector('[data-testid="entry-status"]')!.textContent).toBe('Reviewed'); expect(b.querySelector('[data-testid="entry-status"]')!.textContent).toBe('Suggested')
     expect((a.querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset.stripe).toBe('solid')
     expect((b.querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset.stripe).toBe('faded') // hollow rail

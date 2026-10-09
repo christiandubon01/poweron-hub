@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
 import { TransactionDetail } from './detail/TransactionDetail'
+import { withMask } from './format'
 import { BucketPicker } from './BucketPicker'
 import { ApprovalConfirm, SelectionBar } from './SelectionBar'
 import { SpendingSnapshot } from './snapshot/SpendingSnapshot'
@@ -126,7 +127,7 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
     <button type="button" className="grid min-h-[44px] w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--text-primary)]" aria-expanded={open} onClick={() => setOpen(o => !o)}>
       <span className="min-w-0 truncate text-[15px] font-semibold leading-6 tracking-[-0.01em]">{row.merchant}</span>
       <span className={`text-right text-[15px] font-semibold leading-6 tabular-nums ${row.pending ? 'opacity-70' : ''}`} style={{ color: toneColor(type.tone) }} data-testid="entry-amount">{out ? '−' : '+'}{usd2(row.amountMinor)}</span>
-      <span className="min-w-0 truncate text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{row.account.mappedTo ?? row.account.label}</span>
+      <span className="min-w-0 truncate text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{withMask(row.account.mappedTo ?? row.account.label, row.account.mask)}</span>
       <span className="flex items-center justify-end gap-1 text-right text-xs font-semibold" style={{ color: toneColor(type.tone) ?? 'var(--text-secondary)' }} data-testid="entry-type" data-kind={type.kind}>
         <span aria-hidden="true" className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none ring-1 ring-current">{type.glyph}</span>{type.label}</span>
       <span className="col-span-2 mt-1.5 flex flex-wrap items-center gap-1">
