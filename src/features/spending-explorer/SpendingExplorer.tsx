@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
-import { BucketPicker } from './BucketPicker'
+import { TransactionDetail } from './detail/TransactionDetail'
 import { SpendingSnapshot } from './snapshot/SpendingSnapshot'
 import { entryType, toneColor } from './entryType'
 import { AccountColorDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
@@ -23,15 +23,10 @@ export const batchSummary = (r: BatchResult): string => {
   const left = [...reasons].map(([k, n]) => `${n} ${SKIP_TEXT[k] ?? k}`).join(', ')
   return `Approved ${r.confirmed}${r.unchanged ? ` (${r.unchanged} already approved)` : ''}.${r.skipped ? ` ${r.skipped} left for individual review: ${left}.` : ''}`
 }
-const CONF: Record<string, string> = { high: 'High', possible: 'Possible', low: 'Low' }
 
 const VIEWS: Array<{ key: ExplorerView; label: string }> = [
   { key: 'review_queue', label: 'To Review' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'all', label: 'All' }, { key: 'known_bills', label: 'Known Bills' }, { key: 'unassigned', label: 'Unassigned Spending' },
   { key: 'repeated_spending', label: 'Repeated Spending' }, { key: 'needs_review', label: 'Needs Review' },
-]
-const REL_KINDS: Array<{ key: string; label: string }> = [
-  { key: 'obligation', label: 'Known bill' }, { key: 'project', label: 'Project' }, { key: 'debt', label: 'Debt payment' }, { key: 'payroll', label: 'Payroll' },
-  { key: 'transfer', label: 'Transfer' }, { key: 'overhead', label: 'General overhead (business)' }, { key: 'personal', label: 'Personal' },
 ]
 
 /** Mirrors the SERVER's batch rule only so the checkboxes appear on the right rows. The server re-decides everything when the owner confirms. */
@@ -39,8 +34,6 @@ const isBatchApprovable = (r: ExplorerRow, batchBuckets: string[]) => r.directio
   && !!r.bucket.key && batchBuckets.includes(r.bucket.key) && r.relationship.state !== 'suggested'
 
 
-/** The categories that fit the direction of the money (unchanged rule: money in gets money-in categories, transfers, personal and "unknown"). */
-const bucketChoicesFor = (row: ExplorerRow, options: Options) => options.buckets.filter(b => (row.direction === 'money_in' ? (b.flow === 'in' || ['transfers', 'personal_owner', 'other_needs_review'].includes(b.key)) : b.flow !== 'in'))
 
 const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}${usd2(r.amountMinor)}`
 
@@ -108,81 +101,6 @@ function Signals({ a }: { a: Analytics }) {
   </div>
 }
 
-function History({ id, load }: { id: string; load: (id: string) => Promise<HistoryEntry[]> }) {
-  const [items, setItems] = useState<HistoryEntry[] | null>(null)
-  const [failed, setFailed] = useState(false)
-  const show = async () => { try { setItems(await load(id)); setFailed(false) } catch { setFailed(true) } }
-  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '')
-  return <div data-testid="spending-history">
-    {items === null ? <button type="button" className={btn} onClick={() => void show()}>Show history</button>
-      : items.length === 0 ? <p className="text-xs text-[var(--text-secondary)]">No decisions yet.</p>
-      : <ul className="space-y-1 text-xs">{items.map((h, i) => <li key={i}>{h.label} · {h.status === 'confirmed' ? 'active' : h.status}{h.status === 'undone' && h.undoReason === 'changed_by_owner' ? ' (replaced)' : ''} · {h.source === 'owner' ? 'by you' : 'from a suggestion'} · {when(h.decidedAt ?? h.createdAt)}{h.undoneAt ? ` → undone ${when(h.undoneAt)}` : ''}</li>)}</ul>}
-    {failed && <p className="text-xs" style={{ color: 'var(--fin-negative)' }}>History could not be loaded.</p>}
-  </div>
-}
-
-function Detail({ row, options, busy, onDecide, loadHistory }: { row: ExplorerRow; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide']; loadHistory: (id: string) => Promise<HistoryEntry[]> }) {
-  const [picking, setPicking] = useState(false)
-  const [kind, setKind] = useState(row.relationship.state === 'confirmed' && row.relationship.kind !== 'unknown' ? row.relationship.kind : '')
-  const [target, setTarget] = useState('')
-  const needsTarget = kind === 'obligation' || kind === 'project' || kind === 'debt'
-  const targets = kind === 'obligation' ? [...options.obligations.map(o => ({ value: `obligation:${o.id}`, label: `${o.label} · ${usd2(o.amountMinor)}` })), ...options.commitments.map(c => ({ value: `commitment:${c.id}`, label: `${c.label} · ${usd2(c.amountMinor)} · ${shortDate(c.expectedDate)}` }))]
-    : kind === 'project' ? options.projects.map(p => ({ value: `project:${p.id}`, label: p.name })) : kind === 'debt' ? options.debts.map(d => ({ value: `debt:${d.id}`, label: d.label })) : []
-  const sendRel = () => {
-    if (!kind || (needsTarget && !target)) return
-    const [type, ...rest] = target.split(':'); const id = rest.join(':')
-    void onDecide({ action: 'set_relationship', transactionId: row.id, kind, ...(needsTarget ? { targetType: kind === 'obligation' ? type : undefined, targetId: id } : {}) })
-  }
-  return <div className={`mt-2 space-y-4 ${panel}`} data-testid="spending-detail">
-    <p className="text-xs text-[var(--text-secondary)]">Bank description: {row.name} · {row.account.label}{row.account.mask ? ` ••••${row.account.mask}` : ''}</p>
-    {row.pending && <p className="text-xs" style={{ color: 'var(--fin-warning)' }}>Pending: it can be categorized or ignored, but not given a relationship until it posts.</p>}
-
-    <section aria-label="What was this money for?">
-      <p className={eyebrow}>What was it for?</p>
-      {row.bucket.state === 'suggested' && <div className="my-1 text-sm"><p>Suggested: <strong>{row.bucket.label}</strong> <Chip>{CONF[row.bucket.confidence ?? 'low']} confidence</Chip></p>
-        <ul className="list-disc pl-5 text-xs text-[var(--text-secondary)]">{row.bucket.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
-        <div className="mt-1 flex flex-wrap gap-2"><button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'accept_suggestion', transactionId: row.id, dimension: 'bucket' })}>Confirm {row.bucket.label}</button>
-          <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'reject_suggestion', transactionId: row.id, dimension: 'bucket' })}>Not this</button></div></div>}
-      {/* BANK-6E: the category is chosen in a modal (BucketPicker); Apply sends the same set_bucket decision as before. */}
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        <span className="min-w-0 flex-1 text-sm" data-testid="detail-category">{row.bucket.state === 'confirmed' && row.bucket.label
-          ? <CategoryPill categoryKey={row.bucket.key} label={row.bucket.label} state="confirmed" />
-          : <span className="text-[var(--text-secondary)]">No category confirmed yet</span>}</span>
-        <button type="button" className={btn} disabled={busy} onClick={() => setPicking(true)} data-testid="detail-change-category">{row.bucket.state === 'confirmed' ? 'Change category…' : 'Choose category…'}</button>
-        {row.bucket.state === 'confirmed' && <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'undo', transactionId: row.id, dimension: 'bucket' })}>Undo</button>}
-      </div>
-      <BucketPicker open={picking} busy={busy} options={bucketChoicesFor(row, options)}
-        currentKey={row.bucket.state === 'confirmed' ? row.bucket.key : null} suggestedKey={row.bucket.state === 'suggested' ? row.bucket.key : null}
-        context={`${row.merchant} · ${row.direction === 'money_out' ? '−' : '+'}${usd2(row.amountMinor)} · ${shortDate(row.date)}`}
-        onClose={() => setPicking(false)} onApply={key => { setPicking(false); void onDecide({ action: 'set_bucket', transactionId: row.id, bucket: key }) }} />
-    </section>
-
-    <section aria-label="What does it belong to?">
-      <p className={eyebrow}>What does it belong to?</p>
-      {row.relationship.state === 'suggested' && <div className="my-1 text-sm"><p>Suggested: <strong>{row.relationship.label}{row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}</strong> <Chip>{CONF[row.relationship.confidence ?? 'low']} confidence</Chip></p>
-        <ul className="list-disc pl-5 text-xs text-[var(--text-secondary)]">{row.relationship.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
-        {!row.pending && <div className="mt-1 flex flex-wrap gap-2"><button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'accept_suggestion', transactionId: row.id, dimension: 'relationship' })}>Confirm</button>
-          <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'reject_suggestion', transactionId: row.id, dimension: 'relationship' })}>Not this</button></div>}</div>}
-      {!row.pending && <div className="flex flex-wrap items-center gap-2">
-        <label className="sr-only" htmlFor={`k-${row.id}`}>Relationship</label>
-        <select id={`k-${row.id}`} className={`${field} min-w-0 flex-1`} value={kind} onChange={e => { setKind(e.target.value); setTarget('') }}><option value="">Unknown / choose…</option>{REL_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}</select>
-        {needsTarget && <><label className="sr-only" htmlFor={`t-${row.id}`}>Which one</label><select id={`t-${row.id}`} className={`${field} min-w-0 flex-1`} value={target} onChange={e => setTarget(e.target.value)}><option value="">Which one…</option>{targets.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}</select></>}
-        <button type="button" className={btn} disabled={busy || !kind || (needsTarget && !target)} onClick={sendRel}>Save</button>
-        {row.relationship.state === 'confirmed' && <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'undo', transactionId: row.id, dimension: 'relationship' })}>Undo</button>}
-      </div>}
-      <p className="mt-1 text-xs text-[var(--text-secondary)]">Business or personal: {row.scope.value}{row.scope.source === 'account' ? ' (from the account)' : row.scope.source === 'owner' ? ' (you set this)' : ''}. Use “Personal” or “General overhead” above to correct it.</p>
-    </section>
-
-    <div className="flex flex-wrap gap-2">
-      {row.review === 'ignored'
-        ? <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'unignore', transactionId: row.id })}>Stop ignoring</button>
-        : <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'ignore', transactionId: row.id })}>Ignore this transaction</button>}
-    </div>
-    <section aria-label="History"><p className={eyebrow}>Decision history</p><History id={row.id} load={loadHistory} /></section>
-    <p className="text-xs text-[var(--text-secondary)]">These choices label bank evidence only. They do not change your balances, ledger, bills, projects or reports.</p>
-  </div>
-}
-
 function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView, checkboxColumn }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; /** keep merchants aligned when some rows in the list have a checkbox */ checkboxColumn?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
   const [open, setOpen] = useState(false)
   const out = row.direction === 'money_out'
@@ -221,7 +139,7 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
       </span>
     </button>
     </div>
-    {open && <Detail row={row} options={options} busy={busy} onDecide={onDecide} loadHistory={loadHistory} />}
+    {open && <TransactionDetail row={row} options={options} busy={busy} onDecide={onDecide} loadHistory={loadHistory} />}
   </li>
 }
 

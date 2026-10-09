@@ -50,6 +50,7 @@ const payload = (rows: unknown[], over: Record<string, unknown> = {}) => ({
 let host: HTMLDivElement, root: Root
 const q = (s: string, el: ParentNode = host) => el.querySelector(s) as HTMLElement | null
 const qa = (s: string, el: ParentNode = host) => [...el.querySelectorAll(s)] as HTMLElement[]
+const byText = (t: string, el: ParentNode = host) => qa('button', el).find(b => b.textContent!.trim() === t)!
 const click = async (el: Element | null) => { expect(el).toBeTruthy(); await act(async () => { (el as HTMLElement).click() }); await flush() }
 const render = async (node: React.ReactNode, get?: unknown) => {
   vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: any) => ({ ok: true, status: 200, json: async () => (init?.method === 'POST' ? { outcome: 'created' } : get) })))
@@ -146,5 +147,85 @@ describe('BANK-6F step 3 · Spending Snapshot', () => {
     await click(q('[data-bucket="fuel_vehicle"]'))
     const on = q('[data-bucket="fuel_vehicle"]')!
     expect(on.getAttribute('aria-pressed')).toBe('true'); expect(on.className).toContain('fin-protected-border')
+  })
+})
+
+describe('BANK-6F step 4 · transaction detail (inline, four sections, same decisions)', () => {
+  const posts = () => (globalThis.fetch as any).mock.calls.filter(([, i]: any) => i?.method === 'POST').map(([, i]: any) => JSON.parse(i.body))
+  const open = async (i = 0) => click(qa('[data-testid="spending-row"] button[aria-expanded]')[i])
+  const detail = () => q('[data-testid="spending-detail"]')!
+  const buttons = () => qa('button', detail()).map(b => b.textContent!.trim())
+
+  it('opens inline beneath its own transaction with four sections in order: evidence, category, belongs to, history', async () => {
+    await render(<SpendingExplorer />, payload([row(), row({ id: 'r2', merchant: 'SHELL' })]))
+    await open(1)
+    const rowEl = qa('[data-testid="spending-row"]')[1]
+    expect(rowEl.contains(detail())).toBe(true)
+    expect(qa('section', detail()).map(x => x.getAttribute('aria-label'))).toEqual(['Bank evidence', 'What was this money for?', 'What does it belong to?', 'History'])
+    expect(q('[data-testid="detail-evidence"]')!.textContent).toMatch(/Bank descriptionCHEVRON 0098.*Wells Fargo Business Checking ••••4417 · bank: Plaid Checking.*Oct 3 · Posted.*−\$62\.10 · ↓ Money out/)
+  })
+
+  it('the account shows its last four digits once, even when the account name already contains them', async () => {
+    await render(<SpendingExplorer />, payload([row({ account: { ...row().account, mappedTo: 'Wells Fargo Business Checking 4417' } })]))
+    await open()
+    expect(q('[data-testid="detail-evidence"]')!.textContent).toContain('AccountWells Fargo Business Checking 4417 · bank: Plaid Checking')
+  })
+
+  it('a suggested category puts the decision first (Confirm is the primary action), with the reasons collapsed but present', async () => {
+    await render(<SpendingExplorer />, payload([row()]))
+    await open()
+    expect(buttons().slice(0, 3)).toEqual(['Confirm Fuel / Vehicle', 'Choose another…', 'Not this'])
+    expect(byText('Confirm Fuel / Vehicle').className).toContain('fin-cash')
+    const why = q('[data-testid="detail-suggestion"] details') as HTMLDetailsElement
+    expect(why.open).toBe(false); expect(why.textContent).toContain('The merchant looks like a fuel / vehicle merchant.')
+    expect(q('[data-testid="detail-suggestion"]')!.textContent).toContain('High confidence')
+  })
+
+  it('no new actions or confirmations: a suggested row offers exactly the pre-6F decisions, and Ignore sends ignore at once', async () => {
+    await render(<SpendingExplorer />, payload([row()]))
+    await open()
+    expect(buttons()).toEqual(['Confirm Fuel / Vehicle', 'Choose another…', 'Not this', ...['Known bill', 'Project', 'Debt payment', 'Payroll', 'Transfer', 'General overhead (business)', 'Personal'], 'Save', 'Ignore this transaction', 'Show history'])
+    await click(byText('Ignore this transaction'))
+    expect(posts()).toEqual([{ action: 'ignore', transactionId: 'r1' }])
+  })
+
+  it('a confirmed relationship shows the decision and Undo first; changing it is one tap away (no editor clutter)', async () => {
+    await render(<SpendingExplorer />, payload([row({ relationship: { kind: 'project', label: 'Project', target: { type: 'project', id: 'p1', label: 'Desert Willow Remodel' }, state: 'confirmed', confidence: 'high', reasons: [] } })]))
+    await open()
+    expect(q('[data-testid="detail-rel-editor"]')).toBeNull()
+    expect(q('section[aria-label="What does it belong to?"]')!.textContent).toContain('✓ Project · Desert Willow Remodel')
+    await click(q('[data-testid="detail-rel-change"]'))
+    expect(q('[data-testid="detail-rel-kind"][data-kind="project"]')!.getAttribute('aria-pressed')).toBe('true') // the current kind, not a guess
+    await click(byText('Cancel'))
+    expect(q('[data-testid="detail-rel-editor"]')).toBeNull()
+    expect(posts()).toEqual([])
+  })
+
+  it('a long target list opens a searchable sheet; choosing there sends nothing, Save sends the same set_relationship', async () => {
+    const projects = Array.from({ length: 12 }, (_, i) => ({ id: `p${i}`, name: `Project ${String(i).padStart(2, '0')}` }))
+    const p = payload([row()]); (p.options as any).projects = projects
+    await render(<SpendingExplorer />, p)
+    await open()
+    await click(q('[data-testid="detail-rel-kind"][data-kind="project"]'))
+    expect(q('select[id^="t-"]')).toBeNull()
+    await click(q('[data-testid="detail-rel-target"]'))
+    expect(q('[role="dialog"] input[type="search"]')).not.toBeNull()
+    await click(q('[role="dialog"] [data-option="project:p7"]')); await click(q('[data-testid="target-picker-apply"]'))
+    expect(posts()).toEqual([])
+    expect(q('[data-testid="detail-rel-target"]')!.textContent).toBe('Project 07')
+    await click(byText('Save'))
+    expect(posts()).toEqual([{ action: 'set_relationship', transactionId: 'r1', kind: 'project', targetId: 'p7' }])
+  })
+
+  it('history stays collapsed until asked, then can be hidden again; it is read-only', async () => {
+    await render(<SpendingExplorer />, payload([row()]))
+    ;(globalThis.fetch as any).mockImplementation(async (u: string) => ({ ok: true, status: 200, json: async () => (/history=/.test(String(u)) ? { history: [{ label: 'Materials', kind: 'category', status: 'confirmed', source: 'owner', decidedAt: '2026-10-02T10:00:00Z', undoneAt: null, undoReason: null, createdAt: '2026-10-02T10:00:00Z' }] } : payload([row()])) }))
+    await open()
+    expect(q('[data-testid="spending-history"] ol')).toBeNull()
+    await click(byText('Show history'))
+    expect(q('[data-testid="spending-history"] ol')!.textContent).toContain('Materials · active · by you')
+    await click(byText('Hide history'))
+    expect(q('[data-testid="spending-history"] ol')).toBeNull()
+    expect(posts()).toEqual([])
   })
 })
