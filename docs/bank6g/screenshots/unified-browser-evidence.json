@@ -1,0 +1,105 @@
+{
+  "browser": "Chromium touch viewport; not Safari/WebKit",
+  "synthetic": true,
+  "evidence": [
+    {
+      "name": "dark-business",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "dark-all_money",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "dark-unassigned",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "light-business",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "light-all_money",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "light-unassigned",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "subcategories",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "transaction-detail",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "category-write-gate",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "shared-colors-settings",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "ignored",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "smart-review",
+      "viewport": 1024,
+      "width": 1024,
+      "snapshots": 0,
+      "lists": 0
+    },
+    {
+      "name": "dark-768",
+      "viewport": 768,
+      "width": 768,
+      "snapshots": 1,
+      "lists": 1
+    },
+    {
+      "name": "dark-390",
+      "viewport": 390,
+      "width": 390,
+      "snapshots": 1,
+      "lists": 1
+    }
+  ],
+  "errors": []
+}

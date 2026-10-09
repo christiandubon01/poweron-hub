@@ -1,3 +1,4 @@
+import { ParentBucketTag } from './ParentBucketTag'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import { CategoryPill, StripeBar, useDisplayColors } from '@/features/display-colors/DisplayColors'
@@ -228,7 +229,7 @@ export default function SmartReview({ onChanged, definitionSave }: { onChanged?:
             <span className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--text-secondary)]" data-testid="entry-type" data-kind={type.kind}><span aria-hidden="true">{type.glyph}</span>{type.label}</span></span>
         </button>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          <CategoryPill categoryKey={choice ?? g.bucket.key} label={choice ? labelOf(choice) : g.bucket.label} state={choice ? 'draft' : 'suggested'} /><Chip tone={g.confidence === 'high' ? 'neutral' : 'muted'}>{CONF[g.confidence]}</Chip>{origin}
+          <ParentBucketTag categoryKey={choice ?? g.bucket.key} /><CategoryPill categoryKey={choice ?? g.bucket.key} label={choice ? labelOf(choice) : g.bucket.label} state={choice ? 'draft' : 'suggested'} /><Chip tone={g.confidence === 'high' ? 'neutral' : 'muted'}>{CONF[g.confidence]}</Chip>{origin}
           {g.mixed && <Chip tone="warn">Mixed purpose</Chip>}{g.flaggedCount > 0 && <Chip tone="warn">{g.flaggedCount} to check</Chip>}
         </div>
         {g.needsChoice && <p className="mt-1 text-xs text-[var(--text-secondary)]">{g.mixed ? `${g.merchant} is used for different purposes, so you pick the category.` : 'This is not a confident match, so you pick the category.'}</p>}

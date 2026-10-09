@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
 import { HierarchyProvider } from './HierarchyProvider'
 import { HierarchyManager } from './HierarchyManager'
-import { SpendingReports } from './SpendingReports'
-import { TransactionDetail } from './detail/TransactionDetail'
+import { REPORT_SCOPES, ReportView, useSpendingReport } from './SpendingReports'
+import type { ReportMode, ReportScope } from '@/finance/bankSpendingReports'
+import { projectReport, matchesExplorerFilters } from './reportProjection'
+import { parentDisplayColor } from '@/features/display-colors/hierarchyColors'
+import { useHierarchy } from './HierarchyProvider'
+import { TransactionRow as Row } from './TransactionRow'
 import { shortDate, usd0, usd2, withMask } from './format'
 import { BucketPicker } from './BucketPicker'
 import { ApprovalConfirm, SelectionBar } from './SelectionBar'
@@ -108,46 +112,13 @@ function Signals({ a }: { a: Analytics }) {
   </div>
 }
 
-function Row({ row, options, busy, onDecide, environment, loadHistory, selectable, selected, onToggle, overrideLabel, reviewedView, checkboxColumn }: { row: ExplorerRow; overrideLabel?: string | null; reviewedView?: boolean; /** keep merchants aligned when some rows in the list have a checkbox */ checkboxColumn?: boolean; environment?: string; loadHistory: (id: string) => Promise<HistoryEntry[]>; selectable: boolean; selected: boolean; onToggle: (row: ExplorerRow) => void; options: Options; busy: boolean; onDecide: ReturnType<typeof useSpendingExplorer>['decide'] }) {
-  const [open, setOpen] = useState(false)
-  const out = row.direction === 'money_out'
-  const { categoryColor, tint } = useDisplayColors()
-  // BANK-6D: the category owns the stripe (solid only when CONFIRMED); a selection is shown by a ring + the "✓ Selected" chip, never by the stripe.
-  const stripe = categoryStripe({ key: row.bucket.key, state: row.bucket.state, ignored: row.review === 'ignored' }, categoryColor, tint.rows)
-  const tinted = tintStyle(stripe)
-  const type = entryType(row) // display only: from the interpretation, never from the amount sign alone
-  // BANK-6E entry card: rail (category), merchant + amount on one line, date · account (with its color dot), then explicit text pills.
-  return <li data-testid="spending-row" data-review={row.review} data-pending={row.pending ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-tint={tinted ? 'on' : 'off'}
-    className={`relative rounded-xl border border-[var(--surface-line)] py-2 pl-5 pr-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.18)] motion-safe:transition-colors ${tinted || selected ? '' : 'bg-[var(--surface-1)] [@media(hover:hover)]:hover:bg-[var(--surface-2)]'} ${row.review === 'ignored' ? 'opacity-70' : ''}`}
-    style={selected ? selectedCard : tinted}>
-    <StripeBar stripe={stripe} shape="card" />
-    <div className="flex items-start gap-1.5">
-    {selectable ? <span className="-ml-2 -mt-1"><Checkbox checked={selected} onChange={() => onToggle(row)} label={`Select ${row.merchant} for batch approval`} testId="spending-select" /></span>
-      : checkboxColumn && <span aria-hidden="true" className="-ml-2 min-w-[44px]" />}
-    <button type="button" className="grid min-h-[44px] w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--text-primary)]" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-      <span className="min-w-0 truncate text-[15px] font-semibold leading-6 tracking-[-0.01em]">{row.merchant}</span>
-      <span className={`text-right text-[15px] font-semibold leading-6 tabular-nums ${row.pending ? 'opacity-70' : ''}`} style={{ color: toneColor(type.tone) }} data-testid="entry-amount">{out ? '−' : '+'}{usd2(row.amountMinor)}</span>
-      <span className="min-w-0 truncate text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · <AccountColorDot accountId={row.account.financialAccountId} />{withMask(row.account.mappedTo ?? row.account.label, row.account.mask)}</span>
-      <span className="flex items-center justify-end gap-1 text-right text-xs font-semibold" style={{ color: toneColor(type.tone) ?? 'var(--text-secondary)' }} data-testid="entry-type" data-kind={type.kind}>
-        <span aria-hidden="true" className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none ring-1 ring-current">{type.glyph}</span>{type.label}</span>
-      <span className="col-span-2 mt-1.5 flex flex-wrap items-center gap-1">
-          {selected && <Chip tone="sel">✓ Selected</Chip>}
-          {overrideLabel && <Chip tone="sel">Your category: {overrideLabel}</Chip>}
-          {row.pending && <Chip tone="warn">Pending</Chip>}
-          {row.account.environment === 'sandbox' && environment === 'production' && <Chip>Sandbox</Chip>}
-          {row.review === 'ignored' ? <Chip tone="muted">Ignored</Chip> : <>
-            {row.bucket.label && <CategoryPill categoryKey={row.bucket.key} label={row.bucket.label} state={row.bucket.state} />}
-            <Chip tone={row.relationship.state === 'confirmed' ? 'done' : 'neutral'}>{row.relationship.state === 'none' ? (out ? 'Unassigned' : row.relationship.label) : `${row.relationship.state === 'confirmed' ? '✓ ' : ''}${row.relationship.label}${row.relationship.target?.label ? ` · ${row.relationship.target.label}` : ''}${row.relationship.state === 'suggested' ? ' · suggested' : ''}`}</Chip>
-            {reviewedView && row.relationship.state === 'confirmed' && row.bucket.state !== 'confirmed' && <span data-testid="spending-category-needs-review"><Chip tone="warn">Relationship reviewed · Category needs review</Chip></span>}
-            {reviewedView && <Chip tone={row.scope.value === 'unclear' ? 'muted' : 'neutral'}>{row.scope.value === 'business' ? 'Business' : row.scope.value === 'personal' ? 'Personal' : 'Business or personal: unclear'}</Chip>}
-            {row.pattern && out && (row.pattern.kind === 'obligation_like' ? <Chip tone="warn">Looks like a recurring bill</Chip> : <Chip>Repeats {row.pattern.cadence}</Chip>)}
-          </>}
-          <span className="ml-auto pl-2"><StatusBadge state={row.review} /></span>
-      </span>
-    </button>
-    </div>
-    {open && <TransactionDetail row={row} options={options} busy={busy} onDecide={onDecide} loadHistory={loadHistory} />}
-  </li>
+
+
+function ExplorerClassificationSettings() {
+  const {hierarchy}=useHierarchy(),{categoryColor}=useDisplayColors()
+  const activity=[['business','Business spending'],['debt','Debt repayments'],['transfer','Transfers'],['refund','Refunds'],['income','Money in'],['unresolved','Unresolved activity']]
+  const parents=[...hierarchy.parents.map(p=>({key:p.key,label:p.name,color:parentDisplayColor(p.key,hierarchy,categoryColor)})),...activity.filter(([key])=>!hierarchy.parents.some(p=>p.key===key)).map(([key,label])=>({key,label,color:parentDisplayColor(key,hierarchy,categoryColor)}))]
+  return <><ColorsPanel parents={parents} categories={hierarchy.categories.filter(c=>c.key!=='other_needs_review').map(c=>({key:c.key,label:c.name,hint:c.archived?'Archived · historical assignments remain':hierarchy.parents.find(p=>p.key===c.parentKey)?.name}))}/><HierarchyManager/></>
 }
 
 /**
@@ -157,7 +128,13 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
 export default function SpendingExplorer() {
   const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore, refresh } = useSpendingExplorer()
   const [showFilters, setShowFilters] = useState(false)
-  const [mode, setMode] = useState<'explorer' | 'smart' | 'reports'>('explorer')
+  const [mode, setMode] = useState<'explorer' | 'smart'>('explorer')
+  const [population,setPopulation] = useState<'review' | ReportMode>('review')
+  const [reportRevision,setReportRevision] = useState(0)
+  const reportScope:ReportScope = { from:new Date(Date.parse(`${data?.asOf ?? new Date().toISOString().slice(0,10)}T00:00:00Z`)-(filters.days-1)*86400000).toISOString().slice(0,10),to:data?.asOf ?? new Date().toISOString().slice(0,10),accounts:filters.accounts,account:filters.account || undefined,environment:data?.environment ?? 'sandbox' }
+  const {report:sourceReport,error:reportError}=useSpendingReport(load==='ready' && mode==='explorer' && population!=='review'?population:null,reportScope,reportRevision)
+  const report=useMemo(()=>sourceReport?projectReport(sourceReport,r=>matchesExplorerFilters(r,filters)):null,[sourceReport,filters])
+  const refreshAll=()=>{setReportRevision(n=>n+1);void refresh()}
   const [showColors, setShowColors] = useState(false)
   const colorsEnabled = useDisplayColors().enabled
   // The review DRAFT. `selection` holds a snapshot of each row (display only), `off` the ones unchecked, `overrides` the owner's category corrections.
@@ -265,22 +242,29 @@ export default function SpendingExplorer() {
     setBatchNote(batchSummary(out))
   }
   const showingSelected = reviewing && items.length > 0
-  return <HierarchyProvider value={data.hierarchy} onChanged={() => void refresh()}><section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
+  return <HierarchyProvider value={sourceReport?.hierarchy ?? data.hierarchy} onChanged={refreshAll}><section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Spending explorer · bank evidence</h3>
-      <span className="text-xs text-[var(--text-secondary)]">Suggestions only. Nothing here changes your balances, ledger or reports.</span>
+      <span className="text-xs text-[var(--text-secondary)]">{population==='review'?'Suggestions only. Nothing here changes your balances, ledger or reports.':'Bank evidence only. Category decisions do not change balances or post accounting entries.'}</span>
     </div>
-    <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
-    {data.coverage?.complete === false ? <p role="alert" className="mt-3 text-sm">Incomplete review coverage · {data.coverage.reason} Review counts describe loaded evidence only; Snapshot totals are withheld.</p> : <div className="mt-3"><SpendingSnapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>}
-
     <SegmentedControl className="mt-4" label="Review mode" value={mode} onChange={setMode} options={[
-      { value: 'explorer', label: 'Explorer', testId: 'spending-mode-explorer' }, { value: 'smart', label: 'Smart Review', testId: 'spending-mode-smart' }, { value: 'reports', label: 'Reports', testId: 'spending-mode-reports' }]} />
-    {mode === 'reports' ? <SpendingReports accountOptions={data.options.accounts} initialScope={{ from: new Date(Date.parse(`${data.asOf}T00:00:00Z`) - (filters.days - 1) * 86400000).toISOString().slice(0,10), to: data.asOf, accounts: filters.accounts, environment: data.environment ?? 'sandbox', account: filters.account || undefined }} /> : mode === 'smart' ? <SmartReview onChanged={() => void refresh()} /> : <>
+      {value:'explorer',label:'Explorer',testId:'spending-mode-explorer'},{value:'smart',label:'Smart Review',testId:'spending-mode-smart'}]} />
+    {mode==='explorer' && <>
+      <SegmentedControl className="mt-3" label="Explorer scope" value={population} onChange={setPopulation} options={[
+        {value:'review',label:'Review & filters',testId:'spending-scope-review'},...REPORT_SCOPES.map(m=>({value:m.key,label:m.label,testId:`spending-scope-${m.key}`}))]} />
+      <div className="mt-3"><FilterBar filters={filters} data={data} update={update} reset={reset} showFilters={showFilters} setShowFilters={setShowFilters} showColors={showColors} setShowColors={setShowColors} colorsEnabled={colorsEnabled} /></div>
+    </>}
+    {mode==='smart' && <button className={`${btn} mt-3`} onClick={()=>setShowColors(v=>!v)} aria-expanded={showColors}>Colors · Classification settings</button>}
+    {showColors && <ExplorerClassificationSettings />}
+    {mode==='smart'?<SmartReview onChanged={refreshAll}/>:population!=='review'?<>
+      {message && <p role="alert" className="mt-2 text-sm">{message}</p>}
+      {reportError?<p role="alert" className="mt-3">{reportError}</p>:!report?<p className="mt-3">Loading complete evidence…</p>:<ReportView report={report} renderRow={r=><Row key={r.id} row={r} options={data.options} busy={busy || !!r.removed} onDecide={async body=>{await decide(body);setReportRevision(n=>n+1)}} loadHistory={loadHistory} environment={data.environment} selectable={false} selected={false} onToggle={()=>{}} reviewedView />}/>}
+    </>:<>
+    <p className="mt-3 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
+    {data.coverage?.complete===false?<p role="alert" className="mt-3 text-sm">Incomplete review coverage · {data.coverage.reason} Review counts describe loaded evidence only; Snapshot totals are withheld.</p>:<div className="mt-3"><SpendingSnapshot a={a} selected={filters.bucket} onPick={bucket=>update({bucket,view:bucket?'unassigned':filters.view,...(data.hierarchy?.available && bucket && [30,60,90].includes(a.windowDays)?{days:a.windowDays as 30|60|90}:{})})}/><Signals a={a}/></div>}
     <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-2"><ViewTabs view={filters.view} data={data} onView={view => update({ view })} /></div>
     <p className="mt-1.5 text-xs text-[var(--text-secondary)]" data-testid={filters.view === 'reviewed' ? 'spending-reviewed-caption' : 'spending-view-caption'}>{VIEW_CAPTION[filters.view]}</p>
-    <div className="mt-3"><FilterBar filters={filters} data={data} update={update} reset={reset} showFilters={showFilters} setShowFilters={setShowFilters} showColors={showColors} setShowColors={setShowColors} colorsEnabled={colorsEnabled} /></div>
-    {showColors && <><ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label, hint: b.hint }))} /><HierarchyManager /></>}
     {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS{data.environment === 'production' ? ' (or from Sandbox test accounts)' : ''} {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
     {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS{data.environment === 'production' ? ' and Sandbox test accounts' : ''}. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
     {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}

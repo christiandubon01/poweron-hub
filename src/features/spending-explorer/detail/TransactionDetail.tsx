@@ -1,3 +1,4 @@
+import { ParentBucketTag } from '../ParentBucketTag'
 /**
  * src/features/spending-explorer/detail/TransactionDetail.tsx
  *
@@ -165,7 +166,7 @@ export function TransactionDetail({ row, options, busy, onDecide, loadHistory }:
         </div>
       </div>}
       {b.state !== 'suggested' && <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-0 flex-1 text-sm" data-testid="detail-category">{b.state === 'confirmed' && b.label
+        <ParentBucketTag categoryKey={b.key}/><span className="min-w-0 flex-1 text-sm" data-testid="detail-category">{b.state === 'confirmed' && b.label
           ? <CategoryPill categoryKey={b.key} label={b.label} state="confirmed" />
           : <span className="text-[var(--text-secondary)]">No category confirmed yet</span>}</span>
         <button type="button" className={b.state === 'confirmed' ? btn : btnPrimary} disabled={busy} onClick={() => setPicking(true)} data-testid="detail-change-category">{b.state === 'confirmed' ? 'Change category…' : 'Choose category…'}</button>

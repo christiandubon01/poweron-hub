@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { categoryOptions, defaultHierarchy, type SpendingHierarchy } from '@/finance/bankSpendingHierarchy'
+import { parentColorKey } from '@/features/display-colors/hierarchyColors'
 import { useDisplayColors } from '@/features/display-colors/DisplayColors'
 
 export interface DefinitionEdit { type: 'parent' | 'category'; key?: string; name: string; parentKey?: string | null; color?: string | null; archived?: boolean }
@@ -23,6 +24,7 @@ export function HierarchyProvider({ value, onChanged, saveDefinition = browserSa
     if (!hierarchy.available || !hierarchy.writesEnabled) throw new Error('Classification management has not been enabled.')
     const key = await saveDefinition(edit)
     if (edit.type === 'category') colors.acceptSavedCategoryColor(key, edit.color ?? null)
+    else await colors.setColor('category', parentColorKey(key), edit.color ?? null)
     setHierarchy(prev => {
       if (edit.type === 'parent') {
         const old = prev.parents.find(p => p.key === key), item = { key, name: edit.name.trim(), color: edit.color ?? null, archived: edit.archived ?? false }

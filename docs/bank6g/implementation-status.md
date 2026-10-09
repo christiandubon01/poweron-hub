@@ -1,6 +1,21 @@
 # BANK-6G release acceptance checkpoint
 
-Updated 2026-10-09. Owner-approved ignored-activity policy is implemented. Production recommendation: **NO-GO pending the gates below**. Overall completion: **93%**; implementation and local verification complete, hosted/Safari acceptance outstanding, production rollout 0%.
+## Unified Explorer correction — 2026-10-09 (latest)
+
+This checkpoint supersedes the installation/deployment statements below, which are retained as history. The owner confirms BANK-6G migration is installed. This correction does not execute SQL, alter the schema, enable custom writes or change financial records. Overall completion: **97%**, pending Published deployment confirmation and native iPad owner acceptance.
+
+Removed the separate Reports tab/application, stacked Snapshot, second filters/settings workflow and plain reporting transaction cards. Explorer now offers Review & filters, All Money Activity, Business Spending and Unassigned Spending in its existing layout. Each selected population has one Snapshot/composition and one transaction list. Smart Review does not carry a duplicate Snapshot above it. Existing review summary and money-bleed signals remain in Review & filters.
+
+Reused BANK-6F SpendingSnapshot composition/rows (shared SpendingBreakdown), FilterBar, SegmentedControl, CategoryPill, StripeBar, existing transaction row/detail/history and Smart Review. Parent → leaf → transaction drill-down uses the existing transaction detail and decision contracts. Shared date/account/search/advanced filters project only complete, already-classified server report populations. Parent/leaf sums and scoped drill-down reconcile; incomplete coverage hides complete totals. Reporting engine, canonical ledger, Money Plan allocations, merchant rules, RLS and interpretation endpoints are unchanged.
+
+Parent colors use reserved `parent_<stable-key>` display keys in the existing organization category-color store and cash_os_set_display_color contract, with the existing 24-color picker. These keys never become leaf assignments. Legacy parent colors remain readable, then saved child colors/palette fallbacks provide color without automatic writes. Leaf keys remain unchanged. Charts, rows, details and Smart Review read the same color context. Colors contains parent/leaf settings and the existing hierarchy manager together. Category creation/rename/archive/move stay write-gated with an explicit read-only explanation; existing permitted assignments and color preferences remain usable. No custom write enablement is included.
+
+Verification: **206 tests / 14 files passed**, including established Explorer/Smart Review/request/color contracts and new unified-layout/projection checks. TypeScript and production build: both passed (existing bundle-size/browser-data warnings only). Fourteen synthetic browser screenshots cover all three populations in both themes, subcategories, transaction details, creation gate, shared settings, ignored activity and Smart Review. Chromium touch widths 1024, 768 and 390 have no horizontal overflow or page errors. Actual Safari/WebKit is **unverified**. See [evidence.md](evidence.md) and [unified-browser-evidence.json](screenshots/unified-browser-evidence.json).
+
+Release: normal fast-forward push to main only after checks pass. Netlify Published SHA must be verified separately if its status is not exposed through repository checks; a successful push/build is not evidence of publication. Rollback: redeploy previous code commit 4cc80065ba9e8d4c94a007d86d26c17940698954 without deleting installed hierarchy/color metadata or history. Keep custom writes disabled. Owner acceptance: confirm one Explorer, three scopes, parent/leaf colors, drill-down, Smart Review, ignored/personal/debt/overhead visibility, both themes and native iPad touch behavior.
+
+
+Historical recovery checkpoint (superseded by the latest section above). Owner-approved ignored-activity policy is implemented. Production recommendation: **NO-GO pending the gates below**. Overall completion: **93%**; implementation and local verification complete, hosted/Safari acceptance outstanding, production rollout 0%.
 
 ## Latest installation-gate correction — 2026-10-09
 

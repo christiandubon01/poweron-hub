@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ColorSwatchPicker, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { parentDisplayColor } from '@/features/display-colors/hierarchyColors'
 import { useHierarchy, type DefinitionEdit } from './HierarchyProvider'
 import { btn, btnPrimary } from './ui'
 
@@ -32,11 +33,11 @@ export function HierarchyManager() {
   const enabled = hierarchy.available && hierarchy.writesEnabled
   return <section className="mt-4 space-y-3 rounded-xl border border-[var(--border-primary)] p-4" aria-label="Classification settings" data-testid="hierarchy-manager">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">Classification settings</h3><span className="text-xs text-[var(--text-secondary)]">Parent bucket → category · one category per transaction</span></div>
-    {!enabled && <p className="text-sm">Management is read-only until the reviewed schema and organization write gate are enabled.</p>}
+    {!enabled && <p className="text-sm">{hierarchy.available?'Management is read-only. Category creation, renaming, moving and archiving await owner approval. Existing choices and color settings remain available.':'Management is read-only until the reviewed schema is available.'}</p>}
     <div className="flex flex-wrap gap-2"><button className={btn} disabled={!enabled} onClick={() => setEdit({ type: 'parent', name: '' })}>+ Create parent bucket</button><button className={btn} disabled={!enabled} onClick={() => setEdit({ type: 'category', name: '' })}>+ Create category</button></div>
     {edit && <DefinitionForm key={`${edit.type}:${edit.key ?? 'new'}`} initial={edit} onClose={() => setEdit(null)} />}
     {hierarchy.parents.map(p => <div key={p.key} className="rounded-xl bg-[var(--surface-1)] p-3">
-      <button className="min-h-[44px] text-left font-semibold" disabled={!enabled} onClick={() => setEdit({ type: 'parent', ...p })}><span className="mr-2 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: p.color ?? 'var(--text-secondary)' }} />{p.name}{p.archived ? ' · Archived' : ''} <span className="text-xs font-normal">· Manage</span></button>
+      <button className="min-h-[44px] text-left font-semibold" disabled={!enabled} onClick={() => setEdit({ type: 'parent', ...p, color: parentDisplayColor(p.key, hierarchy, colors.categoryColor) })}><span className="mr-2 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: parentDisplayColor(p.key, hierarchy, colors.categoryColor) }} />{p.name}{p.archived ? ' · Archived' : ''} <span className="text-xs font-normal">· Manage</span></button>
       <div className="flex flex-wrap gap-2">{hierarchy.categories.filter(c => c.parentKey === p.key).map(c => <button key={c.key} className={btn} disabled={!enabled} onClick={() => setEdit({ type: 'category', ...c, color: colors.categoryColor(c.key) })}>{c.name}{c.archived ? ' · Archived' : ''}</button>)}</div>
     </div>)}
     <div><h4 className="text-sm font-semibold">No parent assigned</h4>{hierarchy.categories.filter(c => !c.parentKey).map(c => <button key={c.key} className={`${btn} mr-2 mt-2`} disabled={!enabled} onClick={() => setEdit({ type: 'category', ...c, color: colors.categoryColor(c.key) })}>{c.name}{c.archived ? ' · Archived' : ''}</button>)}</div>

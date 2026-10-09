@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { HierarchyProvider, categoryOptions, type DefinitionEdit } from './HierarchyProvider'
 import { BucketPicker } from './BucketPicker'
+import { TransactionRow } from './TransactionRow'
 import { ReportView } from './SpendingReports'
 import { defaultHierarchy } from '@/services/bankProvider/spending/hierarchy'
 import { APPROVED_REPORTING_POLICY, buildSpendingReport } from '@/services/bankProvider/spending/reporting'
@@ -47,7 +48,7 @@ describe('BANK-6G creation and reporting interactions',()=>{
   it('drills ignored activity into exact evidence and explains its subtotal is already included',async()=>{
     const row:ExplorerRow={id:'ignored',date:'2026-10-09',name:'Ignored fee',merchant:'Ignored fee',merchantKey:'ignored_fee',amountMinor:1500,direction:'money_out',pending:false,account:{ref:'a',label:'Business checking',mask:null,ownership:'business',mappedTo:'Business checking',mapped:true,environment:'production',financialAccountId:null},bucket:{key:'bank_finance_fees',label:'Bank Fees',state:'confirmed',confidence:'high',reasons:[]},relationship:{kind:'overhead',label:'General overhead',state:'confirmed',confidence:'high',reasons:[],target:null},review:'ignored',scope:{value:'business',source:'owner'},unassigned:false,repeatedPattern:false,pattern:null}
     const r=buildSpendingReport([row],'all_money',{from:'2026-10-01',to:'2026-10-09',accounts:'mapped',environment:'production'},APPROVED_REPORTING_POLICY,{complete:true,reason:null})
-    await mount(<ReportView report={r}/>)
+    await mount(<ReportView report={r} renderRow={row=><TransactionRow key={row.id} row={row} options={{buckets:categoryOptions(r.hierarchy),accounts:[],obligations:[],commitments:[],debts:[],projects:[]}} busy={false} onDecide={async()=>{}} loadHistory={async()=>[]} selectable={false} selected={false} onToggle={()=>{}}/>}/>)
     expect(container.querySelector('[data-testid="ignored-subtotal"]')?.textContent).toContain('do not add again')
     await act(async()=>container.querySelector<HTMLButtonElement>('[data-testid="report-breakdown-group"]')!.click());await flush()
     await act(async()=>container.querySelector<HTMLButtonElement>('[data-testid="report-breakdown-group"]')!.click());await flush()

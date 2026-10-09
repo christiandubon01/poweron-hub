@@ -7,6 +7,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { SWATCH_GROUPS, SWATCHES, swatchName, withAlpha } from './palette'
 import { createDeviceColorStore, createSharedColorStore, EMPTY_COLORS, loadTint, planImport, saveTint, type ColorMaps, type ColorStorage, type ColorTarget, type DisplayColorStore, type ImportEntry, type TintPrefs } from './colorStore'
+import { parentColorKey } from './hierarchyColors'
 import { accountStripe, stripeStyle, tintStyle, type Stripe } from './stripes'
 
 export interface ColorAccount { id: string; label: string; /** e.g. "Business · Checking" (shown under the name in the Colors panel) */ detail?: string }
@@ -291,11 +292,11 @@ function ImportDeviceColors({ labelOf }: { labelOf: (kind: 'category' | 'account
   </section>
 }
 
-export function ColorsPanel({ categories }: { categories: Array<{ key: string; label: string; hint?: string }> }) {
+export function ColorsPanel({ categories, parents = [] }: { categories: Array<{ key: string; label: string; hint?: string }>; parents?: Array<{ key: string; label: string; color: string | null }> }) {
   const { enabled, colors, accounts, tint, setTint, setColor, storage, error } = useDisplayColors()
   const [open, setOpen] = useState<string | null>(null)
   if (!enabled) return null
-  const labelOf = (kind: 'category' | 'account', key: string) => (kind === 'category' ? categories.find(c => c.key === key)?.label : accounts.find(a => a.id.toLowerCase() === key)?.label) ?? key
+  const labelOf = (kind: 'category' | 'account', key: string) => (kind === 'category' ? categories.find(c => c.key === key)?.label ?? parents.find(p => parentColorKey(p.key) === key)?.label : accounts.find(a => a.id.toLowerCase() === key)?.label) ?? key
   const toggle = (id: string) => setOpen(o => (o === id ? null : id))
   const heading = 'text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]'
   return <div className="mt-2 space-y-4 rounded-2xl border border-[var(--surface-line)] bg-[var(--surface-1)] p-3 sm:p-4" data-testid="colors-panel">
@@ -313,6 +314,11 @@ export function ColorsPanel({ categories }: { categories: Array<{ key: string; l
       </div>
       <p className="mt-1 text-xs text-[var(--text-secondary)]">The color rail always shows. Tint applies only to confirmed categories, never to suggestions. Tint settings stay on this device.</p>
     </div>
+    {parents.length > 0 && <section aria-label="Parent bucket colors">
+      <p className={heading}>Parent buckets · {parents.length}</p>
+      <p className="text-xs text-[var(--text-secondary)]">Shared display colors. Changing a color never enables classification writes.</p>
+      <ul className="mt-1 space-y-0.5">{parents.map(p => <ColorLine key={p.key} kind="category" label={p.label} detail="Parent reporting bucket" value={colors.categories[parentColorKey(p.key)] ?? p.color} open={open === `p:${p.key}`} onOpen={() => toggle(`p:${p.key}`)} onChange={v => void setColor('category', parentColorKey(p.key), v)} />)}</ul>
+    </section>}
     <section aria-label="Expense category colors">
       <p className={heading}>Expense categories · {categories.length}</p>
       <ul className="mt-1 space-y-0.5">{categories.map(c => <ColorLine key={c.key} kind="category" label={c.label} detail={c.hint} value={colors.categories[c.key] ?? null} open={open === `c:${c.key}`} onOpen={() => toggle(`c:${c.key}`)} onChange={v => void setColor('category', c.key, v)} />)}</ul>
