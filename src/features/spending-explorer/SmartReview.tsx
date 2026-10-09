@@ -5,8 +5,8 @@ import { categoryStripe } from '@/features/display-colors/stripes'
 import { useSmartReview, type SmartBatchResult, type SmartException, type SmartGroup, type SmartRow } from './useSmartReview'
 
 const NS = 'smart'
-const btn = 'min-h-[44px] rounded-lg px-3 text-sm font-semibold ring-1 ring-[var(--border-primary)] hover:bg-white/5 disabled:opacity-50'
-const field = 'min-h-[44px] rounded-lg bg-transparent px-2 text-sm ring-1 ring-[var(--border-primary)]'
+import { btn, btnOn, btnPrimary, field } from './ui'
+import { entryType, toneColor } from './entryType'
 const usd2 = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 const CONF: Record<string, string> = { high: 'High', possible: 'Possible', low: 'Low' }
@@ -35,10 +35,14 @@ function Chip({ children, tone }: { children: React.ReactNode; tone?: 'ok' | 'wa
 function ExceptionRow({ row, buckets, busy, onSave }: { row: SmartException; buckets: Array<{ key: string; label: string; flow?: 'in' | 'out' }>; busy: boolean; onSave: (id: string, bucket: string) => void }) {
   const [pick, setPick] = useState('')
   const { categoryColor } = useDisplayColors()
+  // Display only: the suggestion (if any) is the only interpretation an exception row has, so its kind reads "Likely …" or plain Money in / out.
+  const type = entryType({ direction: row.direction, bucket: { key: row.suggested.key, state: row.suggested.key ? 'suggested' : 'none' }, relationship: { kind: 'unknown', state: 'none' } })
   const choices = buckets.filter(b => (row.direction === 'money_in' ? (b.flow === 'in' || ['transfers', 'personal_owner', 'other_needs_review'].includes(b.key)) : b.flow !== 'in'))
   return <li className="relative py-2 pl-3" data-testid="smart-exception-row">
     <StripeBar stripe={categoryStripe({ key: row.suggested.key, state: row.suggested.key ? 'suggested' : 'none' }, categoryColor)} />
-    <div className="flex items-baseline justify-between gap-3"><span className="min-w-0 truncate text-sm font-semibold">{row.merchant}</span><span className="shrink-0 text-sm">{row.direction === 'money_in' ? '+' : '−'}{usd2(row.amountMinor)}</span></div>
+    <div className="flex items-baseline justify-between gap-3"><span className="min-w-0 truncate text-sm font-semibold">{row.merchant}</span>
+      <span className="shrink-0 text-right"><span className="block text-sm font-semibold tabular-nums" style={{ color: toneColor(type.tone) }}>{row.direction === 'money_in' ? '+' : '−'}{usd2(row.amountMinor)}</span>
+        <span className="block text-[11px] font-semibold" style={{ color: toneColor(type.tone) ?? 'var(--text-secondary)' }} data-testid="entry-type" data-kind={type.kind}><span aria-hidden="true">{type.glyph} </span>{type.label}</span></span></div>
     <p className="text-xs text-[var(--text-secondary)]">{shortDate(row.date)} · {row.why}{row.suggested.label ? ` Suggested: ${row.suggested.label}${row.suggested.confidence ? ` (${CONF[row.suggested.confidence]})` : ''}.` : ''}</p>
     {row.direction !== 'zero' && <div className="mt-1 flex gap-2">
       <select aria-label={`Category for ${row.merchant}`} className={`${field} min-w-0 flex-1`} value={pick} onChange={e => setPick(e.target.value)}><option value="">Choose a category…</option>{choices.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}</select>
@@ -201,7 +205,7 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       const origin = g.basis === 'owner_rule' ? <Chip tone="ok">Your remembered rule</Chip> : choice ? <Chip tone="ok">Your choice</Chip> : <Chip>Suggestion</Chip>
       const selTotal = sel.reduce((s, r) => s + r.amountMinor, 0)
       const rememberOn = sel.length > 0 && remember.has(g.id)
-      return <li key={g.id} className="relative rounded-xl border border-[var(--border-primary)] p-3 pl-5" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
+      return <li key={g.id} className="relative rounded-xl border border-[var(--border-primary)] bg-white/[0.02] p-3 pl-5 shadow-[0_1px_2px_rgba(0,0,0,0.18)]" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
         <StripeBar stripe={categoryStripe({ key: choice ?? g.bucket.key, state: 'suggested' }, categoryColor)} shape="card" />
         <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={isOpen} onClick={() => toggleOpen(g.id)} data-testid="smart-group-header">
           <span className="min-w-0"><span className="block truncate text-sm font-semibold">{g.merchant}</span>
@@ -214,7 +218,7 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
         </div>
         {g.needsChoice && <p className="mt-1 text-xs text-[var(--text-secondary)]">{g.mixed ? `${g.merchant} is used for different purposes, so you pick the category.` : 'This is not a confident match, so you pick the category.'}</p>}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button type="button" className={`${btn} ${allOn ? 'bg-white/10' : ''}`} role="checkbox" aria-checked={allOn} disabled={busy || ids.length === 0} onClick={() => toggleGroup(g)} data-testid="smart-group-select">
+          <button type="button" className={`${btn} ${allOn ? btnOn : ''}`} role="checkbox" aria-checked={allOn} disabled={busy || ids.length === 0} onClick={() => toggleGroup(g)} data-testid="smart-group-select">
             {allOn ? 'Selected' : g.needsChoice ? `Use ${g.bucket.label} for ${ids.length}` : `Select ${ids.length}`}</button>
           <select aria-label={`Category for ${g.merchant}`} className={`${field} min-w-0`} value={choice ?? (g.needsChoice ? '' : g.bucket.key)} onChange={e => chooseCategory(g, e.target.value)} disabled={busy} data-testid="smart-group-category">
             {g.needsChoice && <option value="">Choose a category…</option>}
@@ -227,8 +231,8 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
           ? <fieldset className="mt-2" data-testid="smart-remember">
               <legend className="text-xs text-[var(--text-secondary)]">For future {g.merchant} transactions</legend>
               <div className="mt-1 flex flex-wrap gap-2">
-                <button type="button" className={`${btn} ${!rememberOn ? 'bg-white/10' : ''}`} aria-pressed={!rememberOn} disabled={busy} onClick={() => toggleRemember(g, false)} data-testid="smart-this-only">Don't remember</button>
-                <button type="button" className={`${btn} ${rememberOn ? 'bg-white/10' : ''}`} aria-pressed={rememberOn} disabled={busy || sel.length === 0} onClick={() => toggleRemember(g, true)} data-testid="smart-remember-on">Remember this category</button>
+                <button type="button" className={`${btn} ${!rememberOn ? btnOn : ''}`} aria-pressed={!rememberOn} disabled={busy} onClick={() => toggleRemember(g, false)} data-testid="smart-this-only">Don't remember</button>
+                <button type="button" className={`${btn} ${rememberOn ? btnOn : ''}`} aria-pressed={rememberOn} disabled={busy || sel.length === 0} onClick={() => toggleRemember(g, true)} data-testid="smart-remember-on">Remember this category</button>
               </div>
               <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="smart-remember-hint">{sel.length === 0
                 ? 'Select a transaction first to remember its category.'
@@ -276,12 +280,12 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
               : <p className="text-xs text-[var(--text-secondary)]" data-testid="smart-confirm-no-remember">No category will be remembered for future transactions.</p>}
             <p className="text-xs text-[var(--text-secondary)]">This labels these bank records with the categories shown. It does not change your balances, ledger, bills, payroll or reports, and each one can be undone.</p>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={`${btn} bg-white/10`} disabled={busy} onClick={() => void approveSelected()} data-testid="smart-confirm-approve">Confirm approval</button>
+              <button type="button" className={btnPrimary} disabled={busy} onClick={() => void approveSelected()} data-testid="smart-confirm-approve">Confirm approval</button>
               <button type="button" className={btn} disabled={busy} onClick={() => setConfirming(false)} data-testid="smart-confirm-cancel">Cancel</button>
             </div>
           </section>
         : <div className="flex flex-wrap gap-2">
-            <button type="button" className={`${btn} bg-white/10`} disabled={busy} onClick={() => setConfirming(true)} data-testid="smart-approve">Approve selected…</button>
+            <button type="button" className={btnPrimary} disabled={busy} onClick={() => setConfirming(true)} data-testid="smart-approve">Approve selected…</button>
             <button type="button" className={btn} disabled={busy} onClick={clearAll} data-testid="smart-clear">Clear selection</button>
           </div>}
     </div>}

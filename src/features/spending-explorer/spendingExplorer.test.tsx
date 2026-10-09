@@ -194,10 +194,16 @@ describe('SpendingExplorer (BANK-5)', () => {
     await click(host.querySelector('[data-testid="spending-row"] button'))
     const d = host.querySelector('[data-testid="spending-detail"]')!
     const set = async (sel: HTMLSelectElement, v: string) => { await act(async () => { sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })) }); await flush() }
-    const bucketSel = d.querySelector('select[id^="b-"]') as HTMLSelectElement, kindSel = d.querySelector('select[id^="k-"]') as HTMLSelectElement
-    expect(bucketSel.value).toBe(''); expect(kindSel.value).toBe('')
-    await set(bucketSel, 'materials'); await click([...d.querySelectorAll('button')].find(b => b.textContent === 'Save bucket')!)
+    const kindSel = d.querySelector('select[id^="k-"]') as HTMLSelectElement
+    expect(d.querySelector('[data-testid="detail-category"]')!.textContent).toBe('No category confirmed yet'); expect(kindSel.value).toBe('')
+    // BANK-6E: the category is picked in a modal; nothing is sent until Apply, and Apply sends the same set_bucket decision as before
+    await click(d.querySelector('[data-testid="detail-change-category"]'))
+    expect((host.querySelector('[data-testid="bucket-picker-apply"]') as HTMLButtonElement).disabled).toBe(true)
+    await click(host.querySelector('[data-testid="bucket-picker"] [data-option="materials"]'))
+    expect(posts()).toEqual([])
+    await click(host.querySelector('[data-testid="bucket-picker-apply"]'))
     expect(posts()[0]).toEqual({ action: 'set_bucket', transactionId: 'r1', bucket: 'materials' })
+    expect(host.querySelector('[data-testid="bucket-picker"]')).toBeNull()
     await set(kindSel, 'project')
     const save = () => [...host.querySelectorAll('[data-testid="spending-detail"] button')].filter(b => b.textContent === 'Save').pop() as HTMLButtonElement
     expect(save().disabled).toBe(true) // no project chosen yet
@@ -214,7 +220,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     await click(host.querySelector('[data-testid="spending-row"] button'))
     const d = host.querySelector('[data-testid="spending-detail"]')!
     expect(d.textContent).toMatch(/Pending: it can be categorized or ignored, but not given a relationship until it posts/)
-    expect(d.querySelector('select[id^="k-"]')).toBeNull(); expect(d.querySelector('select[id^="b-"]')).not.toBeNull()
+    expect(d.querySelector('select[id^="k-"]')).toBeNull(); expect(d.querySelector('[data-testid="detail-change-category"]')).not.toBeNull()
     expect([...d.querySelectorAll('button')].map(b => b.textContent)).toContain('Ignore this transaction')
   })
 
@@ -323,8 +329,9 @@ describe('SpendingExplorer (BANK-5)', () => {
       await mount(payload([dep, row({ id: 'e1' })]))
       const rowsEls = [...host.querySelectorAll('[data-testid="spending-row"]')]
       await click(rowsEls[0].querySelector('button'))
-      const opts = [...rowsEls[0].querySelectorAll('select#b-d1 option')].map(o => o.textContent)
-      expect(opts).toEqual(['Choose a bucket…', 'Customer payment', 'Transfers'])
+      await click(rowsEls[0].querySelector('[data-testid="detail-change-category"]'))
+      const opts = [...host.querySelectorAll('[data-testid="bucket-picker"] [role="radio"]')].map(o => o.getAttribute('data-option'))
+      expect(opts).toEqual(['customer_payment', 'transfers'])
     })
     it('shows the audit trail on request only (read-only), including replaced decisions', async () => {
       await mount(payload([row()]))
