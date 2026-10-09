@@ -396,8 +396,8 @@ describe('SpendingExplorer (BANK-5)', () => {
       const text = items.map(i => i.textContent!.replace(/\s+/g, ' ')).join(' | ')
       expect(text).toMatch(/HOME DEPOT.*Oct 1.*Wells Fargo Business Checking 6960.*••••0000.*−\$120\.00/)
       const hd = items.find(i => i.textContent!.includes('HOME DEPOT'))!
-      expect((hd.querySelector('select') as HTMLSelectElement).value).toBe('materials') // the suggested category is the control's current value
-      expect([...hd.querySelectorAll('option')].find(o => (o as HTMLOptionElement).value === 'materials')!.textContent).toBe('Materials (suggested)')
+      expect(hd.querySelector('[data-testid="spending-selected-category"]')!.getAttribute('data-value')).toBe('materials') // the suggested category is the control's current value
+      expect(hd.querySelector('[data-testid="spending-selected-category"]')!.textContent).toContain('Materials (suggested)')
       expect(text).toMatch(/CHEVRON|SHELL/); expect(text).not.toContain('OTHER')
       expect(host.querySelector('[data-testid="spending-review-selected"]')!.textContent).toBe('Back to review queue')
     })
@@ -486,9 +486,17 @@ describe('SpendingExplorer (BANK-5)', () => {
     const queueRows = () => [...host.querySelectorAll('[data-testid="spending-row"]')]
     const tap = (name: string) => click(itemOf(name).querySelector('span.font-semibold'))
     const review = async () => { await click(host.querySelector('[data-testid="spending-select-all"]')); await click(host.querySelector('[data-testid="spending-review-selected"]')) }
+    // BANK-6F: the category is chosen in the shared sheet (open, pick, Use); it changes only the unsaved draft, exactly like the old menu
     const pickCategory = async (name: string, key: string) => {
-      const sel = itemOf(name).querySelector('select') as HTMLSelectElement
-      await act(async () => { sel.value = key; sel.dispatchEvent(new Event('change', { bubbles: true })) }); await flush()
+      await click(itemOf(name).querySelector('[data-testid="spending-selected-category"]'))
+      await click(document.querySelector(`[role="dialog"] [data-option="${key}"]`))
+      await click(document.querySelector('[data-testid="bucket-picker-apply"]'))
+    }
+    const sheetOptions = async (name: string) => {
+      await click(itemOf(name).querySelector('[data-testid="spending-selected-category"]'))
+      const opts = [...document.querySelectorAll('[role="dialog"] [data-option]')].map(o => ({ key: o.getAttribute('data-option'), text: o.textContent }))
+      await click(document.querySelector('[data-testid="bucket-picker-cancel"]'))
+      return opts
     }
     const stored = () => window.localStorage.getItem(`poweron.spending.review.draft.v1:${SCOPE}`)
     const remount = async (body: unknown, post: unknown = { outcome: 'created' }) => { act(() => root.unmount()); root = createRoot(host); await mount(body, post) }
@@ -549,7 +557,8 @@ describe('SpendingExplorer (BANK-5)', () => {
       await review()
       await pickCategory('AUTOZONE', 'tools_equipment')
       expect(itemOf('AUTOZONE').querySelector('[data-testid="spending-category-changed"]')!.textContent).toMatch(/Changed from the suggestion \(Fuel \/ Vehicle\)/)
-      expect([...itemOf('AUTOZONE').querySelectorAll('option')].map(o => o.textContent)).toEqual(['Materials', 'Fuel / Vehicle (suggested)', 'Meals', 'Tools & Equipment'])
+      // the sheet lists the same four categories (in its grouped order) and marks the suggestion and the owner's current choice
+      expect((await sheetOptions('AUTOZONE')).map(o => o.text)).toEqual(['Materials', 'Fuel / VehicleSuggested', 'Tools & EquipmentCurrent', 'Meals'])
       expect([...host.querySelectorAll('[data-testid="spending-uncheck-category"]')].map(b => b.textContent)).toContain('Uncheck all Tools & Equipment (1)')
       await click(host.querySelector('[data-testid="spending-approve-selected"]'))
       expect([...host.querySelectorAll('[data-testid="spending-confirm-breakdown"] li')].map(l => l.textContent)).toEqual(['Materials · 1$120.00', 'Meals · 3$25.00', 'Tools & Equipment · 1$11.95'])
@@ -566,7 +575,7 @@ describe('SpendingExplorer (BANK-5)', () => {
       await click(host.querySelector('[data-testid="spending-review-selected"]'))
       expect(queueRows().find(r => r.textContent!.includes('AUTOZONE'))!.textContent).toContain('Your category: Tools & Equipment')
       await click(host.querySelector('[data-testid="spending-review-selected"]'))
-      expect((itemOf('AUTOZONE').querySelector('select') as HTMLSelectElement).value).toBe('tools_equipment')
+      expect(itemOf('AUTOZONE').querySelector('[data-testid="spending-selected-category"]')!.getAttribute('data-value')).toBe('tools_equipment')
       await pickCategory('AUTOZONE', 'fuel_vehicle')
       expect(itemOf('AUTOZONE').querySelector('[data-testid="spending-category-changed"]')).toBeNull()
     })
@@ -574,7 +583,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     it('the category list offers only everyday expense categories (never payroll, personal, transfers, owner draw) and changing a category voids an open confirmation', async () => {
       await mount(payload(mixed()))
       await review()
-      expect([...itemOf('KFC').querySelectorAll('option')].map(o => (o as HTMLOptionElement).value)).toEqual(['materials', 'fuel_vehicle', 'meals', 'tools_equipment'])
+      expect((await sheetOptions('KFC')).map(o => o.key)!.sort()).toEqual(['fuel_vehicle', 'materials', 'meals', 'tools_equipment'])
       await click(host.querySelector('[data-testid="spending-approve-selected"]'))
       expect(host.querySelector('[data-testid="spending-confirm"]')).not.toBeNull()
       await pickCategory('KFC', 'materials')
@@ -604,7 +613,7 @@ describe('SpendingExplorer (BANK-5)', () => {
       expect(queueRows().find(r => r.textContent!.includes('KFC'))!.getAttribute('data-selected')).toBe('false')
       expect(posts()).toEqual([])
       await click(host.querySelector('[data-testid="spending-review-selected"]'))
-      expect(items()).toHaveLength(5); expect((itemOf('AUTOZONE').querySelector('select') as HTMLSelectElement).value).toBe('tools_equipment')
+      expect(items()).toHaveLength(5); expect(itemOf('AUTOZONE').querySelector('[data-testid="spending-selected-category"]')!.getAttribute('data-value')).toBe('tools_equipment')
     })
 
     it('restored ids are reconciled against CURRENT eligible evidence: a row decided in the meantime is dropped, and the draft is rewritten without it', async () => {

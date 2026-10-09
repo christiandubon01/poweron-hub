@@ -229,8 +229,8 @@ describe('BANK-6D surfaces', () => {
     await render(<DisplayColorsProvider store={m.store}><SmartReview /></DisplayColorsProvider>, smart)
     const g = q('[data-testid="smart-group"]')!
     expect((g.querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset).toMatchObject({ stripe: 'faded', color: ROSE })
-    const sel = g.querySelector('[data-testid="smart-group-category"]') as HTMLSelectElement
-    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(sel, 'fuel_vehicle'); sel.dispatchEvent(new Event('change', { bubbles: true })) }); await flush()
+    // BANK-6F: the group category is chosen in the shared sheet (open, pick, Use)
+    await click(g.querySelector('[data-testid="smart-group-category"]')); await click(document.querySelector('[role="dialog"] [data-option="fuel_vehicle"]')); await click(document.querySelector('[data-testid="bucket-picker-apply"]'))
     expect((q('[data-testid="smart-group"] [data-testid="color-stripe"]') as HTMLElement).dataset).toMatchObject({ stripe: 'faded', color: TEAL }) // chosen, not approved
     expect(q('[data-testid="smart-group"]')!.getAttribute('style') ?? '').not.toContain('rgba')
     await click(q('[data-testid="smart-exception-group"] button'))

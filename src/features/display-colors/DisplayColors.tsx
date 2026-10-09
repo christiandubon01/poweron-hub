@@ -148,9 +148,10 @@ export function CategoryDot({ categoryKey, hollow = false, className = '' }: { c
  * The category PILL: the explicit, text-first category indicator (BANK-6E).
  *   confirmed -> "✓ Fuel / Vehicle", solid dot, a light wash of the color
  *   suggested -> "Suggested · Fuel / Vehicle", hollow dot, DASHED outline, no fill (a suggestion never looks approved)
+ *   draft     -> "Your choice · Fuel / Vehicle" (BANK-6F D13): the owner picked it but has not approved it yet, so it keeps the dashed, unfilled look
  *   none      -> the plain muted label
  */
-export function CategoryPill({ categoryKey, label, state }: { categoryKey: string | null; label: string; state: 'confirmed' | 'suggested' | 'none' }) {
+export function CategoryPill({ categoryKey, label, state }: { categoryKey: string | null; label: string; state: 'confirmed' | 'suggested' | 'draft' | 'none' }) {
   const { categoryColor } = useDisplayColors()
   const c = categoryKey && state !== 'none' ? categoryColor(categoryKey) : null
   const base = 'inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4'
@@ -160,9 +161,9 @@ export function CategoryPill({ categoryKey, label, state }: { categoryKey: strin
       {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: c }} />}<span className="truncate">✓ {label}</span>
     </span>
   }
-  if (state === 'suggested') {
-    return <span data-testid="category-pill" data-state="suggested" className={`${base} border border-dashed text-[var(--text-secondary)]`} style={{ borderColor: c ?? 'var(--border-primary)' }}>
-      {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ boxShadow: `inset 0 0 0 1.5px ${c}` }} />}<span className="truncate">Suggested · {label}</span>
+  if (state === 'suggested' || state === 'draft') {
+    return <span data-testid="category-pill" data-state={state} className={`${base} border border-dashed ${state === 'draft' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`} style={{ borderColor: c ?? 'var(--border-primary)' }}>
+      {c && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ boxShadow: `inset 0 0 0 1.5px ${c}` }} />}<span className="truncate">{state === 'draft' ? 'Your choice' : 'Suggested'} · {label}</span>
     </span>
   }
   return <span data-testid="category-pill" data-state="none" className={`${base} text-[var(--text-secondary)]`} style={{ boxShadow: 'inset 0 0 0 1px var(--border-primary)' }}><span className="truncate">{label}</span></span>

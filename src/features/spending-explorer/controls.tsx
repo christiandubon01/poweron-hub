@@ -65,7 +65,7 @@ const CHIP_TONE: Record<ChipTone, string> = {
   done: 'text-[var(--text-primary)] ring-1 ring-[var(--surface-line)]',
   warn: 'bg-[var(--fin-warning-tint)] text-[var(--fin-warning)] ring-1 ring-[var(--fin-warning-border)]',
   sel: 'bg-[var(--fin-protected-tint)] text-[var(--fin-protected)] ring-1 ring-[var(--fin-protected-border)]',
-  muted: 'text-[var(--text-muted)] ring-1 ring-[var(--border-primary)]',
+  muted: 'text-[var(--text-secondary)] ring-1 ring-[var(--border-primary)] bg-transparent', /* --text-muted is below 4.5:1 on the light card: never for text */
 }
 export function Chip({ children, tone = 'neutral', testId }: { children: ReactNode; tone?: ChipTone; testId?: string }) {
   return <span className={`inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4 ${CHIP_TONE[tone]}`} data-testid={testId} data-tone={tone}>{children}</span>
@@ -76,7 +76,7 @@ const STATUS: Record<ReviewState, { word: string; cls: string; icon: string }> =
   confirmed: { word: 'Reviewed', cls: 'text-[var(--text-primary)]', icon: 'bg-[var(--text-primary)] text-[var(--bg-card)]' },
   suggested: { word: 'Suggested', cls: 'text-[var(--text-secondary)]', icon: 'border border-dashed border-[var(--text-secondary)]' },
   needs_review: { word: 'Needs review', cls: 'text-[var(--fin-warning)]', icon: 'ring-2 ring-inset ring-[var(--fin-warning)]' },
-  ignored: { word: 'Ignored', cls: 'text-[var(--text-muted)]', icon: 'ring-[1.5px] ring-inset ring-[var(--text-muted)]' },
+  ignored: { word: 'Ignored', cls: 'text-[var(--text-secondary)]', icon: 'ring-[1.5px] ring-inset ring-[var(--text-muted)]' },
 }
 /** Review status (D2): an icon AND a word, at the end of the pill row. Not green: green is reserved for money in and the primary action. */
 export function StatusBadge({ state, testId = 'entry-status' }: { state: ReviewState; testId?: string }) {

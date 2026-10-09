@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
 import { TransactionDetail } from './detail/TransactionDetail'
+import { BucketPicker } from './BucketPicker'
+import { ApprovalConfirm, SelectionBar } from './SelectionBar'
 import { SpendingSnapshot } from './snapshot/SpendingSnapshot'
 import { entryType, toneColor } from './entryType'
-import { AccountColorDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
+import { AccountColorDot, CategoryDot, CategoryPill, ColorsPanel, StripeBar, tintStyle, useDisplayColors } from '@/features/display-colors/DisplayColors'
 import { categoryStripe } from '@/features/display-colors/stripes'
 import { DEFAULT_FILTERS, useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntry, type ExplorerRow, type ExplorerView, type Options } from './useSpendingExplorer'
 
@@ -43,12 +45,13 @@ const signed = (r: ExplorerRow) => `${r.direction === 'money_out' ? '−' : '+'}
  * before approval (the server validates every choice). Nothing here approves or saves anything.
  */
 function SelectedReview({ items, off, overrides, categoryChoices, categories, busy, onToggle, onCategory, onUncheckCategory }: {
-  items: ExplorerRow[]; off: Set<string>; overrides: Map<string, string>; categoryChoices: Array<{ key: string; label: string }>
+  items: ExplorerRow[]; off: Set<string>; overrides: Map<string, string>; categoryChoices: Array<{ key: string; label: string; hint?: string }>
   categories: Array<{ key: string; label: string; count: number }>; busy: boolean
   onToggle: (row: ExplorerRow) => void; onCategory: (row: ExplorerRow, key: string) => void; onUncheckCategory: (key: string) => void
 }) {
   const labelOf = (key: string | null) => categoryChoices.find(c => c.key === key)?.label ?? 'Uncategorized'
   const { categoryColor } = useDisplayColors()
+  const [picking, setPicking] = useState<ExplorerRow | null>(null)
   return <div className="mt-2" data-testid="spending-selected-review">
     <p className="text-xs text-[var(--text-secondary)]">Tap a transaction to check or uncheck it. Only checked transactions are approved. Use the category box to correct a suggestion first. Nothing is saved until you confirm.</p>
     {categories.length > 0 && <div className="mt-2 flex flex-wrap gap-2" data-testid="spending-selected-categories" aria-label="Uncheck a whole category">
@@ -74,14 +77,20 @@ function SelectedReview({ items, off, overrides, categoryChoices, categories, bu
           </span>
         </label>
         <div className="mt-1 flex flex-wrap items-center gap-2 pl-[52px]">
-          <label className="text-xs text-[var(--text-secondary)]" htmlFor={`cat-${r.id}`}>Category</label>
-          <select id={`cat-${r.id}`} className={`${field} min-w-0 flex-1`} value={chosenKey ?? ''} disabled={busy} onChange={e => onCategory(r, e.target.value)} data-testid="spending-selected-category">
-            {categoryChoices.map(c => <option key={c.key} value={c.key}>{c.label}{c.key === r.bucket.key ? ' (suggested)' : ''}</option>)}
-          </select>
+          <span className="text-xs text-[var(--text-secondary)]">Category</span>
+          <button type="button" className={`${btn} min-h-[40px] min-w-0 flex-1 text-left`} disabled={busy} onClick={() => setPicking(r)} data-testid="spending-selected-category" data-value={chosenKey ?? ''}
+            aria-label={`Category for ${r.merchant}: ${labelOf(chosenKey)}. Change`}>
+            <span className="flex min-w-0 items-center gap-2"><CategoryDot categoryKey={chosenKey} /><span className="truncate">{labelOf(chosenKey)}{chosenKey === r.bucket.key ? ' (suggested)' : ''}</span><span aria-hidden="true" className="ml-auto text-[var(--text-secondary)]">⌄</span></span>
+          </button>
           {changed && <span className="w-full text-xs" data-testid="spending-category-changed" style={{ color: 'var(--fin-warning)' }}>Changed from the suggestion ({labelOf(r.bucket.key)}). Your category will be saved when you confirm.</span>}
         </div>
       </li>
     })}</ul>
+    {picking && <BucketPicker open busy={busy} options={categoryChoices} currentKey={overrides.get(picking.id) ?? picking.bucket.key} suggestedKey={picking.bucket.key}
+      title="Category for approval" eyebrow="Review selected" context={`${picking.merchant} · ${signed(picking)} · ${shortDate(picking.date)}`} applyLabel="Use"
+      idleNote="Only categories that can be approved together are listed. Nothing is saved until you confirm approval."
+      changeNote={(to, from) => <>Use <span className="font-semibold text-[var(--text-primary)]">{to}</span>{from ? <> instead of {from}</> : null}. Nothing is saved until you confirm approval.</>}
+      onClose={() => setPicking(null)} onApply={key => { onCategory(picking, key); setPicking(null) }} />}
   </div>
 }
 
@@ -207,7 +216,7 @@ export default function SpendingExplorer() {
   if (load !== 'ready' || !data || data.viewCounts.all === 0) return null
   const a = data.analytics
   const approvable = (r: ExplorerRow) => isBatchApprovable(r, batchBuckets)
-  const categoryChoices = (data.options.buckets ?? []).filter(b => batchBuckets.includes(b.key)).map(b => ({ key: b.key, label: b.label }))
+  const categoryChoices = (data.options.buckets ?? []).filter(b => batchBuckets.includes(b.key)).map(b => ({ key: b.key, label: b.label, hint: b.hint }))
   const labelFor = (key: string | null) => categoryChoices.find(c => c.key === key)?.label ?? data.options.buckets.find(b => b.key === key)?.label ?? 'Uncategorized'
   const eligible = rows.filter(approvable)
   const freshById = new Map(rows.map(r => [r.id, r]))
@@ -218,7 +227,7 @@ export default function SpendingExplorer() {
   const chosenIds = new Set(chosen.map(r => r.id))
   const categories = [...chosen.reduce((m, r) => { const key = effectiveKey(r); const e = m.get(key) ?? { key, label: labelFor(key), count: 0 }; e.count += 1; return m.set(key, e) }, new Map<string, { key: string; label: string; count: number }>()).values()].sort((x, y) => y.count - x.count || x.label.localeCompare(y.label))
   const totalOutMinor = chosen.reduce((n, r) => n + Math.abs(r.amountMinor), 0)
-  const breakdown = [...chosen.reduce((m, r) => { const k = labelFor(effectiveKey(r)); const e = m.get(k) ?? { label: k, count: 0, totalMinor: 0 }; e.count += 1; e.totalMinor += Math.abs(r.amountMinor); return m.set(k, e) }, new Map<string, { label: string; count: number; totalMinor: number }>()).values()].sort((x, y) => y.totalMinor - x.totalMinor || x.label.localeCompare(y.label))
+  const breakdown = [...chosen.reduce((m, r) => { const k = effectiveKey(r); const e = m.get(k) ?? { key: k, label: labelFor(k), count: 0, totalMinor: 0 }; e.count += 1; e.totalMinor += Math.abs(r.amountMinor); return m.set(k, e) }, new Map<string, { key: string; label: string; count: number; totalMinor: number }>()).values()].sort((x, y) => y.totalMinor - x.totalMinor || x.label.localeCompare(y.label))
   const touch = () => { setConfirming(false); setBatchNote(null) } // any change to the draft voids a confirmation that was already showing
   /** Tap = check or uncheck. A row that was never selected is added (checked); a selected row only flips, and stays listed. */
   const toggle = (row: ExplorerRow) => {
@@ -313,25 +322,12 @@ export default function SpendingExplorer() {
       : <ul className="mt-2 space-y-1.5" data-testid="spending-list">{rows.map(r => <Row key={r.id} checkboxColumn={rows.some(approvable)} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
     {pendingRestore.size > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-pending-restore">{pendingRestore.size} saved selection{pendingRestore.size === 1 ? ' is' : 's are'} on transactions not loaded yet. {pendingRestore.size === 1 ? 'It returns' : 'They return'} if {pendingRestore.size === 1 ? 'it loads' : 'they load'}; use Show more.</p>}
-    {items.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-protected-border)' }} data-testid="spending-selection-bar" role="region" aria-label="Selected transactions">
-      <p className="text-sm font-semibold" aria-live="polite"><span data-testid="spending-selected-count">{chosen.length} selected</span> <span className="font-normal text-[var(--text-secondary)]">· {usd2(totalOutMinor)} going out</span></p>
-      {confirming
-        ? <section role="alertdialog" aria-label="Confirm batch approval" data-testid="spending-confirm" className="space-y-2 rounded-lg border border-[var(--surface-line)] p-3">
-            <p className="text-sm font-semibold" data-testid="spending-confirm-title">Approve {chosen.length} transaction{chosen.length === 1 ? '' : 's'}?</p>
-            <ul className="text-sm" data-testid="spending-confirm-breakdown">{breakdown.map(b => <li key={b.label} className="flex justify-between gap-3"><span>{b.label} · {b.count}</span><span>{usd2(b.totalMinor)}</span></li>)}</ul>
-            <p className="flex justify-between gap-3 border-t border-[var(--border-primary)] pt-2 text-sm font-semibold" data-testid="spending-confirm-total"><span>Total going out</span><span>{usd2(totalOutMinor)}</span></p>
-            <p className="text-xs text-[var(--text-secondary)]">This labels these bank records with the categories shown. It does not change your balances, ledger, bills, payroll or reports, and each one can be undone.</p>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className={btnPrimary} disabled={busy} onClick={() => void approveSelected()} data-testid="spending-confirm-approve">Confirm approval</button>
-              <button type="button" className={btn} disabled={busy} onClick={() => setConfirming(false)} data-testid="spending-confirm-cancel">Cancel</button>
-            </div>
-          </section>
-        : <div className="flex flex-wrap gap-2">
-            <button type="button" className={btn} disabled={busy} aria-pressed={showingSelected} onClick={() => setReviewing(r => !r)} data-testid="spending-review-selected">{showingSelected ? 'Back to review queue' : 'Review selected'}</button>
-            <button type="button" className={btn} disabled={busy} onClick={clearSelection} data-testid="spending-clear-selection">Clear selection</button>
-            <button type="button" className={btnPrimary} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
-          </div>}
-    </div>}
+    {items.length > 0 && <SelectionBar prefix="spending" count={chosen.length} totalMinor={totalOutMinor} confirming={confirming}
+      confirm={<ApprovalConfirm prefix="spending" label="Confirm batch approval" count={chosen.length} breakdown={breakdown} totalMinor={totalOutMinor} busy={busy} onConfirm={() => void approveSelected()} onCancel={() => setConfirming(false)} />}>
+      <button type="button" className={btn} disabled={busy} aria-pressed={showingSelected} onClick={() => setReviewing(r => !r)} data-testid="spending-review-selected">{showingSelected ? 'Back to review queue' : 'Review selected'}</button>
+      <button type="button" className={btn} disabled={busy} onClick={clearSelection} data-testid="spending-clear-selection">Clear selection</button>
+      <button type="button" className={btnPrimary} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
+    </SelectionBar>}
     </>}
   </section>
 }

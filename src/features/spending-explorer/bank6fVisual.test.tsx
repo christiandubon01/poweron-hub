@@ -70,6 +70,11 @@ describe('BANK-6F step 2 · semantic layer', () => {
     }
   })
 
+  it('no small text uses --text-muted (below 4.5:1 on the light card)', () => {
+    for (const f of ['src/features/spending-explorer/controls.tsx', 'src/features/spending-explorer/SmartReview.tsx', 'src/features/spending-explorer/SpendingExplorer.tsx', 'src/features/spending-explorer/detail/TransactionDetail.tsx', 'src/features/spending-explorer/snapshot/SpendingSnapshot.tsx'])
+      expect(readFileSync(f, 'utf8').match(/\btext-\[var\(--text-muted\)\]/g) ?? [], f).toEqual([])
+  })
+
   it('status badge (D2): an icon and a word for every review state; Reviewed is never green', async () => {
     await render(<>{(['confirmed', 'suggested', 'needs_review', 'ignored'] as const).map(s => <StatusBadge key={s} state={s} />)}</>)
     const badges = qa('[data-testid="entry-status"]')
@@ -226,6 +231,85 @@ describe('BANK-6F step 4 · transaction detail (inline, four sections, same deci
     expect(q('[data-testid="spending-history"] ol')!.textContent).toContain('Materials · active · by you')
     await click(byText('Hide history'))
     expect(q('[data-testid="spending-history"] ol')).toBeNull()
+    expect(posts()).toEqual([])
+  })
+})
+
+describe('BANK-6F step 5 · unified category sheets and Smart Review', () => {
+  const posts = () => (globalThis.fetch as any).mock.calls.filter(([, i]: any) => i?.method === 'POST').map(([, i]: any) => JSON.parse(i.body))
+  const sheetKeys = () => qa('[role="dialog"] [data-option]', document).map(o => o.dataset.option)
+  const BUCKETS = [{ key: 'materials', label: 'Materials', hint: 'Job materials and supplies' }, { key: 'fuel_vehicle', label: 'Fuel / Vehicle', hint: '' }, { key: 'meals', label: 'Meals', hint: '' }, { key: 'personal_owner', label: 'Personal / Owner', hint: '' }, { key: 'customer_payment', label: 'Customer payment', hint: '', flow: 'in' }]
+  const smartData = (over: Record<string, unknown> = {}) => ({ asOf: '2026-10-07', accounts: 'mapped', draftScope: 'abcdef0123456789', rulesAvailable: true, maxBatch: 100, merchantRules: [],
+    groups: [
+      { id: 'NETLIFY|materials', merchantKey: 'NETLIFY', merchant: 'NETLIFY', bucket: { key: 'materials', label: 'Materials' }, confidence: 'high', basis: 'merchant_rule', needsChoice: false, mixed: false, count: 2, totalMinor: 3800, flaggedCount: 0, reasons: [], rows: [{ id: 'n1', date: '2026-09-01', name: 'NETLIFY', amountMinor: 1900, flags: [] }, { id: 'n2', date: '2026-09-02', name: 'NETLIFY', amountMinor: 1900, flags: [] }] },
+      { id: 'VONS|meals', merchantKey: 'VONS', merchant: 'VONS', bucket: { key: 'meals', label: 'Meals' }, confidence: 'possible', basis: 'provider_category', needsChoice: true, mixed: true, count: 1, totalMinor: 8351, flaggedCount: 0, reasons: [], rows: [{ id: 'v1', date: '2026-09-08', name: 'VONS', amountMinor: 8351, flags: [] }] }],
+    exceptions: [{ reason: 'pending', label: 'Pending', count: 1, totalMinor: 500, rows: [{ id: 'p1', date: '2026-09-09', name: 'SHELL', merchant: 'SHELL', amountMinor: 500, direction: 'money_out', reason: 'pending', why: 'Still pending.', suggested: { key: 'fuel_vehicle', label: 'Fuel / Vehicle', confidence: 'high' } }] }],
+    totals: { groupedCount: 3, groupedMinor: 12151, groups: 2, exceptionCount: 1 }, options: { buckets: BUCKETS, batchBuckets: ['materials', 'fuel_vehicle', 'meals'] }, ...over })
+  const groupEl = (m: string) => qa('[data-testid="smart-group"]').find(g => g.dataset.merchant === m)!
+
+  it('Smart Review group: signed total and entry type like an entry card; the sheet lists only categories that can be approved together', async () => {
+    await render(<SmartReview />, smartData())
+    expect(q('[data-testid="smart-group-header"]', groupEl('NETLIFY'))!.textContent).toMatch(/NETLIFY2 transactions · Show−\$38\.00.*Money out/)
+    await click(q('[data-testid="smart-group-category"]', groupEl('NETLIFY')))
+    expect(sheetKeys()).toEqual(['materials', 'fuel_vehicle', 'meals'])
+    expect(q('[data-option="materials"]', document)!.getAttribute('aria-checked')).toBe('true') // the confident suggestion is the current value
+    await click(q('[data-testid="bucket-picker-cancel"]', document))
+    expect(posts()).toEqual([])
+  })
+
+  it('D13: the owner\'s pick reads "Your choice · X" on a dashed pill (not approved); "Remove my choice" undoes it and its selection; nothing is sent', async () => {
+    await render(<SmartReview />, smartData())
+    await click(q('[data-testid="smart-group-category"]', groupEl('VONS')))
+    expect(qa('[role="dialog"] [aria-checked="true"]', document)).toHaveLength(0) // a mixed-purpose merchant is never preselected
+    expect(q('[data-testid="bucket-picker-clear"]', document)).toBeNull() // nothing to remove yet
+    await click(q('[data-option="fuel_vehicle"]', document)); await click(q('[data-testid="bucket-picker-apply"]', document))
+    const pill = q('[data-testid="category-pill"]', groupEl('VONS'))!
+    expect(pill.dataset.state).toBe('draft'); expect(pill.textContent).toBe('Your choice · Fuel / Vehicle'); expect(pill.className).toContain('border-dashed')
+    expect(q('[data-testid="smart-selected-count"]')!.textContent).toBe('1 selected')
+    await click(q('[data-testid="smart-group-category"]', groupEl('VONS')))
+    await click(q('[data-testid="bucket-picker-clear"]', document))
+    expect(q('[data-testid="category-pill"]', groupEl('VONS'))!.dataset.state).toBe('suggested')
+    expect(q('[data-testid="smart-selection-bar"]')).toBeNull()
+    expect(posts()).toEqual([])
+  })
+
+  it('the stepper marks the current step: select, then check, then approve', async () => {
+    await render(<SmartReview />, smartData())
+    const current = () => q('[data-testid="smart-steps"] [aria-current="step"]')!.textContent
+    expect(current()).toBe('1Select transactions')
+    await click(q('[data-testid="smart-group-select"]', groupEl('NETLIFY')))
+    expect(current()).toBe('2Check the category')
+    await click(q('[data-testid="smart-approve"]'))
+    expect(current()).toBe('3Approve selected')
+  })
+
+  it('a pending exception cannot be categorized yet and says why (same rule as the old disabled Save)', async () => {
+    await render(<SmartReview />, smartData())
+    await click(q('[data-testid="smart-exception-group"] button'))
+    const b = q('[data-testid="smart-exception-category"]') as HTMLButtonElement
+    expect(b.disabled).toBe(true); expect(q('[data-testid="smart-exception-row"]')!.textContent).toContain('Can be categorized once it posts.')
+  })
+
+  it('one selection bar and one confirmation for both surfaces: blue, above the home indicator, with category dots in the breakdown', async () => {
+    await render(<SmartReview />, smartData())
+    await click(q('[data-testid="smart-group-select"]', groupEl('NETLIFY')))
+    const bar = q('[data-testid="smart-selection-bar"]')!
+    expect(bar.className).toContain('sticky bottom-[max(0.5rem,env(safe-area-inset-bottom))]'); expect(bar.style.borderColor).toBe('var(--fin-protected-border)')
+    await click(q('[data-testid="smart-approve"]'))
+    expect(q('[data-testid="smart-confirm-title"]')!.textContent).toBe('Approve 2 transactions?')
+    expect(q('[data-testid="smart-confirm-breakdown"] li')!.textContent).toBe('Materials · 2$38.00')
+  })
+
+  it('Review Selected: the category opens the same sheet (only batch categories); choosing changes the draft, not the server', async () => {
+    const mk = (id: string, merchant: string) => row({ id, merchant, name: merchant })
+    await render(<SpendingExplorer />, payload([mk('a1', 'CHEVRON'), mk('a2', 'SHELL')]))
+    await click(q('[data-testid="spending-select-all"]')); await click(q('[data-testid="spending-review-selected"]'))
+    const item = qa('[data-testid="spending-selected-item"]').find(i => i.textContent!.includes('SHELL'))!
+    expect(item.querySelector('select')).toBeNull()
+    await click(q('[data-testid="spending-selected-category"]', item))
+    expect(sheetKeys()).toEqual(['materials', 'fuel_vehicle', 'meals'])
+    await click(q('[data-option="meals"]', document)); await click(q('[data-testid="bucket-picker-apply"]', document))
+    expect(q('[data-testid="spending-category-changed"]', item)!.textContent).toMatch(/Changed from the suggestion \(Fuel \/ Vehicle\)/)
     expect(posts()).toEqual([])
   })
 })
