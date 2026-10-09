@@ -11,6 +11,8 @@ import { Check } from 'lucide-react'
 import { entryType, toneColor } from './entryType'
 import { CONF, shortDate, usd2 } from './format'
 import { BucketPicker } from './BucketPicker'
+import { HierarchyProvider, type DefinitionSave } from './HierarchyProvider'
+import { isBucketKey } from '@/finance/bankSpendingTaxonomy'
 import { ApprovalConfirm, SelectionBar } from './SelectionBar'
 const FLAG_TEXT: Record<string, string> = {
   unusual_amount: 'Unusually large for this merchant', possible_duplicate: 'Same amount on the same day', history_conflict: 'You categorized this merchant differently before',
@@ -46,7 +48,7 @@ function ExceptionRow({ row, buckets, busy, onSave }: { row: SmartException; buc
       <button type="button" className={btn} disabled={busy || row.reason === 'pending'} onClick={() => setPicking(true)} data-testid="smart-exception-category" aria-label={`Choose a category for ${row.merchant}`}>Choose category…</button>
       {row.reason === 'pending' && <span className="text-xs text-[var(--text-secondary)]">Can be categorized once it posts.</span>}
     </div>}
-    <BucketPicker open={picking} busy={busy} options={choices} currentKey={null} suggestedKey={row.suggested.key} applyLabel="Save category" eyebrow="Individual decision"
+    <BucketPicker open={picking} busy={busy} allowCustom={row.direction !== 'money_in'} options={choices} currentKey={null} suggestedKey={row.suggested.key} applyLabel="Save category" eyebrow="Individual decision"
       title={`Category for ${row.merchant}`} context={`${row.direction === 'money_in' ? '+' : '−'}${usd2(row.amountMinor)} · ${shortDate(row.date)}`}
       idleNote="Pick a category, then Save category. This labels this one bank record only."
       changeNote={to => <>Save <span className="font-semibold text-[var(--text-primary)]">{to}</span> for this transaction. This labels this one bank record only.</>}
@@ -59,7 +61,7 @@ function ExceptionRow({ row, buckets, busy, onSave }: { row: SmartException; buc
  * until the owner approves it; remembered categories only improve suggestions; the server re-decides every row when the owner confirms; and approving labels
  * bank evidence only (no ledger, balance, bill, project or payroll is touched).
  */
-export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
+export default function SmartReview({ onChanged, definitionSave }: { onChanged?: () => void; definitionSave?: DefinitionSave }) {
   const { data, state, busy, message, approve, forget, setBucket, refresh } = useSmartReview()
   const { categoryColor } = useDisplayColors()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -129,7 +131,7 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
     for (const id of chosen) { const g = groupOfRow.get(id)!; const key = effective(g) ?? g.bucket.key; const e = m.get(key) ?? { key, label: labelOf(key), count: 0, totalMinor: 0 }; e.count += 1; e.totalMinor += rowById.get(id)!.amountMinor; m.set(key, e) }
     return [...m.values()].sort((a, b) => b.totalMinor - a.totalMinor)
   })()
-  const rememberedGroups = groups.filter(g => remember.has(g.id) && chosen.some(id => groupOfRow.get(id) === g) && data.rulesAvailable)
+  const rememberedGroups = groups.filter(g => remember.has(g.id) && chosen.some(id => groupOfRow.get(id) === g) && data.rulesAvailable && isBucketKey(effective(g)))
 
   const addMany = (ids: string[]) => {
     setSelected(prev => {
@@ -163,6 +165,7 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
     touch()
     if (!key) { setChoices(prev => { const n = new Map(prev); n.delete(g.id); return n }); dropMany(g.rows.map(r => r.id)); return }
     setChoices(prev => new Map(prev).set(g.id, key))
+    if (!isBucketKey(key)) setRemember(prev => { const n = new Set(prev); n.delete(g.id); return n })
     addMany(unflagged(g))
   }
   const toggleOpen = (id: string) => setOpen(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -181,7 +184,8 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
     if (out) { setNote(smartSummary(out)); setSelected(new Set()); setChoices(new Map()); setRemember(new Set()); if (scope) clearDraft(scope, NS); onChanged?.() }
   }
 
-  return <div className="mt-3" data-testid="smart-review">
+  return <HierarchyProvider value={data.hierarchy} saveDefinition={definitionSave} onChanged={() => void refresh()}><div className="mt-3" data-testid="smart-review">
+    {data.coverage?.complete === false && <p role="alert" className="mb-3 text-sm">Incomplete review coverage · {data.coverage.reason} Group totals and counts describe loaded evidence only.</p>}
     <p className="text-xs text-[var(--text-secondary)]">Your unreviewed spending, grouped by merchant. Open a group to see every transaction.</p>
     <ol className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs" data-testid="smart-steps" aria-label="How Smart Review works">
       {['Select transactions', 'Check the category', 'Approve selected'].map((t, i) => {
@@ -241,7 +245,7 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
               <legend className="text-xs text-[var(--text-secondary)]">For future {g.merchant} transactions</legend>
               <SegmentedControl className="mt-1" label={`For future ${g.merchant} transactions`} value={rememberOn ? 'on' : 'off'} onChange={v => toggleRemember(g, v === 'on')} options={[
                 { value: 'off', label: "Don't remember", testId: 'smart-this-only', disabled: busy },
-                { value: 'on', label: 'Remember this category', testId: 'smart-remember-on', disabled: busy || sel.length === 0 }]} />
+                { value: 'on', label: 'Remember this category', testId: 'smart-remember-on', disabled: busy || sel.length === 0 || !isBucketKey(effective(g)) }]} />
               <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="smart-remember-hint">{sel.length === 0
                 ? 'Select a transaction first to remember its category.'
                 : rememberOn
@@ -293,5 +297,5 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       <button type="button" className={btn} disabled={busy} onClick={clearAll} data-testid="smart-clear">Clear selection</button>
     </SelectionBar>}
     <button type="button" className={`${btn} mt-3`} disabled={busy} onClick={() => void refresh()}>Refresh</button>
-  </div>
+  </div></HierarchyProvider>
 }

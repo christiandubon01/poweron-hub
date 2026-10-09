@@ -22,6 +22,8 @@ import { buildSmartReview } from './smartReview'
 import { buildRows, filterRows, viewCounts, type AccountScope, type ExplorerQuery, type ExplorerView, EXPLORER_VIEWS } from './explorer'
 import { BATCH_APPROVABLE_BUCKETS, BUCKETS, bucketFitsDirection, bucketLabel, isBucketKey, isRelationshipKind, RELATIONSHIP_KINDS, type BucketKey, type Confidence, type RelationshipKind } from './taxonomy'
 import type { AccountContext, Decision, DebtOption, EvidenceTx, KnownBillCandidate, ProjectOption } from './types'
+import { canAssign, categoryName, categoryOptions, defaultHierarchy, explicitBatchKeys, type SpendingHierarchy } from './hierarchy'
+import { APPROVED_REPORTING_POLICY, buildSpendingReport, REPORT_MODES, type ReportMode, type SpendingReport } from './reporting'
 
 export interface ObligationRow {
   id: string; name: string; amountMinor: number; amountType: 'fixed' | 'estimated'; estimatedMinMinor: number | null; estimatedMaxMinor: number | null
@@ -32,6 +34,9 @@ export interface OccurrenceRow { obligationId: string; scheduledDate: string; ov
 export interface CommitmentRow { id: string; title: string; expectedDate: string; amountMinor: number; amountType: 'fixed' | 'estimated'; estimatedMinMinor: number | null; estimatedMaxMinor: number | null; status: string; reconciliationState: string; accountId: string | null }
 
 export interface SpendingContext {
+  hierarchy?: SpendingHierarchy
+  reportCoverage?: SpendingReport['coverage']
+  legacyCoverage?: SpendingReport['coverage']
   txs: EvidenceTx[]
   accounts: AccountContext[]
   decisions: Decision[]
@@ -64,6 +69,8 @@ export interface NewDecision {
 }
 
 export interface SpendingRepo {
+  loadHierarchy?(organizationId: string): Promise<SpendingHierarchy>
+  loadReportContext?(organizationId: string, sinceDate: string): Promise<SpendingContext>
   loadContext(organizationId: string, sinceDate: string): Promise<SpendingContext>
   getEvidence(organizationId: string, id: string): Promise<{ id: string; pending: boolean; removed: boolean; amountMinor: number } | null>
   /** The audit trail of one transaction (every decision ever made, including undone and rejected ones). */
@@ -116,15 +123,17 @@ export function buildBillCandidates(ctx: Pick<SpendingContext, 'obligations' | '
 export const ownerRulesOf = (ctx: Pick<SpendingContext, 'merchantRules'>): Map<string, BucketKey> =>
   new Map((ctx.merchantRules ?? []).filter(r => isBucketKey(r.category) && BATCH_APPROVABLE_BUCKETS.includes(r.category)).map(r => [r.merchantKey, r.category as BucketKey]))
 
-export function explorerFromContext(ctx: SpendingContext, asOf: string, accountScope: AccountScope = 'all', activeEnvironment?: 'sandbox' | 'production') {
+export function explorerFromContext(ctx: SpendingContext, asOf: string, accountScope: AccountScope = 'all', activeEnvironment?: 'sandbox' | 'production', includeRemoved = false) {
   const dates = ctx.txs.map(t => t.date).sort()
   const start = dates.length ? addDays(dates[0], -7) : asOf, end = dates.length ? addDays(dates[dates.length - 1], 7) : asOf
   const bills = buildBillCandidates(ctx, start, end)
   const built = buildRows({
     asOf, accountScope, activeEnvironment, txs: ctx.txs, accounts: ctx.accounts, decisions: ctx.decisions, bills, debts: ctx.debts, projects: ctx.projects,
-    ownerRules: ownerRulesOf(ctx),
+    ownerRules: ownerRulesOf(ctx), includeRemoved,
     obligationLabels: new Map(ctx.obligations.map(o => [o.id, o.name])), commitmentLabels: new Map(ctx.commitments.map(c => [c.id, c.title])),
   })
+  for (const row of built.rows) if (row.bucket.key) row.bucket.label = categoryName(row.bucket.key, ctx.hierarchy)
+  for (const entry of built.analytics.unassigned.byBucket) entry.label = categoryName(entry.key, ctx.hierarchy)
   return { ...built, bills }
 }
 
@@ -132,13 +141,13 @@ const intOrUndefined = (v: unknown): number | undefined => (typeof v === 'number
 const ISO = /^\d{4}-\d{2}-\d{2}$/
 
 /** Sanitized query from untrusted input. Unknown values are dropped, never trusted. */
-export function parseQuery(raw: Record<string, unknown>): ExplorerQuery {
+export function parseQuery(raw: Record<string, unknown>, hierarchy = defaultHierarchy()): ExplorerQuery {
   const q: ExplorerQuery = {}
   if (typeof raw.view === 'string' && (EXPLORER_VIEWS as readonly string[]).includes(raw.view)) q.view = raw.view as ExplorerView
   if (typeof raw.from === 'string' && ISO.test(raw.from)) q.from = raw.from
   if (typeof raw.to === 'string' && ISO.test(raw.to)) q.to = raw.to
   if (typeof raw.account === 'string' && UUID.test(raw.account)) q.account = raw.account
-  if (typeof raw.bucket === 'string' && isBucketKey(raw.bucket)) q.bucket = raw.bucket
+  if (typeof raw.bucket === 'string' && (isBucketKey(raw.bucket) || hierarchy.available && hierarchy.categories.some(c => c.key === raw.bucket))) q.bucket = raw.bucket
   if (raw.accounts === 'all' || raw.accounts === 'mapped') q.accounts = raw.accounts
   if (raw.scope === 'business' || raw.scope === 'personal' || raw.scope === 'unclear') q.scope = raw.scope
   if (typeof raw.search === 'string') q.search = raw.search.slice(0, 60)
@@ -168,7 +177,7 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
   assertAuthority(actor)
   const asOf = today(deps)
   const ctx = await deps.repo.loadContext(actor.organizationId, addDays(asOf, -200))
-  const q = parseQuery(rawQuery)
+  const q = parseQuery(rawQuery, ctx.hierarchy)
   const environment = deps.environment ?? 'sandbox' // the environment this server is configured for
   const accounts = q.accounts ?? 'mapped' // the default business view is the owner's MAPPED accounts; 'all' is an explicit choice
   const { rows, analytics, bills, outOfScopeDates } = explorerFromContext(ctx, asOf, accounts, environment)
@@ -177,13 +186,13 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
   const page = filtered.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 100))
   const inWindow = rows.filter(r => r.date >= base.from && (!q.to || r.date <= q.to))
   return {
-    asOf, window: { from: base.from, to: q.to ?? asOf },
+    asOf, window: { from: base.from, to: q.to ?? asOf }, hierarchy: ctx.hierarchy ?? defaultHierarchy(), coverage: ctx.legacyCoverage ?? {complete:true,reason:null},
     analytics, viewCounts: viewCounts(inWindow), total: filtered.length, rows: page,
     // Reviewed = the owner confirmed a bucket or a relationship. Excluded = the owner set it aside. Unreviewed = everything else (suggested or unknown).
     reviewCounts: reviewCounts(inWindow),
     options: {
-      buckets: BUCKETS.map(b => ({ key: b.key, label: b.label, hint: b.hint, flow: (b as { flow?: 'in' }).flow ?? 'out' })),
-      batchBuckets: BATCH_APPROVABLE_BUCKETS, maxBatch: MAX_BATCH,
+      buckets: categoryOptions(ctx.hierarchy ?? defaultHierarchy()),
+      batchBuckets: explicitBatchKeys(ctx.hierarchy ?? defaultHierarchy()), maxBatch: MAX_BATCH,
       merchantRules: (ctx.merchantRules ?? []).map(r => ({ merchantKey: r.merchantKey, label: r.merchantLabel ?? r.merchantKey, category: r.category, categoryLabel: bucketLabel(r.category) })), rulesAvailable: ctx.rulesAvailable === true,
       relationships: RELATIONSHIP_KINDS,
       accounts: ctx.accounts.map(a => ({ ref: a.providerAccountRef, label: a.financialAccountName ?? a.label, mask: a.mask, ownership: a.ownership })),
@@ -277,7 +286,7 @@ async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknow
     if (entries.length > ids.length) throw bad('Category changes were not understood.')
     for (const [id, bucket] of entries) {
       if (!ids.includes(id)) throw bad('A category change was sent for a transaction that is not selected.')
-      if (!isBucketKey(bucket) || !BATCH_APPROVABLE_BUCKETS.includes(bucket)) throw bad('Choose an everyday expense category. Payroll, personal, transfers and owner draws are decided one at a time.')
+      if (typeof bucket !== 'string') throw bad('Choose an everyday expense category.')
       overrides.set(id, bucket)
     }
   }
@@ -290,6 +299,11 @@ async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknow
   }
   const org = actor.organizationId
   const ctx = await deps.repo.loadContext(org, addDays(today(deps), -200)) // organization-scoped: another organization's ids are simply not found
+  const hierarchy = ctx.hierarchy ?? defaultHierarchy()
+  for (const [id, key] of overrides) {
+    if (!canAssign(key, hierarchy) || !explicitBatchKeys(hierarchy).includes(key)) throw bad('Choose an everyday expense category. Payroll, personal, transfers and owner draws are decided one at a time.')
+    if (!isBucketKey(key) && remember.has(id)) throw bad('Custom category merchant remembering is not available. Turn off Remember before approving.')
+  }
   const rows = new Map(explorerFromContext(ctx, today(deps)).rows.map(r => [r.id, r]))
   const results: BatchItemResult[] = []
   for (const id of ids as string[]) {
@@ -366,7 +380,7 @@ export async function getSmartReview(deps: SpendingDeps, actor: BankActor, rawQu
   assertAuthority(actor)
   const asOf = today(deps)
   const ctx = await deps.repo.loadContext(actor.organizationId, addDays(asOf, -200))
-  const q = parseQuery(rawQuery)
+  const q = parseQuery(rawQuery, ctx.hierarchy)
   const environment = deps.environment ?? 'sandbox'
   const accounts = q.accounts ?? 'mapped'
   const { rows } = explorerFromContext(ctx, asOf, accounts, environment)
@@ -374,12 +388,29 @@ export async function getSmartReview(deps: SpendingDeps, actor: BankActor, rawQu
   const inWindow = rows.filter(r => r.date >= from && (!q.to || r.date <= q.to))
   const built = buildSmartReview(inWindow, ctx.txs, { activeRuleKeys: new Set((ctx.merchantRules ?? []).map(r => r.merchantKey)) })
   return {
-    asOf, window: { from, to: q.to ?? asOf }, accounts, environment, ...built,
+    asOf, window: { from, to: q.to ?? asOf }, accounts, environment, ...built, hierarchy: ctx.hierarchy ?? defaultHierarchy(), coverage: ctx.legacyCoverage ?? {complete:true,reason:null},
     rulesAvailable: ctx.rulesAvailable === true, maxBatch: MAX_BATCH,
     merchantRules: (ctx.merchantRules ?? []).map(r => ({ merchantKey: r.merchantKey, label: r.merchantLabel ?? r.merchantKey, category: r.category, categoryLabel: bucketLabel(r.category) })),
-    options: { buckets: BUCKETS.map(b => ({ key: b.key, label: b.label, hint: b.hint, flow: (b as { flow?: 'in' }).flow ?? 'out' })), batchBuckets: BATCH_APPROVABLE_BUCKETS },
+    options: { buckets: categoryOptions(ctx.hierarchy ?? defaultHierarchy()), batchBuckets: explicitBatchKeys(ctx.hierarchy ?? defaultHierarchy()) },
     draftScope: createHash('sha256').update(`${actor.organizationId}:${actor.userId}:review-draft`).digest('hex').slice(0, 16),
   }
+}
+
+/** Reports use complete snapshot evidence, never an Explorer page. */
+export async function getSpendingReport(deps: SpendingDeps, actor: BankActor, raw: Record<string, unknown>): Promise<SpendingReport> {
+  assertAuthority(actor)
+  if (!REPORT_MODES.includes(raw.report as ReportMode)) throw bad('Choose a reporting perspective.')
+  const validDate = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v
+  const asOf = today(deps), from = raw.from ?? addDays(asOf, -89), to = raw.to ?? asOf
+  if (!validDate(from) || !validDate(to) || String(from) > String(to)) throw bad('Choose a valid reporting date range.')
+  const account = raw.account === undefined || raw.account === '' ? undefined : requireId(raw.account, 'account')
+  const scope = { from: from as string, to: to as string, accounts: raw.accounts === 'all' ? 'all' as const : 'mapped' as const, environment: deps.environment ?? 'sandbox', account }
+  if (!deps.repo.loadReportContext) return buildSpendingReport([], raw.report as ReportMode, scope, APPROVED_REPORTING_POLICY, { complete: false, reason: 'Complete reporting is not available until the reviewed schema is installed.' })
+  const ctx = await deps.repo.loadReportContext(actor.organizationId, addDays(scope.from, -110))
+  const { rows } = explorerFromContext(ctx, asOf, 'all', scope.environment, true)
+  const report = buildSpendingReport(rows, raw.report as ReportMode, scope, APPROVED_REPORTING_POLICY, ctx.reportCoverage ?? { complete: false, reason: 'Evidence coverage was not verified.' }, ctx.hierarchy)
+  if (Buffer.byteLength(JSON.stringify(report), 'utf8') > 4_500_000) return { ...report, summary:null,groups:[],rows:[],coverage:{complete:false,reason:'Complete drill-down exceeds the response safety limit. Choose a narrower date/account scope.'} }
+  return report
 }
 
 /** The audit trail of one transaction for the owner: what was decided, by rule or by the owner, and what was later undone. */
@@ -424,7 +455,8 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
 
   switch (input.action) {
     case 'set_bucket': {
-      if (!isBucketKey(input.bucket)) throw bad('Choose a spending bucket.')
+      const hierarchy = deps.repo.loadHierarchy ? await deps.repo.loadHierarchy(org) : defaultHierarchy()
+      if (!canAssign(input.bucket, hierarchy)) throw bad('Choose an active spending category.')
       if (!bucketFitsDirection(input.bucket, ev.amountMinor < 0 ? 'money_in' : 'money_out')) throw bad(ev.amountMinor < 0 ? 'That category describes money going out, but this is money coming in.' : 'That category describes money coming in, but this is money going out.')
       return done((await deps.repo.replaceDecision(fresh(actor, txId, 'category', { category: input.bucket }))).outcome)
     }

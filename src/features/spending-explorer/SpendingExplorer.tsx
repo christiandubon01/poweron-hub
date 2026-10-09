@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
+import { HierarchyProvider } from './HierarchyProvider'
+import { HierarchyManager } from './HierarchyManager'
+import { SpendingReports } from './SpendingReports'
 import { TransactionDetail } from './detail/TransactionDetail'
 import { shortDate, usd0, usd2, withMask } from './format'
 import { BucketPicker } from './BucketPicker'
@@ -154,7 +157,7 @@ function Row({ row, options, busy, onDecide, environment, loadHistory, selectabl
 export default function SpendingExplorer() {
   const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore, refresh } = useSpendingExplorer()
   const [showFilters, setShowFilters] = useState(false)
-  const [mode, setMode] = useState<'explorer' | 'smart'>('explorer')
+  const [mode, setMode] = useState<'explorer' | 'smart' | 'reports'>('explorer')
   const [showColors, setShowColors] = useState(false)
   const colorsEnabled = useDisplayColors().enabled
   // The review DRAFT. `selection` holds a snapshot of each row (display only), `off` the ones unchecked, `overrides` the owner's category corrections.
@@ -262,22 +265,22 @@ export default function SpendingExplorer() {
     setBatchNote(batchSummary(out))
   }
   const showingSelected = reviewing && items.length > 0
-  return <section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
+  return <HierarchyProvider value={data.hierarchy} onChanged={() => void refresh()}><section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Spending explorer · bank evidence</h3>
       <span className="text-xs text-[var(--text-secondary)]">Suggestions only. Nothing here changes your balances, ledger or reports.</span>
     </div>
     <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
-    <div className="mt-3"><SpendingSnapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>
+    {data.coverage?.complete === false ? <p role="alert" className="mt-3 text-sm">Incomplete review coverage · {data.coverage.reason} Review counts describe loaded evidence only; Snapshot totals are withheld.</p> : <div className="mt-3"><SpendingSnapshot a={a} selected={filters.bucket} onPick={bucket => update({ bucket, view: bucket ? 'unassigned' : filters.view })} /><Signals a={a} /></div>}
 
     <SegmentedControl className="mt-4" label="Review mode" value={mode} onChange={setMode} options={[
-      { value: 'explorer', label: 'Explorer', testId: 'spending-mode-explorer' }, { value: 'smart', label: 'Smart Review', testId: 'spending-mode-smart' }]} />
-    {mode === 'smart' ? <SmartReview onChanged={() => void refresh()} /> : <>
+      { value: 'explorer', label: 'Explorer', testId: 'spending-mode-explorer' }, { value: 'smart', label: 'Smart Review', testId: 'spending-mode-smart' }, { value: 'reports', label: 'Reports', testId: 'spending-mode-reports' }]} />
+    {mode === 'reports' ? <SpendingReports accountOptions={data.options.accounts} initialScope={{ from: new Date(Date.parse(`${data.asOf}T00:00:00Z`) - (filters.days - 1) * 86400000).toISOString().slice(0,10), to: data.asOf, accounts: filters.accounts, environment: data.environment ?? 'sandbox', account: filters.account || undefined }} /> : mode === 'smart' ? <SmartReview onChanged={() => void refresh()} /> : <>
     <p className="mt-4 text-xs text-[var(--text-secondary)]" data-testid="spending-list-caption">Transactions: last {filters.days} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <div className="mt-2"><ViewTabs view={filters.view} data={data} onView={view => update({ view })} /></div>
     <p className="mt-1.5 text-xs text-[var(--text-secondary)]" data-testid={filters.view === 'reviewed' ? 'spending-reviewed-caption' : 'spending-view-caption'}>{VIEW_CAPTION[filters.view]}</p>
     <div className="mt-3"><FilterBar filters={filters} data={data} update={update} reset={reset} showFilters={showFilters} setShowFilters={setShowFilters} showColors={showColors} setShowColors={setShowColors} colorsEnabled={colorsEnabled} /></div>
-    {showColors && <ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label, hint: b.hint }))} />}
+    {showColors && <><ColorsPanel categories={data.options.buckets.filter(b => b.key !== 'other_needs_review').map(b => ({ key: b.key, label: b.label, hint: b.hint }))} /><HierarchyManager /></>}
     {data.accounts === 'mapped' && data.meta.hiddenUnmapped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-unmapped-note">{data.meta.hiddenUnmapped} transaction{data.meta.hiddenUnmapped === 1 ? '' : 's'} from accounts not mapped to Cash OS{data.environment === 'production' ? ' (or from Sandbox test accounts)' : ''} {data.meta.hiddenUnmapped === 1 ? 'is' : 'are'} not included. <button type="button" className="underline" onClick={() => update({ accounts: 'all' })}>Show all connected accounts</button></p>}
     {data.accounts === 'all' && <p className="mt-2 text-xs text-[var(--text-secondary)]" data-testid="spending-all-note">Including accounts not mapped to Cash OS{data.environment === 'production' ? ' and Sandbox test accounts' : ''}. <button type="button" className="underline" onClick={() => update({ accounts: 'mapped' })}>Mapped accounts only</button></p>}
     {data.meta.olderThanPeriod > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-older-note">{data.meta.olderThanPeriod} older transaction{data.meta.olderThanPeriod === 1 ? ' is' : 's are'} outside the last {filters.days} days{filters.days < 90 ? '. Choose a longer period to see more' : ''}.</p>}
@@ -301,5 +304,5 @@ export default function SpendingExplorer() {
       <button type="button" className={btnPrimary} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
     </SelectionBar>}
     </>}
-  </section>
+  </section></HierarchyProvider>
 }

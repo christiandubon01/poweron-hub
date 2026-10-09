@@ -1,0 +1,8 @@
+{
+  "browser": "Chromium",
+  "viewport": "1024 × 1366",
+  "touch": true,
+  "pageErrors": [],
+  "externalRequests": "blocked by synthetic preview",
+  "realSafari": false
+}

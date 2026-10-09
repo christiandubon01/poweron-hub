@@ -171,7 +171,7 @@ export function TransactionDetail({ row, options, busy, onDecide, loadHistory }:
         <button type="button" className={b.state === 'confirmed' ? btn : btnPrimary} disabled={busy} onClick={() => setPicking(true)} data-testid="detail-change-category">{b.state === 'confirmed' ? 'Change category…' : 'Choose category…'}</button>
         {b.state === 'confirmed' && <button type="button" className={btn} disabled={busy} onClick={() => void onDecide({ action: 'undo', transactionId: row.id, dimension: 'bucket' })}>Undo</button>}
       </div>}
-      <BucketPicker open={picking} busy={busy} options={bucketChoicesFor(row, options)}
+      <BucketPicker open={picking} busy={busy} allowCustom={row.direction !== 'money_in'} options={bucketChoicesFor(row, options)}
         currentKey={b.state === 'confirmed' ? b.key : null} suggestedKey={b.state === 'suggested' ? b.key : null}
         context={`${row.merchant} · ${row.direction === 'money_out' ? '−' : '+'}${usd2(row.amountMinor)} · ${shortDate(row.date)}`}
         onClose={() => setPicking(false)} onApply={key => { setPicking(false); void onDecide({ action: 'set_bucket', transactionId: row.id, bucket: key }) }} />

@@ -80,6 +80,8 @@ export interface RelationshipSuggestion { kind: RelationshipKind; target: Relati
 export interface TxSuggestion { bucket: BucketSuggestion | null; relationship: RelationshipSuggestion | null }
 
 export interface ExplorerRow {
+  /** Report readers preserve removed evidence separately; legacy Explorer still excludes it. */
+  removed?: boolean
   id: string
   date: string
   name: string

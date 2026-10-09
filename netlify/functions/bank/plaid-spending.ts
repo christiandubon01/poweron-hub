@@ -8,7 +8,7 @@
  * transaction, changes a balance or include_in_cash, marks a bill or debt paid, records a project payment, or touches payroll or Outlook.
  * Organization and role come from the authenticated profile only (a body organizationId is ignored). Owner/admin only.
  */
-import { applyDecision, getExplorer, getSmartReview, getTransactionHistory } from '../../../src/services/bankProvider/spending/spendingService'
+import { applyDecision, getExplorer, getSmartReview, getSpendingReport, getTransactionHistory } from '../../../src/services/bankProvider/spending/spendingService'
 import { createSpendingRepo } from '../../../src/services/bankProvider/spending/spendingRepo'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 import { corsPreflight, errorResponse, jsonResponse, parseJsonBody, resolveOwnerContext, safeLog } from './plaidAuth'
@@ -30,6 +30,7 @@ export function buildHandler(overrides = {}) {
     try {
       if (event.httpMethod === 'GET') {
         const q = event.queryStringParameters ?? {}
+        if (q.report !== undefined) return jsonResponse(200, await getSpendingReport(deps, auth.actor, q))
         if (typeof q.history === 'string') return jsonResponse(200, await getTransactionHistory(deps, auth.actor, q.history)) // the audit trail of ONE transaction
         if (q.smart === '1') return jsonResponse(200, await getSmartReview(deps, auth.actor, q)) // BANK-6B: grouped review, read-only
         return jsonResponse(200, await getExplorer(deps, auth.actor, q))

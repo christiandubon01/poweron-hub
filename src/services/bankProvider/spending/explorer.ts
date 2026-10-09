@@ -54,14 +54,15 @@ export interface ExplorerInput {
   projects: ProjectOption[]
   /** BANK-6B: active owner-approved merchant rules (merchantKey -> category). Suggestions only. */
   ownerRules?: Map<string, BucketKey>
+  includeRemoved?: boolean
 }
 
 const KNOWN_MONEY = new Set<RelationshipKind>(['obligation', 'debt', 'payroll', 'transfer'])
 
 export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytics: SpendingAnalytics; outOfScopeDates: string[] } {
   const accounts = new Map(input.accounts.map(a => [a.providerAccountRef, a]))
-  const live = input.txs.filter(t => !t.removed)
-  const suggestions = classifyAll({ txs: live, accounts, decisions: input.decisions, bills: input.bills, debts: input.debts, projects: input.projects, ownerRules: input.ownerRules })
+  const live = input.txs.filter(t => input.includeRemoved || !t.removed)
+  const suggestions = classifyAll({ txs: live.filter(t => !t.removed), accounts, decisions: input.decisions, bills: input.bills, debts: input.debts, projects: input.projects, ownerRules: input.ownerRules })
   const confirmedBy = new Map<string, { bucket?: Decision; rel?: Decision; ignored?: Decision }>()
   for (const d of input.decisions) {
     if (d.status !== 'confirmed') continue
@@ -86,7 +87,8 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     const sug = suggestions.get(tx.id) ?? { bucket: null, relationship: null }
     const dec = confirmedBy.get(tx.id) ?? {}
     const direction = directionOf(tx.amountMinor)
-    const bucketConfirmed = dec.bucket?.category && isBucketKey(dec.bucket.category) ? (dec.bucket.category as BucketKey) : null
+    // Reader bridge: an unfamiliar key is still an owner-confirmed decision, never a fresh suggestion.
+    const bucketConfirmed = dec.bucket?.category || null
     const bucket: ExplorerRow['bucket'] = bucketConfirmed
       ? { key: bucketConfirmed, label: bucketLabel(bucketConfirmed), state: 'confirmed', confidence: dec.bucket!.confidence ?? 'high', reasons: ['You confirmed this.'] }
       : sug.bucket ? { key: sug.bucket.bucket, label: bucketLabel(sug.bucket.bucket), state: 'suggested', confidence: sug.bucket.confidence, reasons: sug.bucket.reasons, basis: sug.bucket.basis, ...(sug.bucket.mixed ? { mixed: true } : {}) }
@@ -107,7 +109,7 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
       id: tx.id, date: tx.date, name: (tx.name ?? tx.merchantName ?? 'Unnamed transaction').slice(0, 120), merchant: merchantLabel(tx.name, tx.merchantName), merchantKey: merchantKey(tx.name, tx.merchantName),
       amountMinor: tx.amountMinor, direction, pending: tx.pending,
       account: { ref: tx.providerAccountRef, label: acct?.financialAccountName ?? acct?.label ?? 'Bank account', mask: acct?.mask ?? null, ownership: acct?.ownership ?? null, mappedTo: acct?.financialAccountName ?? null, mapped: !!acct?.financialAccountId, environment: acct?.environment ?? null, financialAccountId: acct?.financialAccountId ?? null },
-      bucket, relationship, review, scope, unassigned: false, repeatedPattern: false, pattern: null,
+      bucket, relationship, review, scope, unassigned: false, repeatedPattern: false, pattern: null, ...(input.includeRemoved ? { removed: tx.removed } : {}),
     }
   })
 
@@ -116,7 +118,7 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
   const inBusinessView = (r: ExplorerRow) => r.account.mapped && (!input.activeEnvironment || r.account.environment === input.activeEnvironment)
   const inScope = (input.accountScope ?? 'all') === 'all' ? base : base.filter(inBusinessView)
   const outOfScopeDates = (input.accountScope ?? 'all') === 'all' ? [] : base.filter(r => !inBusinessView(r)).map(r => r.date)
-  const recurring = detectRecurring(inScope.filter(r => r.review !== 'ignored'))
+  const recurring = detectRecurring(inScope.filter(r => r.review !== 'ignored' && !r.removed))
   for (const r of inScope) {
     const rel = r.relationship
     const resolved = rel.state === 'confirmed'

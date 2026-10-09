@@ -1,0 +1,272 @@
+
+> poweron-hub@0.1.0 build
+> tsc && vite build
+
+vite v5.4.21 building for production...
+transforming...
+Browserslist: browsers data (caniuse-lite) is 7 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+✓ 3827 modules transformed.
+node_modules/eruda/eruda.js (2:424693): Use of eval in "node_modules/eruda/eruda.js" is strongly discouraged as it poses security risks and may cause issues with minification.
+rendering chunks...
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/lib/supabase.ts is dynamically imported by /workspace/poweron-hub/src/components/hunter/LostDebriefModal.tsx, /workspace/poweron-hub/src/components/onboarding/OnboardingFlow.tsx, /workspace/poweron-hub/src/components/v15r/V15rFieldLogPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rIncomeCalc.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/features/display-colors/DisplayColors.tsx, /workspace/poweron-hub/src/features/spending-explorer/HierarchyProvider.tsx, /workspace/poweron-hub/src/services/backupDataService.ts, /workspace/poweron-hub/src/services/backupDataService.ts, /workspace/poweron-hub/src/services/backupDataService.ts, /workspace/poweron-hub/src/services/backupDataService.ts, /workspace/poweron-hub/src/services/backupDataService.ts, /workspace/poweron-hub/src/services/demoDataService.ts, /workspace/poweron-hub/src/services/realtimeSyncService.ts, /workspace/poweron-hub/src/services/security/PenTestSuite.ts, /workspace/poweron-hub/src/services/security/PenTestSuite.ts, /workspace/poweron-hub/src/services/security/PenTestSuite.ts, /workspace/poweron-hub/src/services/security/PenTestSuite.ts, /workspace/poweron-hub/src/services/security/PenTestSuite.ts, /workspace/poweron-hub/src/services/security/PenTestSuite.ts but also statically imported by /workspace/poweron-hub/src/App.tsx, /workspace/poweron-hub/src/agents/blueprint/coordinationTracker.ts, /workspace/poweron-hub/src/agents/blueprint/rfiManager.ts, /workspace/poweron-hub/src/agents/chrono/calendarManager.ts, /workspace/poweron-hub/src/agents/chrono/crewDispatcher.ts, /workspace/poweron-hub/src/agents/chrono/index.ts, /workspace/poweron-hub/src/agents/chrono/jobScheduler.ts, /workspace/poweron-hub/src/agents/echo/echoMemory.ts, /workspace/poweron-hub/src/agents/ledger/cashFlowAnalyzer.ts, /workspace/poweron-hub/src/agents/ledger/index.ts, /workspace/poweron-hub/src/agents/ledger/invoiceManager.ts, /workspace/poweron-hub/src/agents/n8nAutomation.ts, /workspace/poweron-hub/src/agents/nexus/arbitration.ts, /workspace/poweron-hub/src/agents/nexus/classifier.ts, /workspace/poweron-hub/src/agents/nexus/index.ts, /workspace/poweron-hub/src/agents/nexus/router.ts, /workspace/poweron-hub/src/agents/ohm/codeSearch.ts, /workspace/poweron-hub/src/agents/ohm/complianceChecker.ts, /workspace/poweron-hub/src/agents/pulse/kpiCalculator.ts, /workspace/poweron-hub/src/agents/pulse/trendAnalyzer.ts, /workspace/poweron-hub/src/agents/scout/dataGatherer.ts, /workspace/poweron-hub/src/agents/scout/index.ts, /workspace/poweron-hub/src/agents/scout/mirofish.ts, /workspace/poweron-hub/src/agents/spark/campaignManager.ts, /workspace/poweron-hub/src/agents/spark/gcManager.ts, /workspace/poweron-hub/src/agents/spark/leadManager.ts, /workspace/poweron-hub/src/agents/spark/reviewManager.ts, /workspace/poweron-hub/src/agents/vault/estimateBuilder.ts, /workspace/poweron-hub/src/agents/vault/index.ts, /workspace/poweron-hub/src/agents/vault/marginAnalyzer.ts, /workspace/poweron-hub/src/components/admin/DemoInvite.tsx, /workspace/poweron-hub/src/components/auth/InitialSetupFlow.tsx, /workspace/poweron-hub/src/components/auth/LoginFlow.tsx, /workspace/poweron-hub/src/components/chrono/CalendarView.tsx, /workspace/poweron-hub/src/components/chrono/CrewDispatch.tsx, /workspace/poweron-hub/src/components/chrono/JobScheduler.tsx, /workspace/poweron-hub/src/components/crew/CrewPortal.tsx, /workspace/poweron-hub/src/components/crew/InviteAccept.tsx, /workspace/poweron-hub/src/components/employee/EmployeeInviteAccept.tsx, /workspace/poweron-hub/src/components/employee/EmployeeLogin.tsx, /workspace/poweron-hub/src/components/employee/EmployeePortal.tsx, /workspace/poweron-hub/src/components/employee/EmployeeResetPassword.tsx, /workspace/poweron-hub/src/components/employee/EmployeeWorkOrderViewer.tsx, /workspace/poweron-hub/src/components/guardian/GuardianPanel.tsx, /workspace/poweron-hub/src/components/hunter/HunterMap.tsx, /workspace/poweron-hub/src/components/hunter/HunterPanel.tsx, /workspace/poweron-hub/src/components/hunter/PortalInbox.tsx, /workspace/poweron-hub/src/components/hunter/YelpAdPanel.tsx, /workspace/poweron-hub/src/components/layout/AppShell.tsx, /workspace/poweron-hub/src/components/neural-world/CommandHUD.tsx, /workspace/poweron-hub/src/components/neural-world/DataBridge.ts, /workspace/poweron-hub/src/components/neural-world/DragDropSystem.tsx, /workspace/poweron-hub/src/components/neural-world/FogInterviewPanel.tsx, /workspace/poweron-hub/src/components/neural-world/GhostUniverseLayer.tsx, /workspace/poweron-hub/src/components/neural-world/GoalModePanel.tsx, /workspace/poweron-hub/src/components/neural-world/ProjectionGuide.tsx, /workspace/poweron-hub/src/components/neural-world/ResonancePredictor.tsx, /workspace/poweron-hub/src/components/neural-world/ScenarioBuilder.tsx, /workspace/poweron-hub/src/components/neural-world/WorldEngine.tsx, /workspace/poweron-hub/src/components/neural-world/layers/ContinentLayer.tsx, /workspace/poweron-hub/src/components/nexus/NexusChatPanel.tsx, /workspace/poweron-hub/src/components/nexus/NexusDrawerPanel.tsx, /workspace/poweron-hub/src/components/nexus/SessionManagerSidebar.tsx, /workspace/poweron-hub/src/components/onboarding/OnboardingModal.tsx, /workspace/poweron-hub/src/components/proposals/ProposalFeed.tsx, /workspace/poweron-hub/src/components/settings/HomeBaseSettings.tsx, /workspace/poweron-hub/src/components/settings/LeadValueProfilesSettings.tsx, /workspace/poweron-hub/src/components/spark/CampaignTracker.tsx, /workspace/poweron-hub/src/components/spark/GCDashboard.tsx, /workspace/poweron-hub/src/components/spark/LeadPipeline.tsx, /workspace/poweron-hub/src/components/spark/ReviewManager.tsx, /workspace/poweron-hub/src/components/stripe/BillingPanel.tsx, /workspace/poweron-hub/src/components/stripe/InvoiceHistory.tsx, /workspace/poweron-hub/src/components/stripe/PlanComparisonTable.tsx, /workspace/poweron-hub/src/components/v15r/PinnedInsights/PinnedInsightsButton.tsx, /workspace/poweron-hub/src/components/v15r/PinnedInsights/PinnedInsightsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rBlueprintsTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rHome.tsx, /workspace/poweron-hub/src/components/v15r/V15rSettingsPanel.tsx, /workspace/poweron-hub/src/components/v15r/WinsLog/WinsLogPanel.tsx, /workspace/poweron-hub/src/components/voice/VoiceActivationButton.tsx, /workspace/poweron-hub/src/components/voice/VoiceSettings.tsx, /workspace/poweron-hub/src/features/blueprint-snapshots/blueprintSnapshotService.ts, /workspace/poweron-hub/src/features/blueprint-vr/blueprintVisionCache.ts, /workspace/poweron-hub/src/features/control-tower/controlTowerService.ts, /workspace/poweron-hub/src/features/employee-roles/roleManagementService.ts, /workspace/poweron-hub/src/features/invoice-drafts/invoiceDraftService.ts, /workspace/poweron-hub/src/features/sales-intelligence/conversion-receipts/conversionCompletion.ts, /workspace/poweron-hub/src/features/sales-intelligence/conversion-receipts/conversionReceiptService.ts, /workspace/poweron-hub/src/features/sales-intelligence/source-performance/sourcePerformancePortalRecovery.ts, /workspace/poweron-hub/src/hooks/useCashOsSnapshot.ts, /workspace/poweron-hub/src/hooks/useDemoLimits.ts, /workspace/poweron-hub/src/lib/auth/passcode.ts, /workspace/poweron-hub/src/lib/memory/audit.ts, /workspace/poweron-hub/src/lib/memory/embeddings.ts, /workspace/poweron-hub/src/services/activityLog.ts, /workspace/poweron-hub/src/services/adminTimecardService.ts, /workspace/poweron-hub/src/services/agentBus.ts, /workspace/poweron-hub/src/services/authedFetch.ts, /workspace/poweron-hub/src/services/blueprintDerivedSetService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/calendarSyncService.ts, /workspace/poweron-hub/src/services/calls/callLogService.ts, /workspace/poweron-hub/src/services/cashObligationService.ts, /workspace/poweron-hub/src/services/cashOsAllocationService.ts, /workspace/poweron-hub/src/services/cashOsReadService.ts, /workspace/poweron-hub/src/services/cashProjectFactsService.ts, /workspace/poweron-hub/src/services/chronoService.ts, /workspace/poweron-hub/src/services/crewPortalService.ts, /workspace/poweron-hub/src/services/dailySnapshotService.ts, /workspace/poweron-hub/src/services/echoRollingWindow.ts, /workspace/poweron-hub/src/services/embeddingService.ts, /workspace/poweron-hub/src/services/employeeInviteService.ts, /workspace/poweron-hub/src/services/employeePerformanceService.ts, /workspace/poweron-hub/src/services/employeePortalService.ts, /workspace/poweron-hub/src/services/employeeScheduleService.ts, /workspace/poweron-hub/src/services/employeeTaskAssignmentService.ts, /workspace/poweron-hub/src/services/employeeTimeService.ts, /workspace/poweron-hub/src/services/geocoding/GeocodingClient.ts, /workspace/poweron-hub/src/services/googleCalendar.ts, /workspace/poweron-hub/src/services/hunter/HunterDebriefEngine.ts, /workspace/poweron-hub/src/services/hunter/HunterRuleService.ts, /workspace/poweron-hub/src/services/hunter/HunterSourceAnalytics.ts, /workspace/poweron-hub/src/services/hunter/cronRunLogService.ts, /workspace/poweron-hub/src/services/hunter/leadRevisionsService.ts, /workspace/poweron-hub/src/services/hunter/resolveHunterTenantId.ts, /workspace/poweron-hub/src/services/inviteService.ts, /workspace/poweron-hub/src/services/liabilityTermsService.ts, /workspace/poweron-hub/src/services/manualLedgerService.ts, /workspace/poweron-hub/src/services/memoryBuckets.ts, /workspace/poweron-hub/src/services/milestoneBackupService.ts, /workspace/poweron-hub/src/services/miroFish.ts, /workspace/poweron-hub/src/services/ndaService.ts, /workspace/poweron-hub/src/services/nexusLearnedProfile.ts, /workspace/poweron-hub/src/services/nexusMemory.ts, /workspace/poweron-hub/src/services/nexusPreferences.ts, /workspace/poweron-hub/src/services/notifications.ts, /workspace/poweron-hub/src/services/onboarding/OnboardingService.ts, /workspace/poweron-hub/src/services/organizationIdentityService.ts, /workspace/poweron-hub/src/services/ownerProfileService.ts, /workspace/poweron-hub/src/services/patternService.ts, /workspace/poweron-hub/src/services/portal/PortalLeadService.ts, /workspace/poweron-hub/src/services/portal/leadValueProfiles.ts, /workspace/poweron-hub/src/services/portal/plannerDetails.ts, /workspace/poweron-hub/src/services/portal/portalService.ts, /workspace/poweron-hub/src/services/referral/referralService.ts, /workspace/poweron-hub/src/services/relationshipAccountService.ts, /workspace/poweron-hub/src/services/roleService.ts, /workspace/poweron-hub/src/services/security/AgentSafetySystem.ts, /workspace/poweron-hub/src/services/serviceCallAssignmentService.ts, /workspace/poweron-hub/src/services/skillSignalExtractor.ts, /workspace/poweron-hub/src/services/snapshotService.ts, /workspace/poweron-hub/src/services/sparkService.ts, /workspace/poweron-hub/src/services/stripe.ts, /workspace/poweron-hub/src/services/supabaseService.ts, /workspace/poweron-hub/src/services/tradeKnowledgeService.ts, /workspace/poweron-hub/src/services/voice.ts, /workspace/poweron-hub/src/services/voiceJournalService.ts, /workspace/poweron-hub/src/store/authStore.ts, /workspace/poweron-hub/src/store/hunterStore.ts, /workspace/poweron-hub/src/views/AdminCommandCenter.tsx, /workspace/poweron-hub/src/views/BillingView.tsx, /workspace/poweron-hub/src/views/BusinessOverviewView.tsx, /workspace/poweron-hub/src/views/CustomerPortalView.tsx, /workspace/poweron-hub/src/views/GuardianView.tsx, /workspace/poweron-hub/src/views/NexusAdminView.tsx, /workspace/poweron-hub/src/views/PortalTrackView.tsx, /workspace/poweron-hub/src/views/Settings.tsx, /workspace/poweron-hub/src/views/SolarTrainingView.tsx, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/lib/memory/audit.ts is dynamically imported by /workspace/poweron-hub/src/services/agentEventBus.ts but also statically imported by /workspace/poweron-hub/src/agents/blueprint/coordinationTracker.ts, /workspace/poweron-hub/src/agents/blueprint/rfiManager.ts, /workspace/poweron-hub/src/agents/chrono/crewDispatcher.ts, /workspace/poweron-hub/src/agents/chrono/index.ts, /workspace/poweron-hub/src/agents/chrono/jobScheduler.ts, /workspace/poweron-hub/src/agents/ledger/index.ts, /workspace/poweron-hub/src/agents/ledger/invoiceManager.ts, /workspace/poweron-hub/src/agents/ohm/index.ts, /workspace/poweron-hub/src/agents/pulse/index.ts, /workspace/poweron-hub/src/agents/scout/index.ts, /workspace/poweron-hub/src/agents/spark/index.ts, /workspace/poweron-hub/src/agents/vault/index.ts, /workspace/poweron-hub/src/components/proposals/ProposalFeed.tsx, /workspace/poweron-hub/src/lib/auth/passcode.ts, /workspace/poweron-hub/src/services/googleCalendar.ts, /workspace/poweron-hub/src/services/miroFish.ts, /workspace/poweron-hub/src/store/authStore.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/blueprintLibraryService.ts is dynamically imported by /workspace/poweron-hub/src/services/blueprintExtractor.ts but also statically imported by /workspace/poweron-hub/src/components/blueprint/OperationsBlueprintPdfViewer.tsx, /workspace/poweron-hub/src/components/v15r/V15rBlueprintsTab.tsx, /workspace/poweron-hub/src/features/blueprint-animation/routeBuilderModel.ts, /workspace/poweron-hub/src/features/blueprint-vr/blueprintVisionClient.ts, /workspace/poweron-hub/src/features/blueprint-wire-profiles/components/WireProfileManagerDialog.tsx, /workspace/poweron-hub/src/services/backupDataService.ts, /workspace/poweron-hub/src/services/blueprintAnnotationExportService.ts, /workspace/poweron-hub/src/services/blueprintDerivedSetService.ts, /workspace/poweron-hub/src/services/employeeTaskAssignmentService.ts, /workspace/poweron-hub/src/views/BlueprintAI.tsx, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/backupDataService.ts is dynamically imported by /workspace/poweron-hub/src/agents/spark/leadManager.ts, /workspace/poweron-hub/src/components/v15r/V15rBlueprintsTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rBlueprintsTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rBlueprintsTab.tsx, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/blueprintLibraryService.ts, /workspace/poweron-hub/src/services/voiceJournalService.ts, /workspace/poweron-hub/src/store/authStore.ts but also statically imported by /workspace/poweron-hub/src/agents/chrono/crewDispatcher.ts, /workspace/poweron-hub/src/agents/chrono/index.ts, /workspace/poweron-hub/src/agents/chrono/jobScheduler.ts, /workspace/poweron-hub/src/agents/n8nAutomation.ts, /workspace/poweron-hub/src/agents/nexus/nexusContextBuilder.ts, /workspace/poweron-hub/src/agents/nexus/router.ts, /workspace/poweron-hub/src/agents/pulse/index.ts, /workspace/poweron-hub/src/components/SnapshotPanel.tsx, /workspace/poweron-hub/src/components/blueprint/OperationsBlueprintPdfViewer.tsx, /workspace/poweron-hub/src/components/chrono/SchedulePanel.tsx, /workspace/poweron-hub/src/components/layout/AppShell.tsx, /workspace/poweron-hub/src/components/nexus/NexusChatPanel.tsx, /workspace/poweron-hub/src/components/ohm/CodePanel.tsx, /workspace/poweron-hub/src/components/onboarding/BetaOnboarding.tsx, /workspace/poweron-hub/src/components/salesIntel/tabs/PipelineTab.tsx, /workspace/poweron-hub/src/components/spark/MarketingPanel.tsx, /workspace/poweron-hub/src/components/v15r/ProjectCard.tsx, /workspace/poweron-hub/src/components/v15r/ProjectLogFinancialPanel.tsx, /workspace/poweron-hub/src/components/v15r/QuickBooksImportModal.tsx, /workspace/poweron-hub/src/components/v15r/V15rBlueprintsTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rChangeOrdersTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rCoordinationTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rDashboard.tsx, /workspace/poweron-hub/src/components/v15r/V15rEstimateTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rFieldLogPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rFrameworkTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rHome.tsx, /workspace/poweron-hub/src/components/v15r/V15rIncomeCalc.tsx, /workspace/poweron-hub/src/components/v15r/V15rLayout.tsx, /workspace/poweron-hub/src/components/v15r/V15rLeadsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rMTOTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rMoneyPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rPhaseTimelineTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rPriceBookPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rPricingIntelligencePanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProgressTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectInner.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectLogsTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rRFITab.tsx, /workspace/poweron-hub/src/components/v15r/V15rSettingsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rTeamPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rTemplatesPanel.tsx, /workspace/poweron-hub/src/components/v15r/charts/CFOTChart.tsx, /workspace/poweron-hub/src/components/v15r/charts/EVRChart.tsx, /workspace/poweron-hub/src/components/v15r/charts/LaborTrendChart.tsx, /workspace/poweron-hub/src/components/v15r/charts/OPPChart.tsx, /workspace/poweron-hub/src/components/v15r/charts/PvAChart.tsx, /workspace/poweron-hub/src/components/v15r/charts/RCAChart.tsx, /workspace/poweron-hub/src/components/v15r/charts/SCPChart.tsx, /workspace/poweron-hub/src/components/v15r/charts/SVGCharts.tsx, /workspace/poweron-hub/src/components/v15r/charts/SixMonthForecastChart.tsx, /workspace/poweron-hub/src/features/billing-draft/components/InvoiceDraftsModal.tsx, /workspace/poweron-hub/src/features/billing-draft/components/PrepareInvoiceModal.tsx, /workspace/poweron-hub/src/features/billing-draft/components/PrepareInvoiceSelectorModal.tsx, /workspace/poweron-hub/src/features/billing-draft/projectBillingAdapter.ts, /workspace/poweron-hub/src/features/blueprint-wire-profiles/components/WireProfileManagerDialog.tsx, /workspace/poweron-hub/src/features/invoice-drafts/rehydrateSource.ts, /workspace/poweron-hub/src/finance/adapters/projectFinanceAdapter.ts, /workspace/poweron-hub/src/services/businessGoalTruth.ts, /workspace/poweron-hub/src/services/cashOsReadService.ts, /workspace/poweron-hub/src/services/collectedRevenueRange.ts, /workspace/poweron-hub/src/services/crewPortalService.ts, /workspace/poweron-hub/src/services/embeddingService.ts, /workspace/poweron-hub/src/services/employeeTaskAssignmentService.ts, /workspace/poweron-hub/src/services/guardian/GuardianAgentConnections.ts, /workspace/poweron-hub/src/services/guardian/GuardianMetricsService.ts, /workspace/poweron-hub/src/services/ledgerDataBridge.ts, /workspace/poweron-hub/src/services/liveCloudRefreshService.ts, /workspace/poweron-hub/src/services/patternLearning.ts, /workspace/poweron-hub/src/services/patternService.ts, /workspace/poweron-hub/src/services/proactiveAlertService.ts, /workspace/poweron-hub/src/services/quickbooksImportService.ts, /workspace/poweron-hub/src/services/realtimeSyncService.ts, /workspace/poweron-hub/src/services/revenueTimelineQueries.ts, /workspace/poweron-hub/src/services/serviceCallService.ts, /workspace/poweron-hub/src/services/testdata/TestDataSeeder.ts, /workspace/poweron-hub/src/services/undoRedoService.ts, /workspace/poweron-hub/src/services/weeklyFinancialPolicy.ts, /workspace/poweron-hub/src/store/authStore.ts, /workspace/poweron-hub/src/views/AbsoluteDashboardView.tsx, /workspace/poweron-hub/src/views/AdminCommandCenter.tsx, /workspace/poweron-hub/src/views/AdminVisualizationLab.tsx, /workspace/poweron-hub/src/views/BlueprintAI.tsx, /workspace/poweron-hub/src/views/BusinessOverviewView.tsx, /workspace/poweron-hub/src/views/CommandCenterNeuralMap.tsx, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/organizationIdentityService.ts is dynamically imported by /workspace/poweron-hub/src/components/layout/AppShell.tsx, /workspace/poweron-hub/src/store/authStore.ts but also statically imported by /workspace/poweron-hub/src/components/auth/LoginFlow.tsx, /workspace/poweron-hub/src/components/employee/EmployeePortal.tsx, /workspace/poweron-hub/src/components/onboarding/BetaOnboarding.tsx, /workspace/poweron-hub/src/components/v15r/V15rSettingsPanel.tsx, /workspace/poweron-hub/src/store/authStore.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/liveCloudRefreshService.ts is dynamically imported by /workspace/poweron-hub/src/services/realtimeSyncService.ts, /workspace/poweron-hub/src/store/authStore.ts but also statically imported by /workspace/poweron-hub/src/components/blueprint/OperationsBlueprintPdfViewer.tsx, /workspace/poweron-hub/src/components/v15r/V15rLayout.tsx, /workspace/poweron-hub/src/hooks/useRemoteDataRefresh.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/ledgerDataBridge.ts is dynamically imported by /workspace/poweron-hub/src/agents/nexus/index.ts but also statically imported by /workspace/poweron-hub/src/agents/nexus/router.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/lib/memory/embeddings.ts is dynamically imported by /workspace/poweron-hub/src/services/vectorMemory.ts but also statically imported by /workspace/poweron-hub/src/services/embeddingService.ts, /workspace/poweron-hub/src/services/vectorMemory.ts, /workspace/poweron-hub/src/services/voiceJournalService.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/voiceJournalService.ts is dynamically imported by /workspace/poweron-hub/src/agents/nexus/index.ts but also statically imported by /workspace/poweron-hub/src/agents/nexus/index.ts, /workspace/poweron-hub/src/components/JournalPanel.tsx, /workspace/poweron-hub/src/components/nexus/MorningBriefingCard.tsx, /workspace/poweron-hub/src/components/v15r/V15rCoordinationTab.tsx, /workspace/poweron-hub/src/components/voice/VoiceHub.tsx, /workspace/poweron-hub/src/services/echoRollingWindow.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/agents/nexus/router.ts is dynamically imported by /workspace/poweron-hub/src/agents/nexus/index.ts but also statically imported by /workspace/poweron-hub/src/agents/nexus/index.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/snapshotService.ts is dynamically imported by /workspace/poweron-hub/src/services/backupDataService.ts but also statically imported by /workspace/poweron-hub/src/agents/ledger/index.ts, /workspace/poweron-hub/src/agents/vault/index.ts, /workspace/poweron-hub/src/components/SnapshotPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rSettingsPanel.tsx, /workspace/poweron-hub/src/services/agentBus.ts, /workspace/poweron-hub/src/services/miroFish.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/nexusLearnedProfile.ts is dynamically imported by /workspace/poweron-hub/src/services/nexusPreferences.ts but also statically imported by /workspace/poweron-hub/src/agents/nexus/index.ts, /workspace/poweron-hub/src/components/nexus/NexusChatPanel.tsx, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/memoryBuckets.ts is dynamically imported by /workspace/poweron-hub/src/agents/nexus/index.ts but also statically imported by /workspace/poweron-hub/src/agents/nexus/index.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/vectorMemory.ts is dynamically imported by /workspace/poweron-hub/src/agents/nexus/index.ts, /workspace/poweron-hub/src/services/agentEventBus.ts but also statically imported by /workspace/poweron-hub/src/agents/nexus/index.ts, /workspace/poweron-hub/src/services/embeddingService.ts, /workspace/poweron-hub/src/services/patternLearning.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/skillSignalExtractor.ts is dynamically imported by /workspace/poweron-hub/src/services/voiceJournalService.ts but also statically imported by /workspace/poweron-hub/src/agents/nexus/index.ts, /workspace/poweron-hub/src/components/v15r/V15rFieldLogPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectLogsTab.tsx, /workspace/poweron-hub/src/components/v15r/V15rSettingsPanel.tsx, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/agents/nexus/index.ts is dynamically imported by /workspace/poweron-hub/src/components/v15r/V15rLeadsPanel.tsx, /workspace/poweron-hub/src/components/voice/VoiceActivationButton.tsx, /workspace/poweron-hub/src/components/voice/VoiceTranscriptPanel.tsx but also statically imported by /workspace/poweron-hub/src/components/nexus/NexusChatPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rLayout.tsx, /workspace/poweron-hub/src/services/voice.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/embeddingService.ts is dynamically imported by /workspace/poweron-hub/src/agents/nexus/index.ts but also statically imported by /workspace/poweron-hub/src/agents/ledger/index.ts, /workspace/poweron-hub/src/agents/ohm/index.ts, /workspace/poweron-hub/src/agents/scout/index.ts, /workspace/poweron-hub/src/agents/vault/index.ts, /workspace/poweron-hub/src/services/patternService.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/relationshipAccountService.ts is dynamically imported by /workspace/poweron-hub/src/services/backupDataService.ts but also statically imported by /workspace/poweron-hub/src/components/v15r/V15rFieldLogPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rLeadsPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/features/quickbooks-customer-mapping/useCanonicalCustomerDirectory.ts, dynamic import will not move module into another chunk.
+
+[plugin:vite:reporter] [plugin vite:reporter] 
+(!) /workspace/poweron-hub/src/services/portal/portalService.ts is dynamically imported by /workspace/poweron-hub/src/components/v15r/V15rFieldLogPanel.tsx, /workspace/poweron-hub/src/components/v15r/V15rProjectsPanel.tsx, /workspace/poweron-hub/src/features/sales-intelligence/conversion-receipts/conversionCompletion.ts but also statically imported by /workspace/poweron-hub/src/components/hunter/HunterLeadCard.tsx, /workspace/poweron-hub/src/components/hunter/PortalInbox.tsx, /workspace/poweron-hub/src/components/portal/PortalStatusControls.tsx, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                                               3.14 kB │ gzip:   1.28 kB
+dist/assets/pdf.worker.min-FHbmGBN0.mjs                   1,244.25 kB
+dist/assets/V15rAppBrainTab-BAXnKMLy.css                     54.14 kB │ gzip:  10.42 kB
+dist/assets/index-CUx2vvO-.css                              268.50 kB │ gzip:  40.35 kB
+dist/assets/employeeRoutes-BcSnYABb.js                        0.06 kB │ gzip:   0.08 kB
+dist/assets/minus-B9pDBo7H.js                                 0.29 kB │ gzip:   0.24 kB
+dist/assets/chevron-left-yR5Y_PMk.js                          0.30 kB │ gzip:   0.25 kB
+dist/assets/play-B-C8ztn9.js                                  0.30 kB │ gzip:   0.25 kB
+dist/assets/LineChart-2_PoqyNr.js                             0.31 kB │ gzip:   0.23 kB
+dist/assets/square-SrNwYCFz.js                                0.32 kB │ gzip:   0.25 kB
+dist/assets/arrow-up-right--8IIAQWr.js                        0.33 kB │ gzip:   0.26 kB
+dist/assets/send-Dbt0Yzww.js                                  0.34 kB │ gzip:   0.27 kB
+dist/assets/gauge-Bn8c6Dm8.js                                 0.35 kB │ gzip:   0.27 kB
+dist/assets/message-square-BIzOzMKt.js                        0.35 kB │ gzip:   0.27 kB
+dist/assets/claudeService-C0u-S3Dk.js                         0.35 kB │ gzip:   0.27 kB
+dist/assets/BarChart-D-w-QYyq.js                              0.35 kB │ gzip:   0.25 kB
+dist/assets/clock-3-y_8b8Asw.js                               0.36 kB │ gzip:   0.28 kB
+dist/assets/pencil-DLLI_S1Q.js                                0.37 kB │ gzip:   0.28 kB
+dist/assets/rotate-ccw-BToJJUGS.js                            0.37 kB │ gzip:   0.29 kB
+dist/assets/map-pin-B5DopbEQ.js                               0.37 kB │ gzip:   0.30 kB
+dist/assets/circle-x-PKMx1L72.js                              0.38 kB │ gzip:   0.28 kB
+dist/assets/credit-card-CxmiDECS.js                           0.38 kB │ gzip:   0.29 kB
+dist/assets/trending-down-COvYIh4z.js                         0.38 kB │ gzip:   0.28 kB
+dist/assets/bell-Ds2QBhdJ.js                                  0.38 kB │ gzip:   0.29 kB
+dist/assets/lock-open-DU15kNNH.js                             0.38 kB │ gzip:   0.30 kB
+dist/assets/star-Cp2Muu-q.js                                  0.38 kB │ gzip:   0.29 kB
+dist/assets/home-DxvQ7S-q.js                                  0.38 kB │ gzip:   0.29 kB
+dist/assets/phoneNormalize-Bp9MiRTX.js                        0.38 kB │ gzip:   0.23 kB
+dist/assets/briefcase-Bo6bMyqf.js                             0.39 kB │ gzip:   0.30 kB
+dist/assets/sticky-note-D57CGLEq.js                           0.39 kB │ gzip:   0.28 kB
+dist/assets/target-Fc4nUvhw.js                                0.40 kB │ gzip:   0.26 kB
+dist/assets/copy-Zg8Pag4W.js                                  0.41 kB │ gzip:   0.31 kB
+dist/assets/globe-8Ph5om2p.js                                 0.41 kB │ gzip:   0.29 kB
+dist/assets/database-DAEhZgZA.js                              0.41 kB │ gzip:   0.30 kB
+dist/assets/bar-chart-2-C69rMWE4.js                           0.42 kB │ gzip:   0.29 kB
+dist/assets/calendar-C-ut2Fu9.js                              0.43 kB │ gzip:   0.30 kB
+dist/assets/wrench-DTb-zEKG.js                                0.43 kB │ gzip:   0.31 kB
+dist/assets/download-CXFXDN12.js                              0.43 kB │ gzip:   0.32 kB
+dist/assets/image-D7yVZx9b.js                                 0.44 kB │ gzip:   0.32 kB
+dist/assets/award-BjNRP4pK.js                                 0.44 kB │ gzip:   0.33 kB
+dist/assets/git-branch-gYz6TUoZ.js                            0.45 kB │ gzip:   0.32 kB
+dist/assets/lightbulb-BRODyl5O.js                             0.46 kB │ gzip:   0.33 kB
+dist/assets/receipt-CrTFAwGW.js                               0.46 kB │ gzip:   0.31 kB
+dist/assets/maximize-2-DLKF3gaN.js                            0.47 kB │ gzip:   0.31 kB
+dist/assets/minimize-2-D7GaOG18.js                            0.47 kB │ gzip:   0.31 kB
+dist/assets/pin-D-7nt333.js                                   0.48 kB │ gzip:   0.34 kB
+dist/assets/tag-k6jSFmfT.js                                   0.50 kB │ gzip:   0.35 kB
+dist/assets/bot-BCaNYNAw.js                                   0.50 kB │ gzip:   0.33 kB
+dist/assets/clipboard-paste-DnIy2HVA.js                       0.51 kB │ gzip:   0.35 kB
+dist/assets/package-Ciy9xL11.js                               0.53 kB │ gzip:   0.35 kB
+dist/assets/radio-BTg2ylxG.js                                 0.54 kB │ gzip:   0.35 kB
+dist/assets/grip-vertical-Cd2c__t-.js                         0.54 kB │ gzip:   0.30 kB
+dist/assets/pipelineCalc-DcjMMcUE.js                          0.55 kB │ gzip:   0.34 kB
+dist/assets/network-BHxVXnho.js                               0.55 kB │ gzip:   0.34 kB
+dist/assets/phone-CO1z1nZP.js                                 0.56 kB │ gzip:   0.36 kB
+dist/assets/truck-B6LNWiPB.js                                 0.58 kB │ gzip:   0.37 kB
+dist/assets/useRemoteDataRefresh-Bx6DEXB8.js                  0.60 kB │ gzip:   0.33 kB
+dist/assets/building-2-BFmRE2Da.js                            0.61 kB │ gzip:   0.35 kB
+dist/assets/sun-B7NOWhpa.js                                   0.64 kB │ gzip:   0.36 kB
+dist/assets/timeSessionIdentity-BAagZb_G.js                   0.65 kB │ gzip:   0.31 kB
+dist/assets/calendar-days-Cj03dBHo.js                         0.66 kB │ gzip:   0.37 kB
+dist/assets/cpu-BBIhFAik.js                                   0.67 kB │ gzip:   0.36 kB
+dist/assets/calculator-C7PICBh4.js                            0.70 kB │ gzip:   0.39 kB
+dist/assets/toggle-right-v2ZHU-Oj.js                          0.70 kB │ gzip:   0.32 kB
+dist/assets/sliders-horizontal-Bd2qSQku.js                    0.75 kB │ gzip:   0.37 kB
+dist/assets/CoachTab-Bx5MBojR.js                              1.16 kB │ gzip:   0.58 kB
+dist/assets/portalStorageService-CEsde_sc.js                  1.18 kB │ gzip:   0.57 kB
+dist/assets/BusinessOverview-DnmZrxrl.js                      1.18 kB │ gzip:   0.68 kB
+dist/assets/VisualSuiteStandalone-CTopCQiV.js                 1.57 kB │ gzip:   0.81 kB
+dist/assets/employeeInviteService-DnDi0ZYR.js                 2.04 kB │ gzip:   0.70 kB
+dist/assets/auditTrailService-BrzBJpmY.js                     2.13 kB │ gzip:   0.98 kB
+dist/assets/arbitration-DDXKh2DM.js                           2.20 kB │ gzip:   1.09 kB
+dist/assets/useNEXUSAudio-CvkOlpEq.js                         2.27 kB │ gzip:   0.99 kB
+dist/assets/SalesSessionContextBar-Cx8zviUq.js                2.84 kB │ gzip:   1.09 kB
+dist/assets/patternService-Bc2qHl9h.js                        3.39 kB │ gzip:   1.49 kB
+dist/assets/NexusPresenceOrb-DnDK001l.js                      3.45 kB │ gzip:   1.51 kB
+dist/assets/index-dfa2oDDW.js                                 3.61 kB │ gzip:   1.31 kB
+dist/assets/employeeScheduleService-BCo0PWrj.js               4.50 kB │ gzip:   1.20 kB
+dist/assets/ActivityPanel-tfOvbTVg.js                         4.52 kB │ gzip:   1.92 kB
+dist/assets/guardian-D4eg1Wk_.js                              4.76 kB │ gzip:   1.67 kB
+dist/assets/LeadRollingTrend-CKGueN9k.js                      4.81 kB │ gzip:   1.72 kB
+dist/assets/scoutQueue-DJY5cWsi.js                            4.92 kB │ gzip:   2.01 kB
+dist/assets/patternLearning-jBG-9Dh4.js                       5.57 kB │ gzip:   2.19 kB
+dist/assets/tradeKnowledgeService-CUX-fpzQ.js                 5.65 kB │ gzip:   2.37 kB
+dist/assets/EmployeeResetPassword-CQWbWfW0.js                 5.66 kB │ gzip:   1.96 kB
+dist/assets/SolarEstimateSettings-CxOvTqpO.js                 6.42 kB │ gzip:   1.93 kB
+dist/assets/AgentSystemMapView-G0qNoOGg.js                    6.46 kB │ gzip:   2.40 kB
+dist/assets/conversionReceiptService-D-LZlHPd.js              6.54 kB │ gzip:   2.26 kB
+dist/assets/ProactiveInsightCard-BOI-z5M6.js                  6.62 kB │ gzip:   2.47 kB
+dist/assets/PinnedInsightsButton-DJ5xTcUn.js                  6.76 kB │ gzip:   2.37 kB
+dist/assets/CartesianGrid-BuvvYuW4.js                         6.83 kB │ gzip:   2.40 kB
+dist/assets/EmployeeLogin-fer95o2p.js                         7.09 kB │ gzip:   2.38 kB
+dist/assets/Settings-BAIcPnaT.js                              7.09 kB │ gzip:   2.49 kB
+dist/assets/PerformanceTab-C-n9Vwlc.js                        7.20 kB │ gzip:   2.80 kB
+dist/assets/DemoInvite-BB07q61q.js                            7.37 kB │ gzip:   2.52 kB
+dist/assets/AbsoluteDashboardView-Cu770teB.js                 8.19 kB │ gzip:   2.87 kB
+dist/assets/SalesIntelligenceView-DbFUzQW2.js                 8.62 kB │ gzip:   3.13 kB
+dist/assets/InviteAccept-Bn8k4iQX.js                          8.86 kB │ gzip:   2.53 kB
+dist/assets/VoiceJournalingV2-AC_eVCKm.js                     9.00 kB │ gzip:   2.90 kB
+dist/assets/SparkLiveCall-BwShZVUZ.js                         9.53 kB │ gzip:   2.91 kB
+dist/assets/AgentModeSelector-DgQ4lziY.js                     9.66 kB │ gzip:   3.09 kB
+dist/assets/V15rTemplatesPanel-DtxbroyQ.js                    9.90 kB │ gzip:   3.10 kB
+dist/assets/revenueTimelineQueries-DWmMEgoc.js               10.11 kB │ gzip:   3.69 kB
+dist/assets/WinsLogPanel-D6dON9ZI.js                         10.20 kB │ gzip:   3.34 kB
+dist/assets/Area-BJNi70tD.js                                 10.84 kB │ gzip:   4.00 kB
+dist/assets/Line-BBxIFUEO.js                                 10.98 kB │ gzip:   4.22 kB
+dist/assets/OnboardingModal-CbhDs_Ul.js                      11.24 kB │ gzip:   3.57 kB
+dist/assets/PieChart-BZzKHqc8.js                             11.70 kB │ gzip:   4.34 kB
+dist/assets/ComposedChart-CgJqYVqv.js                        12.19 kB │ gzip:   3.94 kB
+dist/assets/CallLogModal-D9ex7bJO.js                         12.36 kB │ gzip:   4.08 kB
+dist/assets/nexusPromptEngine-C9JonXvR.js                    12.53 kB │ gzip:   5.41 kB
+dist/assets/VoiceSettings-DaXVBE_Q.js                        12.80 kB │ gzip:   4.12 kB
+dist/assets/AdminToolsView-BTxT37EB.js                       12.82 kB │ gzip:   3.94 kB
+dist/assets/CrewPortal-BJMbUKsE.js                           12.98 kB │ gzip:   3.91 kB
+dist/assets/referralService-whNAgtSD.js                      13.30 kB │ gzip:   3.29 kB
+dist/assets/hunterStore-XGEZjX60.js                          13.73 kB │ gzip:   4.54 kB
+dist/assets/CFOTChart-Couf-ZaF.js                            13.84 kB │ gzip:   4.92 kB
+dist/assets/DemoMode-DtTc1M-J.js                             14.06 kB │ gzip:   4.35 kB
+dist/assets/ProjectCard-BF254T0k.js                          14.23 kB │ gzip:   4.47 kB
+dist/assets/PolarAngleAxis-CM8jQV59.js                       14.44 kB │ gzip:   4.01 kB
+dist/assets/PortalLeadInboxView-T-gXSuyM.js                  14.85 kB │ gzip:   4.09 kB
+dist/assets/EmployeeInviteAccept-1AeB15fZ.js                 15.11 kB │ gzip:   4.16 kB
+dist/assets/JournalPanel-ClppoQis.js                         15.32 kB │ gzip:   4.56 kB
+dist/assets/BetaOnboarding-kHBapIHf.js                       15.54 kB │ gzip:   5.28 kB
+dist/assets/VaultEstimatePanel-DJbO0TDL.js                   15.65 kB │ gzip:   4.71 kB
+dist/assets/N8nAutomation-CherJ1lo.js                        16.86 kB │ gzip:   5.06 kB
+dist/assets/NDASigningFlow-C7BAkzk2.js                       17.30 kB │ gzip:   5.14 kB
+dist/assets/ProposalFeed-7iWSz_Cd.js                         17.37 kB │ gzip:   4.75 kB
+dist/assets/YAxis-DvjQMonR.js                                17.79 kB │ gzip:   4.80 kB
+dist/assets/materialIntelligence-TSmVu38Q.js                 18.18 kB │ gzip:   3.72 kB
+dist/assets/index-DA82GvG2.js                                18.19 kB │ gzip:   6.47 kB
+dist/assets/PortalTrackView-M75s8jEz.js                      18.67 kB │ gzip:   6.01 kB
+dist/assets/V15rPricingIntelligencePanel-DmCoY5dl.js         18.81 kB │ gzip:   5.22 kB
+dist/assets/GuardianDashboardView-CJ4zbxOm.js                19.61 kB │ gzip:   5.73 kB
+dist/assets/VoiceHub-CLibCwEK.js                             19.66 kB │ gzip:   6.50 kB
+dist/assets/GuardianPanel-DSPvpOyy.js                        19.71 kB │ gzip:   5.10 kB
+dist/assets/PipelineTab-Cd3Tql-D.js                          20.43 kB │ gzip:   5.97 kB
+dist/assets/ReferralsTab-CWaizJuG.js                         20.90 kB │ gzip:   5.32 kB
+dist/assets/purify.es-BwoZCkIS.js                            22.03 kB │ gzip:   8.77 kB
+dist/assets/PackageAnimationPlaybackControls-BeY6AiKo.js     22.36 kB │ gzip:   7.99 kB
+dist/assets/MaterialIntelligence-BlpLsZMT.js                 23.42 kB │ gzip:   6.66 kB
+dist/assets/SnapshotLibraryDialog-BaH0a65t.js                24.31 kB │ gzip:   6.63 kB
+dist/assets/V15rMoneyPanel-BHzjTu3P.js                       24.33 kB │ gzip:   6.25 kB
+dist/assets/BusinessOverviewView-CFS1FlHC.js                 24.66 kB │ gzip:   7.19 kB
+dist/assets/OnboardingFlow-C6NTd1Bb.js                       25.55 kB │ gzip:   6.42 kB
+dist/assets/BillingView-CK-mWgK4.js                          25.74 kB │ gzip:   7.00 kB
+dist/assets/CombinedNeuralMap-CZYkghhI.js                    27.38 kB │ gzip:  10.10 kB
+dist/assets/NexusAdminView-DYcEiCfV.js                       27.77 kB │ gzip:   8.07 kB
+dist/assets/LiveCallTab-DwlC003G.js                          31.20 kB │ gzip:  10.23 kB
+dist/assets/MarketingPanel-Dh5vWQzO.js                       32.15 kB │ gzip:   6.94 kB
+dist/assets/CustomerPortalView-Lzs0JCF7.js                   32.81 kB │ gzip:  10.11 kB
+dist/assets/index-0-Z6OEi8.js                                33.10 kB │ gzip:  11.25 kB
+dist/assets/NexusChatPanel-DnDxtwqp.js                       36.17 kB │ gzip:  12.21 kB
+dist/assets/Calculator-Fruu9WvX.js                           43.37 kB │ gzip:  12.59 kB
+dist/assets/CommandCenterNeuralMap-C00lwldU.js               43.57 kB │ gzip:  13.96 kB
+dist/assets/VoiceActivationButton-CkAlQPgn.js                44.54 kB │ gzip:  13.14 kB
+dist/assets/V15rIncomeCalc-BIuLqc3E.js                       46.12 kB │ gzip:  12.50 kB
+dist/assets/PracticeTab-uTXYktJW.js                          52.50 kB │ gzip:  17.47 kB
+dist/assets/V15rLeadsPanel-CEfur6bI.js                       56.85 kB │ gzip:  13.82 kB
+dist/assets/V15rProjectsPanel-lxko5ZC8.js                    57.96 kB │ gzip:  13.39 kB
+dist/assets/V15rHome-CZIhtl5t.js                             61.68 kB │ gzip:  16.69 kB
+dist/assets/AdminVisualizationLab-RkiMGVfP.js                62.27 kB │ gzip:  18.58 kB
+dist/assets/crewPortalService-BSWVCLxn.js                    64.15 kB │ gzip:  16.07 kB
+dist/assets/DiagnosticsView-upObJzoz.js                      76.38 kB │ gzip:  18.63 kB
+dist/assets/VisualSuitePanel-JK9nqTty.js                     78.02 kB │ gzip:  26.37 kB
+dist/assets/CodePanel-eFlMMAVM.js                            78.83 kB │ gzip:  18.74 kB
+dist/assets/SchedulePanel-ZDfJEYqI.js                        80.40 kB │ gzip:  23.39 kB
+dist/assets/V15rDashboard-CeeK3WNi.js                        91.00 kB │ gzip:  22.40 kB
+dist/assets/SecurityView-CbelqNlU.js                         95.23 kB │ gzip:  26.54 kB
+dist/assets/RolesPermissionsModal-BjMCABMU.js               102.86 kB │ gzip:  24.77 kB
+dist/assets/GuardianView-DX9_EMse.js                        104.39 kB │ gzip:  24.33 kB
+dist/assets/EmployeePortal-BLlGDfAy.js                      116.54 kB │ gzip:  27.77 kB
+dist/assets/CrewPortal-KUCDeCOn.js                          135.10 kB │ gzip:  29.24 kB
+dist/assets/BlueprintSnapshotPreviewViewport-D3XaMxa3.js    137.75 kB │ gzip:  36.22 kB
+dist/assets/V15rPriceBookPanel-46Z-M8wr.js                  149.94 kB │ gzip:  43.18 kB
+dist/assets/index.es-CP_NplcJ.js                            150.77 kB │ gzip:  51.59 kB
+dist/assets/googleMapsLoader-DQibMY8M.js                    150.92 kB │ gzip:  33.67 kB
+dist/assets/react-vendor-CTWhBc3Q.js                        163.16 kB │ gzip:  53.52 kB
+dist/assets/V15rTeamPanel-B2Wr4hqV.js                       168.25 kB │ gzip:  36.42 kB
+dist/assets/LeadsTab-Crl8U6Hp.js                            180.92 kB │ gzip:  46.65 kB
+dist/assets/SolarTrainingView-JSr8yzEN.js                   185.62 kB │ gzip:  48.35 kB
+dist/assets/AdminCommandCenter-X2l3E90r.js                  192.17 kB │ gzip:  50.68 kB
+dist/assets/supabase-vendor-AnTI2EX_.js                     193.82 kB │ gzip:  50.95 kB
+dist/assets/html2canvas.esm-CBrSDip1.js                     201.42 kB │ gzip:  48.03 kB
+dist/assets/V15rSettingsPanel-C6tSpqcb.js                   259.91 kB │ gzip:  61.19 kB
+dist/assets/generateCategoricalChart-CqkTABDz.js            350.48 kB │ gzip:  98.64 kB
+dist/assets/V15rProjectInner-CVwawXuD.js                    370.21 kB │ gzip:  87.99 kB
+dist/assets/pdf-CXh85JJT.js                                 453.37 kB │ gzip: 135.11 kB
+dist/assets/DebtKiller-_-8FKDwo.js                          481.55 kB │ gzip: 125.30 kB
+dist/assets/eruda-BI-xNNTn.js                               504.59 kB │ gzip: 160.56 kB
+dist/assets/three.module-Yz47CQOr.js                        519.37 kB │ gzip: 130.75 kB
+dist/assets/V15rAppBrainTab-Do-bgwPq.js                     715.93 kB │ gzip: 163.54 kB
+dist/assets/NeuralWorldView-CyZoSlGf.js                     939.80 kB │ gzip: 268.92 kB
+dist/assets/index-Bu5dTD8i.js                               960.53 kB │ gzip: 417.00 kB
+dist/assets/BlueprintAI-EAyEHYmt.js                       1,189.68 kB │ gzip: 368.81 kB
+dist/assets/index-CcWv1G-s.js                             1,873.22 kB │ gzip: 499.99 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 35.26s

@@ -21,6 +21,8 @@ export interface SmartException { id: string; date: string; name: string; mercha
 export interface SmartExceptionGroup { reason: string; label: string; count: number; totalMinor: number; rows: SmartException[] }
 export interface MerchantRuleView { merchantKey: string; label: string; category: string; categoryLabel: string }
 export interface SmartData {
+  coverage?: {complete:boolean;reason:string|null}
+  hierarchy?: import('@/finance/bankSpendingHierarchy').SpendingHierarchy
   asOf: string; accounts: 'mapped' | 'all'; environment?: string; groups: SmartGroup[]; exceptions: SmartExceptionGroup[]
   totals: { groupedCount: number; groupedMinor: number; groups: number; exceptionCount: number }
   rulesAvailable: boolean; maxBatch: number; merchantRules: MerchantRuleView[]; draftScope: string

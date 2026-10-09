@@ -1,0 +1,20 @@
+{
+  "browser": "Chromium",
+  "viewport": "1024 × 1366",
+  "touch": true,
+  "realSafari": false,
+  "pageErrors": [],
+  "synthetic": true,
+  "productionData": false,
+  "captured": "2026-10-09T19:24:47.633Z",
+  "screenshots": [
+    "activity-dark.png",
+    "activity-light.png",
+    "overhead-dark.png",
+    "overhead-light.png",
+    "subcategory-dark.png",
+    "subcategory-light.png",
+    "inline-create-dark.png",
+    "inline-create-light.png"
+  ]
+}

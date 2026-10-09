@@ -24,12 +24,14 @@ interface Ctx {
   categoryColor: (key: string) => string | null
   accountColor: (id: string | null | undefined) => string | null
   setColor: (kind: ColorTarget, key: string, color: string | null) => Promise<void>
+  /** Synchronize a color already persisted atomically by classification management. */
+  acceptSavedCategoryColor: (key: string, color: string | null) => void
   setTint: (patch: Partial<TintPrefs>) => void
   importDeviceColors: (replaceConflicts: boolean) => Promise<void>
 }
 const OFF: Ctx = {
   enabled: false, colors: EMPTY_COLORS, storage: null, tint: { rows: false, accounts: false }, accounts: [], error: null, importPlan: null, importNote: null,
-  categoryColor: () => null, accountColor: () => null, setColor: async () => {}, setTint: () => {}, importDeviceColors: async () => {},
+  categoryColor: () => null, accountColor: () => null, setColor: async () => {}, acceptSavedCategoryColor: () => {}, setTint: () => {}, importDeviceColors: async () => {},
 }
 const ColorCtx = createContext<Ctx>(OFF)
 /** Outside a provider everything is colorless and nothing can be edited (surfaces render exactly as before). */
@@ -108,6 +110,7 @@ export function DisplayColorsProvider({ children, accounts = [], organizationId,
 
   const value = useMemo<Ctx>(() => ({
     enabled: active, colors, storage, tint, accounts, error, importPlan, importNote,
+    acceptSavedCategoryColor: (key, color) => setColors(prev => { const categories = { ...prev.categories }; if (color) categories[key] = color; else delete categories[key]; return { ...prev, categories } }),
     categoryColor: (key: string) => colors.categories[key] ?? null,
     accountColor: (id: string | null | undefined) => (id ? colors.accounts[id.toLowerCase()] ?? null : null),
     setColor, setTint, importDeviceColors,

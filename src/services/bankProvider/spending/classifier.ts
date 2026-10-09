@@ -13,7 +13,7 @@
  *   - Pending evidence gets suggestions for display only.
  */
 import { distinctiveTokens, merchantKey, normalizeText, searchText } from './merchant'
-import { OTHER_BUCKET, CONFIDENCE_RANK, bucketLabel, type BucketKey, type Confidence, type Direction } from './taxonomy'
+import { OTHER_BUCKET, CONFIDENCE_RANK, bucketLabel, isBucketKey, type BucketKey, type Confidence, type Direction } from './taxonomy'
 import type {
   AccountContext, BucketSuggestion, Decision, DebtOption, EvidenceTx, KnownBillCandidate, ProjectOption, RelationshipSuggestion, TxSuggestion,
 } from './types'
@@ -113,7 +113,8 @@ export function buildMerchantHistory(txs: EvidenceTx[], decisions: Decision[]): 
   const byId = new Map(txs.map(t => [t.id, t]))
   const history = new Map<string, Map<BucketKey, number>>()
   for (const d of decisions) {
-    if (d.kind !== 'category' || d.status !== 'confirmed' || !d.category) continue
+    // Custom categories are reusable by explicit choice only in BANK-6G. Never learn an unknown/archived key into a suggestion.
+    if (d.kind !== 'category' || d.status !== 'confirmed' || !isBucketKey(d.category)) continue
     const tx = byId.get(d.txId)
     if (!tx) continue
     const key = merchantKey(tx.name, tx.merchantName)

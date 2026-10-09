@@ -16,7 +16,7 @@ const focusRing = 'focus-visible:outline focus-visible:outline-2 focus-visible:o
 
 export function ChoiceSheet({
   open, options, groups, currentKey, suggestedKey, title, eyebrow, icon, context, onApply, onClose, onClear, busy, testId,
-  applyLabel = 'Apply', clearLabel = 'Remove my choice', idleNote, changeNote, searchLabel = 'Search', emptyText = 'Nothing matches',
+  applyLabel = 'Apply', clearLabel = 'Remove my choice', idleNote, changeNote, searchLabel = 'Search', emptyText = 'Nothing matches', extra, initialDraftKey,
 }: {
   open: boolean
   options: ChoiceOption[]
@@ -42,6 +42,8 @@ export function ChoiceSheet({
   changeNote?: (to: string, from: string | null) => ReactNode
   searchLabel?: string
   emptyText?: string
+  extra?: ReactNode
+  initialDraftKey?: string | null
 }) {
   const [draft, setDraft] = useState<string | null>(currentKey)
   const [query, setQuery] = useState('')
@@ -50,11 +52,11 @@ export function ChoiceSheet({
 
   useEffect(() => {
     if (!open) return
-    setDraft(currentKey); setQuery('')
+    setDraft(initialDraftKey ?? currentKey); setQuery('')
     opener.current = document.activeElement
     const t = setTimeout(() => panel.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus(), 0)
     return () => { clearTimeout(t); (opener.current as HTMLElement | null)?.focus?.() }
-  }, [open, currentKey])
+  }, [open, currentKey, initialDraftKey])
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -131,6 +133,7 @@ export function ChoiceSheet({
       </div>
 
       <footer className="space-y-2 border-t border-[var(--border-primary)] px-4 pb-4 pt-3">
+        {extra}
         <p className="text-xs text-[var(--text-secondary)]" aria-live="polite" data-testid={`${testId}-summary`}>
           {changed ? (changeNote ? changeNote(label(draft) ?? '', label(currentKey)) : <>Change to <span className="font-semibold text-[var(--text-primary)]">{label(draft)}</span>{currentKey ? <> (from {label(currentKey)})</> : null}. Nothing is saved until you apply.</>)
             : (idleNote ?? 'Pick one, then Apply.')}

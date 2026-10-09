@@ -1,0 +1,23 @@
+
+ RUN  v2.1.9 /workspace/poweron-hub
+
+ ✓ src/features/spending-explorer/bank6gWorkflow.test.tsx (4 tests) 222ms
+ ✓ src/features/spending-explorer/bank6fContract.test.tsx (11 tests) 2222ms
+   ✓ BANK-6F financial contract · views and filters (read-only queries) > the opening read, every view and every filter send exactly the same query parameters as before; none of them writes 974ms
+ ✓ src/services/bankProvider/__tests__/bank6gReporting.test.ts (16 tests) 20ms
+ ✓ src/services/bankProvider/__tests__/bank6gHierarchyDatabase.test.ts (10 tests) 3187ms
+   ✓ BANK-6G separately reviewable metadata SQL (local PostgreSQL only) > uses a complete service-only snapshot beyond the legacy 5000 evidence limit and fails closed at its explicit cap 490ms
+ ✓ src/services/bankProvider/__tests__/bank6gIntegration.test.ts (2 tests) 3241ms
+   ✓ BANK-6G full local schema and service authority > installs the review draft over real application migrations without changing reviewed evidence; custom assignments retain existing authority and history 3206ms
+ ✓ src/services/bankProvider/__tests__/bank6gCompatibility.test.ts (2 tests) 32ms
+
+ Test Files  6 passed (6)
+      Tests  45 passed (45)
+   Start at  19:24:02
+   Duration  8.22s (transform 813ms, setup 0ms, collect 1.68s, tests 8.92s, environment 434ms, prepare 441ms)
+
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

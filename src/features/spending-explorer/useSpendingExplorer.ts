@@ -13,15 +13,7 @@ const URL_BASE = '/.netlify/functions/plaid-spending'
 export type ExplorerView = 'review_queue' | 'reviewed' | 'all' | 'known_bills' | 'unassigned' | 'repeated_spending' | 'needs_review'
 export type Confidence = 'high' | 'possible' | 'low'
 export interface Target { type: string | null; id: string | null; label: string | null }
-export interface ExplorerRow {
-  id: string; date: string; name: string; merchant: string; amountMinor: number; direction: 'money_out' | 'money_in' | 'zero'; pending: boolean
-  account: { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; mappedTo: string | null; mapped: boolean; environment: 'sandbox' | 'production' | null; financialAccountId?: string | null }
-  bucket: { key: string | null; label: string | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[]; basis?: string; mixed?: boolean }
-  relationship: { kind: string; label: string; target: Target | null; state: 'confirmed' | 'suggested' | 'none'; confidence: Confidence | null; reasons: string[] }
-  review: 'suggested' | 'confirmed' | 'needs_review' | 'ignored'
-  scope: { value: 'business' | 'personal' | 'unclear'; source: 'owner' | 'account' | 'none' }
-  unassigned: boolean; repeatedPattern: boolean; pattern: { cadence: string; occurrences: number; kind: 'obligation_like' | 'spending_pattern' } | null
-}
+export type ExplorerRow = import('@/finance/bankEvidenceView').BankEvidenceView
 export interface BucketTotal { key: string; label: string; totalMinor: number; count: number; previousMinor: number; deltaMinor: number; merchants: number; repeatedMerchants: number }
 export interface Analytics {
   asOf: string; windowDays: number
@@ -48,7 +40,7 @@ export interface ExplorerMeta { billCandidates: number; activeObligations: numbe
 export interface ReviewCounts { reviewed: number; unreviewed: number; excluded: number }
 export interface HistoryEntry { label: string; kind: string; status: string; source: string; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
 export interface BatchResult { confirmed: number; unchanged: number; skipped: number; results: Array<{ id: string; result: string; reason?: string }> }
-export interface ExplorerData { draftScope?: string; reviewCounts?: ReviewCounts; asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
+export interface ExplorerData { coverage?: {complete:boolean;reason:string|null}; hierarchy?: import('@/finance/bankSpendingHierarchy').SpendingHierarchy; draftScope?: string; reviewCounts?: ReviewCounts; asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
 
 export interface Filters {
   view: ExplorerView; accounts: AccountScope; days: 30 | 60 | 90; bucket: string; account: string; scope: string; review: string; confidence: string; project: string; search: string; min: string; max: string

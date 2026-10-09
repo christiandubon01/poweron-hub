@@ -1,3 +1,4 @@
+import { readReportContext } from './reportingRepo'
 /**
  * src/services/spending/spendingRepo.ts
  *
@@ -9,6 +10,7 @@
 import { BankConnectionError } from '../bankConnectionService'
 import type { Decision, DebtOption, EvidenceTx, ProjectOption } from './types'
 import type { MerchantRule, NewDecision, SpendingContext, SpendingRepo } from './spendingService'
+import { loadSpendingHierarchy } from './hierarchy'
 
 type Svc = { from: (table: string) => any; rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: any; error: any }> }
 const PAGE = 1000
@@ -41,15 +43,18 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
     const run = (columns: string) => {
       let q = svc.from('financial_provider_interpretations').select(columns).eq('organization_id', organizationId).in('status', statuses)
       if (txId) q = q.eq('provider_transaction_ref', txId)
-      return q.order('created_at', { ascending: true }).limit(20000)
+      return q.order('created_at', { ascending: true }).order('id', { ascending: true })
     }
-    let { data, error } = await run(DECISION_COLUMNS)
-    // Before migration 155 is applied the obligation_id column does not exist: stay readable (suggestions still work), writes fail safely.
-    if (error && (error.code === '42703' || /obligation_id/.test(String(error.message ?? '')))) ({ data, error } = await run(DECISION_COLUMNS_PRE_155))
-    if (error) failed()
-    return (data ?? []).map(toDecision)
+    let columns = DECISION_COLUMNS
+    // Probe column availability before complete pagination; never interpret the REST row limit as a complete decision history.
+    const probe = await run(columns).range(0,0)
+    if (probe.error && (probe.error.code === '42703' || /obligation_id/.test(String(probe.error.message ?? '')))) columns = DECISION_COLUMNS_PRE_155
+    else if (probe.error) failed()
+    return (await pageAll<any>(() => run(columns),20000)).map(toDecision)
   }
   return {
+    loadHierarchy: org => loadSpendingHierarchy(svc, org),
+    loadReportContext: (org, sinceDate) => readReportContext(svc, org, sinceDate),
     async loadContext(organizationId, sinceDate): Promise<SpendingContext> {
       const rows = await pageAll<any>(() => svc.from('financial_provider_transactions')
         .select('id, provider_account_ref, transaction_date, name, merchant_name, provider_amount_minor, pending, removed_at, provider_category')
@@ -105,7 +110,8 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
         } else merchantRules = (r.data ?? []).map((m: any) => ({ id: m.id, merchantKey: m.merchant_key, merchantLabel: m.merchant_label ?? null, category: m.category, updatedAt: m.updated_at ?? null }))
       }
       return {
-        txs, accounts, decisions: decs, debts, projects, merchantRules, rulesAvailable,
+        txs, accounts, decisions: decs, debts, projects, merchantRules, rulesAvailable, hierarchy: await loadSpendingHierarchy(svc, organizationId),
+        legacyCoverage: {complete: rows.length < MAX_EVIDENCE && decs.length < 20000 && projects.length < 500 && merchantRules.length < 1000 && [accts,items,maps,fin,obl,occ,com].every(r => (r.data ?? []).length < 1000), reason: 'Legacy review evidence or matching context may be capped. Use a complete report for verified totals.'},
         obligations: (obl.data ?? []).map((o: any) => ({ id: o.id, name: o.name, amountMinor: Number(o.amount_minor), amountType: o.amount_type, estimatedMinMinor: o.estimated_min_minor ?? null, estimatedMaxMinor: o.estimated_max_minor ?? null,
           recurrenceKind: o.recurrence_kind, recurrenceInterval: o.recurrence_interval, anchorDate: o.anchor_date, startDate: o.start_date, endDate: o.end_date ?? null, status: o.status, accountId: o.account_id ?? null })),
         occurrences: (occ.data ?? []).map((o: any) => ({ obligationId: o.obligation_id, scheduledDate: o.scheduled_date, overrideDate: o.override_date ?? null, overrideAmountMinor: o.override_amount_minor ?? null, status: o.status, reconciliationState: o.reconciliation_state })),
