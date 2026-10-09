@@ -41,7 +41,7 @@ function Meter({ level }: { level: string | null }) {
 function Reasons({ reasons }: { reasons: string[] }) {
   if (!reasons.length) return null
   return <details className="group text-xs text-[var(--text-secondary)]">
-    <summary className={`inline-flex min-h-[36px] cursor-pointer list-none items-center gap-1 rounded-lg font-semibold [&::-webkit-details-marker]:hidden ${focusRing}`}>
+    <summary className={`inline-flex min-h-[44px] cursor-pointer list-none items-center gap-1 rounded-lg font-semibold [&::-webkit-details-marker]:hidden ${focusRing}`}>
       <span aria-hidden="true" className="inline-block group-open:rotate-90">›</span> Why this suggestion
     </summary>
     <ul className="list-disc space-y-0.5 pb-1 pl-5">{reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
@@ -117,7 +117,7 @@ function Relationship({ row, options, busy, onDecide }: { row: ExplorerRow; opti
       <div role="group" aria-label="Relationship" className="flex flex-wrap gap-1.5">
         {REL_KINDS.map(k => <button key={k.key} type="button" aria-pressed={kind === k.key} disabled={busy} data-testid="detail-rel-kind" data-kind={k.key}
           onClick={() => { if (kind !== k.key) { setKind(k.key); setTarget('') } }}
-          className={`${btn} min-h-[40px] text-[13px] ${kind === k.key ? 'bg-[var(--surface-selected)] ring-2 ring-[var(--text-primary)]' : ''}`}>{k.label}</button>)}
+          className={`${btn} text-[13px] ${kind === k.key ? 'bg-[var(--surface-selected)] ring-2 ring-[var(--text-primary)]' : ''}`}>{k.label}</button>)}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {needsTarget && (targets.length > SHEET_AFTER

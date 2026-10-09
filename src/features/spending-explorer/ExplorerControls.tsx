@@ -46,7 +46,7 @@ export function ViewTabs({ view, data, onView }: { view: ExplorerView; data: Exp
     return <button key={v.key} type="button" role="tab" aria-selected={on} data-testid={`spending-view-${v.key}`} onClick={() => onView(v.key)}
       className={primary
         ? `inline-flex min-h-[44px] items-center gap-1.5 rounded-xl px-3.5 text-sm font-semibold motion-safe:transition-colors ${on ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-[0_1px_2px_rgba(0,0,0,0.2)] ring-1 ring-[var(--surface-line)]' : 'text-[var(--text-secondary)] [@media(hover:hover)]:hover:bg-[var(--surface-2)]'} ${focusRing}`
-        : `inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold motion-safe:transition-colors ${on ? 'bg-[var(--surface-selected)] text-[var(--text-primary)] ring-2 ring-[var(--text-primary)]' : 'text-[var(--text-secondary)] ring-1 ring-[var(--border-primary)] [@media(hover:hover)]:hover:bg-[var(--surface-2)]'} ${focusRing}`}>
+        : `inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold motion-safe:transition-colors ${on ? 'bg-[var(--surface-selected)] text-[var(--text-primary)] ring-2 ring-[var(--text-primary)]' : 'text-[var(--text-secondary)] ring-1 ring-[var(--border-primary)] [@media(hover:hover)]:hover:bg-[var(--surface-2)]'} ${focusRing}`}>
       {v.label} <span className="rounded-full bg-[var(--surface-2)] px-1.5 text-xs tabular-nums text-[var(--text-secondary)]">{n}</span>
     </button>
   }
@@ -90,9 +90,9 @@ export function FilterBar({ filters, data, update, reset, showFilters, setShowFi
         <Search size={16} aria-hidden="true" className="shrink-0 text-[var(--text-secondary)]" />
         <span className="sr-only">Search merchants</span>
         <input type="search" value={filters.search} onChange={e => update({ search: e.target.value })} placeholder="Search merchants" data-testid="spending-search"
-          className="min-w-0 flex-1 bg-transparent text-base outline-none sm:text-sm" style={{ appearance: 'none' }} />
+          className="min-h-[44px] min-w-0 flex-1 bg-transparent text-base outline-none sm:text-sm" style={{ appearance: 'none' }} />
       </label>
-      <SegmentedControl label="Period" size="sm" value={String(filters.days) as '30' | '60' | '90'} onChange={v => update({ days: Number(v) as 30 | 60 | 90 })} testIdPrefix="spending-period"
+      <SegmentedControl label="Period" value={String(filters.days) as '30' | '60' | '90'} onChange={v => update({ days: Number(v) as 30 | 60 | 90 })} testIdPrefix="spending-period"
         options={[{ value: '30', label: '30 days' }, { value: '60', label: '60' }, { value: '90', label: '90' }]} />
       <button type="button" className={`${btn} inline-flex items-center gap-1.5`} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">
         <SlidersHorizontal size={16} aria-hidden="true" />Filters{active ? ` (${active})` : ''}</button>
@@ -100,9 +100,9 @@ export function FilterBar({ filters, data, update, reset, showFilters, setShowFi
     </div>
     {chips.length > 0 && <div className="flex flex-wrap items-center gap-1.5" aria-label="Filters in use" data-testid="spending-filter-chips">
       {chips.map(c => <span key={c.key} data-testid="spending-filter-chip" data-filter={c.key}
-        className="inline-flex min-h-[36px] max-w-full items-center gap-1 rounded-full bg-[var(--fin-protected-tint)] pl-3 pr-1 text-[13px] font-semibold text-[var(--fin-protected)] ring-1 ring-[var(--fin-protected-border)]">
+        className="inline-flex min-h-[44px] max-w-full items-center gap-0.5 rounded-full bg-[var(--fin-protected-tint)] pl-3.5 pr-0.5 text-[13px] font-semibold text-[var(--fin-protected)] ring-1 ring-[var(--fin-protected-border)]">
         <span className="truncate">{c.label}</span>
-        <button type="button" aria-label={`Remove filter: ${c.label}`} onClick={() => update(c.clear)} className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full [@media(hover:hover)]:hover:bg-[var(--surface-2)] ${focusRing}`}><X size={14} aria-hidden="true" /></button>
+        <button type="button" aria-label={`Remove filter: ${c.label}`} onClick={() => update(c.clear)} className={`inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full [@media(hover:hover)]:hover:bg-[var(--surface-2)] ${focusRing}`}><X size={14} aria-hidden="true" /></button>
       </span>)}
       <button type="button" className={btnQuiet} onClick={reset} data-testid="spending-filters-clear">Clear all</button>
     </div>}

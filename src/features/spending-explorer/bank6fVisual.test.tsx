@@ -70,6 +70,11 @@ describe('BANK-6F step 2 · semantic layer', () => {
     }
   })
 
+  it('touch targets: no control in the BANK-6F surfaces is set below 44px (rem sizes shrink with the app\'s 14px root, so targets use px)', () => {
+    for (const f of [...SURFACES, 'src/features/spending-explorer/ExplorerControls.tsx', 'src/features/spending-explorer/detail/TransactionDetail.tsx', 'src/features/spending-explorer/SelectionBar.tsx'])
+      expect(readFileSync(f, 'utf8').split('\n').filter(l => /min-h-\[(3\d|40)px\]/.test(l) || (/<button/.test(l) && /\bh-(7|8|9|10) w-(7|8|9|10)\b/.test(l))), f).toEqual([]) // decorative circles inside a 44px button are fine
+  })
+
   it('no small text uses --text-muted (below 4.5:1 on the light card)', () => {
     for (const f of ['src/features/spending-explorer/controls.tsx', 'src/features/spending-explorer/SmartReview.tsx', 'src/features/spending-explorer/SpendingExplorer.tsx', 'src/features/spending-explorer/detail/TransactionDetail.tsx', 'src/features/spending-explorer/snapshot/SpendingSnapshot.tsx'])
       expect(readFileSync(f, 'utf8').match(/\btext-\[var\(--text-muted\)\]/g) ?? [], f).toEqual([])

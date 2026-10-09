@@ -13,8 +13,8 @@ import { useState } from 'react'
 import { CategoryDot, useDisplayColors } from '@/features/display-colors/DisplayColors'
 import type { Analytics, BucketTotal } from '../useSpendingExplorer'
 import { btnQuiet, eyebrow, focusRing } from '../ui'
+import { usd0 } from '../format'
 
-const usd0 = (minor: number) => `$${Math.round(Math.abs(minor) / 100).toLocaleString('en-US')}`
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 /** Display-only share of the headline total. Never 0% for a real amount, so a small category is not shown as nothing. */
 export const sharePct = (part: number, whole: number): string => {

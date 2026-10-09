@@ -22,7 +22,7 @@ export function SegmentedControl<T extends string>({ value, options, onChange, l
   testIdPrefix?: string
   className?: string
 }) {
-  const h = size === 'sm' ? 'min-h-[40px] px-3' : 'min-h-[44px] px-3.5'
+  const h = size === 'sm' ? 'min-h-[44px] px-3' : 'min-h-[44px] px-3.5' // both sizes keep a 44px target; sm only tightens the padding
   return <div role={role} aria-label={label} className={`inline-flex max-w-full flex-wrap gap-0.5 rounded-2xl bg-[var(--surface-1)] p-1 ring-1 ring-[var(--border-primary)] ${className}`}>
     {options.map(o => {
       const on = o.value === value

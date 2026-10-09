@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
 import { TransactionDetail } from './detail/TransactionDetail'
-import { withMask } from './format'
+import { shortDate, usd0, usd2, withMask } from './format'
 import { BucketPicker } from './BucketPicker'
 import { ApprovalConfirm, SelectionBar } from './SelectionBar'
 import { SpendingSnapshot } from './snapshot/SpendingSnapshot'
@@ -14,9 +14,6 @@ import { useSpendingExplorer, type Analytics, type BatchResult, type HistoryEntr
 import { btn, btnPrimary, eyebrow, selectedCard } from './ui'
 import { Checkbox, Chip, SegmentedControl, StatusBadge } from './controls'
 import { FilterBar, VIEW_CAPTION, ViewTabs } from './ExplorerControls'
-const usd0 = (minor: number) => `$${Math.round(Math.abs(minor) / 100).toLocaleString('en-US')}`
-const usd2 = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 const SKIP_TEXT: Record<string, string> = {
   pending: 'still pending', money_in: 'money coming in', no_suggestion: 'nothing recognised', not_high_confidence: 'not a confident match', needs_individual_review: 'needs your individual decision', mixed_purpose: 'needs you to pick the category',
   relationship_suggested: 'also suggests a bill, payroll, transfer or project', already_decided: 'already decided', not_found: 'not found', failed: 'could not be saved',
@@ -76,7 +73,7 @@ function SelectedReview({ items, off, overrides, categoryChoices, categories, bu
         </label>
         <div className="mt-1 flex flex-wrap items-center gap-2 pl-[52px]">
           <span className="text-xs text-[var(--text-secondary)]">Category</span>
-          <button type="button" className={`${btn} min-h-[40px] min-w-0 flex-1 text-left`} disabled={busy} onClick={() => setPicking(r)} data-testid="spending-selected-category" data-value={chosenKey ?? ''}
+          <button type="button" className={`${btn} min-w-0 flex-1 text-left`} disabled={busy} onClick={() => setPicking(r)} data-testid="spending-selected-category" data-value={chosenKey ?? ''}
             aria-label={`Category for ${r.merchant}: ${labelOf(chosenKey)}. Change`}>
             <span className="flex min-w-0 items-center gap-2"><CategoryDot categoryKey={chosenKey} /><span className="truncate">{labelOf(chosenKey)}{chosenKey === r.bucket.key ? ' (suggested)' : ''}</span><span aria-hidden="true" className="ml-auto text-[var(--text-secondary)]">⌄</span></span>
           </button>
