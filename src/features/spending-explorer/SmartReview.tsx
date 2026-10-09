@@ -5,7 +5,9 @@ import { categoryStripe } from '@/features/display-colors/stripes'
 import { useSmartReview, type SmartBatchResult, type SmartException, type SmartGroup, type SmartRow } from './useSmartReview'
 
 const NS = 'smart'
-import { btn, btnOn, btnPrimary, field } from './ui'
+import { btn, btnOn, btnPrimary, btnSel, field, focusRing } from './ui'
+import { Chip } from './controls'
+import { Check } from 'lucide-react'
 import { entryType, toneColor } from './entryType'
 const usd2 = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
@@ -25,11 +27,6 @@ export const smartSummary = (r: SmartBatchResult): string => {
   const rules = r.rules?.saved.length ? ` Remembered: ${r.rules.saved.map(x => `${x.label} → ${x.category.replace(/_/g, ' ')}`).join(', ')}.` : ''
   const notSaved = r.rules?.skipped.length ? ` ${r.rules.skipped.length} merchant${r.rules.skipped.length === 1 ? '' : 's'} could not be remembered; the approvals were still saved.` : ''
   return `Approved ${r.confirmed}${r.unchanged ? ` (${r.unchanged} already approved)` : ''}.${r.skipped ? ` ${r.skipped} left for you: ${left}.` : ''}${rules}${notSaved}`
-}
-
-function Chip({ children, tone }: { children: React.ReactNode; tone?: 'ok' | 'warn' | 'muted' }) {
-  const color = tone === 'ok' ? 'var(--fin-positive)' : tone === 'warn' ? 'var(--fin-negative)' : 'var(--text-secondary)'
-  return <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-[var(--border-primary)]" style={{ color }}>{children}</span>
 }
 
 function ExceptionRow({ row, buckets, busy, onSave }: { row: SmartException; buckets: Array<{ key: string; label: string; flow?: 'in' | 'out' }>; busy: boolean; onSave: (id: string, bucket: string) => void }) {
@@ -202,10 +199,10 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       const ids = unflagged(g)
       const allOn = ids.length > 0 && ids.every(id => selected.has(id))
       const choice = choices.get(g.id)
-      const origin = g.basis === 'owner_rule' ? <Chip tone="ok">Your remembered rule</Chip> : choice ? <Chip tone="ok">Your choice</Chip> : <Chip>Suggestion</Chip>
+      const origin = g.basis === 'owner_rule' ? <Chip tone="done">Your remembered rule</Chip> : choice ? <Chip tone="done">Your choice</Chip> : <Chip>Suggestion</Chip>
       const selTotal = sel.reduce((s, r) => s + r.amountMinor, 0)
       const rememberOn = sel.length > 0 && remember.has(g.id)
-      return <li key={g.id} className="relative rounded-xl border border-[var(--border-primary)] bg-white/[0.02] p-3 pl-5 shadow-[0_1px_2px_rgba(0,0,0,0.18)]" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
+      return <li key={g.id} className="relative rounded-xl border border-[var(--surface-line)] bg-[var(--surface-1)] p-3 pl-5 shadow-[0_1px_2px_rgba(0,0,0,0.18)]" data-testid="smart-group" data-merchant={g.merchantKey} data-selected={sel.length}>
         <StripeBar stripe={categoryStripe({ key: choice ?? g.bucket.key, state: 'suggested' }, categoryColor)} shape="card" />
         <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-3 text-left" aria-expanded={isOpen} onClick={() => toggleOpen(g.id)} data-testid="smart-group-header">
           <span className="min-w-0"><span className="block truncate text-sm font-semibold">{g.merchant}</span>
@@ -213,12 +210,12 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
           <span className="shrink-0 text-xs text-[var(--text-secondary)]">{isOpen ? 'Hide' : 'Show'}</span>
         </button>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          <CategoryPill categoryKey={choice ?? g.bucket.key} label={choice ? labelOf(choice) : g.bucket.label} state="suggested" /><Chip tone={g.confidence === 'high' ? 'ok' : 'muted'}>{CONF[g.confidence]}</Chip>{origin}
+          <CategoryPill categoryKey={choice ?? g.bucket.key} label={choice ? labelOf(choice) : g.bucket.label} state="suggested" /><Chip tone={g.confidence === 'high' ? 'neutral' : 'muted'}>{CONF[g.confidence]}</Chip>{origin}
           {g.mixed && <Chip tone="warn">Mixed purpose</Chip>}{g.flaggedCount > 0 && <Chip tone="warn">{g.flaggedCount} to check</Chip>}
         </div>
         {g.needsChoice && <p className="mt-1 text-xs text-[var(--text-secondary)]">{g.mixed ? `${g.merchant} is used for different purposes, so you pick the category.` : 'This is not a confident match, so you pick the category.'}</p>}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button type="button" className={`${btn} ${allOn ? btnOn : ''}`} role="checkbox" aria-checked={allOn} disabled={busy || ids.length === 0} onClick={() => toggleGroup(g)} data-testid="smart-group-select">
+          <button type="button" className={`${btn} ${allOn ? btnSel : ''}`} role="checkbox" aria-checked={allOn} disabled={busy || ids.length === 0} onClick={() => toggleGroup(g)} data-testid="smart-group-select">
             {allOn ? 'Selected' : g.needsChoice ? `Use ${g.bucket.label} for ${ids.length}` : `Select ${ids.length}`}</button>
           <select aria-label={`Category for ${g.merchant}`} className={`${field} min-w-0`} value={choice ?? (g.needsChoice ? '' : g.bucket.key)} onChange={e => chooseCategory(g, e.target.value)} disabled={busy} data-testid="smart-group-category">
             {g.needsChoice && <option value="">Choose a category…</option>}
@@ -244,10 +241,10 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
         {isOpen && <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="smart-group-rows">{g.rows.map(r => {
           const on = selected.has(r.id)
           return <li key={r.id}>
-            <button type="button" role="checkbox" aria-checked={on} disabled={busy} onClick={() => toggleRow(g, r)} className={`flex min-h-[44px] w-full items-center gap-3 py-2 text-left ${on ? 'bg-white/5' : ''}`} data-testid="smart-row" data-selected={on ? 'true' : 'false'}>
-              <span aria-hidden="true" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded ring-1 ring-[var(--border-primary)]">{on ? '✓' : ''}</span>
+            <button type="button" role="checkbox" aria-checked={on} disabled={busy} onClick={() => toggleRow(g, r)} className={`flex min-h-[44px] w-full items-center gap-3 rounded-lg px-1 py-2 text-left ${on ? 'bg-[var(--fin-protected-tint)]' : ''} ${focusRing}`} data-testid="smart-row" data-selected={on ? 'true' : 'false'}>
+              <span aria-hidden="true" className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[7px] ${on ? 'bg-[var(--fin-protected)] text-[var(--bg-card)]' : 'bg-[var(--surface-1)] ring-[1.5px] ring-inset ring-[var(--surface-line)]'}`}>{on && <Check size={15} strokeWidth={3} />}</span>
               <span className="min-w-0 flex-1"><span className="block truncate text-sm">{shortDate(r.date)} · {r.name}</span>
-                {r.flags.length > 0 && <span className="block text-xs" style={{ color: 'var(--fin-negative)' }}>{r.flags.map(f => FLAG_TEXT[f] ?? f).join(' · ')}</span>}</span>
+                {r.flags.length > 0 && <span className="block text-xs font-semibold" style={{ color: 'var(--fin-warning)' }}>{r.flags.map(f => FLAG_TEXT[f] ?? f).join(' · ')}</span>}</span>
               <span className="shrink-0 text-sm">{usd2(r.amountMinor)}</span>
             </button></li>
         })}</ul>}
@@ -255,11 +252,11 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
     })}</ul>
 
     {data.exceptions.length > 0 && <div className="mt-4" data-testid="smart-exceptions">
-      <h4 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Needs your individual decision</h4>
+      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">Needs your individual decision</h4>
       <p className="mt-1 text-xs text-[var(--text-secondary)]">These are never approved together: money in, owner draws and personal, payroll, transfers, bills and projects, pending items, and anything unclear.</p>
       <ul className="mt-2 space-y-2">{data.exceptions.map(e => {
         const isOpen = open.has(`ex:${e.reason}`)
-        return <li key={e.reason} className="rounded-xl border border-[var(--border-primary)] p-3" data-testid="smart-exception-group" data-reason={e.reason}>
+        return <li key={e.reason} className="rounded-xl border border-[var(--surface-line)] bg-[var(--surface-1)] p-3" data-testid="smart-exception-group" data-reason={e.reason}>
           <button type="button" className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left" aria-expanded={isOpen} onClick={() => toggleOpen(`ex:${e.reason}`)}>
             <span className="text-sm font-semibold">{e.label}</span><span className="shrink-0 text-xs text-[var(--text-secondary)]">{e.count} · {usd2(e.totalMinor)}</span></button>
           {isOpen && <ul className="mt-1 divide-y divide-[var(--border-primary)]">{e.rows.map(r => <ExceptionRow key={r.id} row={r} buckets={data.options.buckets} busy={busy} onSave={(id, bucket) => { void setBucket(id, bucket).then(() => onChanged?.()) }} />)}
@@ -268,10 +265,10 @@ export default function SmartReview({ onChanged }: { onChanged?: () => void }) {
       })}</ul>
     </div>}
 
-    {chosen.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-cash)' }} data-testid="smart-selection-bar" role="region" aria-label="Selected transactions">
+    {chosen.length > 0 && <div className="sticky bottom-2 z-10 mt-3 space-y-2 rounded-xl border-2 bg-[var(--bg-card)] p-3 shadow-lg" style={{ borderColor: 'var(--fin-protected-border)' }} data-testid="smart-selection-bar" role="region" aria-label="Selected transactions">
       <p className="text-sm font-semibold" aria-live="polite"><span data-testid="smart-selected-count">{chosen.length} selected</span> <span className="font-normal text-[var(--text-secondary)]">· {usd2(totalOut)} going out · not approved yet</span></p>
       {confirming
-        ? <section role="alertdialog" aria-label="Confirm approval" data-testid="smart-confirm" className="space-y-2 rounded-lg border border-[var(--border-primary)] p-3">
+        ? <section role="alertdialog" aria-label="Confirm approval" data-testid="smart-confirm" className="space-y-2 rounded-lg border border-[var(--surface-line)] p-3">
             <p className="text-sm font-semibold">Approve {chosen.length} transaction{chosen.length === 1 ? '' : 's'}?</p>
             <ul className="text-sm" data-testid="smart-confirm-breakdown">{breakdown.map(b => <li key={b.label} className="flex justify-between gap-3"><span>{b.label} · {b.count}</span><span>{usd2(b.totalMinor)}</span></li>)}</ul>
             <p className="flex justify-between gap-3 border-t border-[var(--border-primary)] pt-2 text-sm font-semibold"><span>Total going out</span><span>{usd2(totalOut)}</span></p>

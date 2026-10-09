@@ -142,10 +142,12 @@ describe('BANK-6E surfaces', () => {
     ]))
     await click(q('[data-testid="spending-view-all"]'))
     const box = q('[data-testid="spending-select"]') as HTMLInputElement
-    expect(box.style.appearance).toBe('auto') // the global reset in styles/responsive.css otherwise flattens native checkboxes to nothing
+    // BANK-6F: the real checkbox input stays the control (keyboard, screen readers) over a DRAWN box, so the app-wide appearance:none reset cannot hide it
+    expect(box.type).toBe('checkbox'); expect(box.className).toContain('opacity-0'); expect(box.nextElementSibling!.className).toContain('ring-[var(--surface-line)]')
+    await click(box); expect(box.nextElementSibling!.className).toContain('bg-[var(--fin-protected)]') // checked = a filled blue box with a check
     const [confirmed] = qa('[data-testid="spending-row"]')
     expect(confirmed.querySelector('[data-testid="spending-select"]')).toBeNull()
-    expect(confirmed.querySelector('span.min-w-\\[40px\\]')).not.toBeNull() // reserved column keeps the merchant aligned
+    expect(confirmed.querySelector('span.min-w-\\[44px\\]')).not.toBeNull() // reserved column keeps the merchant aligned
   })
 
   it('Snapshot: a category dot before each colored category label; the bars keep the existing cash color', async () => {

@@ -207,7 +207,7 @@ describe('BANK-6D surfaces', () => {
     await click(q('[data-testid="spending-view-all"]'))
     await act(async () => { (q('[data-testid="spending-select"]') as HTMLInputElement).click() }); await flush()
     const r = q('[data-testid="spending-row"]')!
-    expect(r.dataset.selected).toBe('true'); expect(r.style.boxShadow).toBe('0 0 0 2px var(--fin-cash-border)'); expect(r.style.boxShadow).not.toContain('inset')
+    expect(r.dataset.selected).toBe('true'); expect(r.style.boxShadow).toBe('0 0 0 2px var(--fin-protected-border)') /* BANK-6F D1: a selection is blue, never the green of money in */; expect(r.style.boxShadow).not.toContain('inset')
     expect(r.textContent).toContain('✓ Selected')
     expect((r.querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset).toMatchObject({ stripe: 'faded', color: ROSE })
   })
