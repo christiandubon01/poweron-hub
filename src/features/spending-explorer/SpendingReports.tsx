@@ -33,7 +33,7 @@ export function useSpendingReport(mode:ReportMode | null,scope:ReportScope,revis
   },[key])
   return result?.key===key ? {report:result.report ?? null,error:result.error ?? null} : {report:null,error:null}
 }
-export function ReportView({report,renderRow,onMode,accountLabel}: {accountLabel?:string;report:SpendingReport;renderRow:(row:ReportRow)=>ReactNode;onMode?:(mode:ReportMode)=>void}) {
+export function ReportView({report,renderRow,onMode,accountLabel}: {accountLabel?:string;report:SpendingReport;renderRow:(row:ReportRow,selection?:{parent?:string;leaf?:string;direction?:string})=>ReactNode;onMode?:(mode:ReportMode)=>void}) {
   const [parent,setParent]=useState<string | null>(null),[leaf,setLeaf]=useState<string | null>(null),[metric,setMetric]=useState<'outMinor'|'inMinor'>('outMinor')
   const [status,setStatus]=useState('all'),[limit,setLimit]=useState(100)
   const {categoryColor}=useDisplayColors()
@@ -70,7 +70,7 @@ export function ReportView({report,renderRow,onMode,accountLabel}: {accountLabel
         <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{child?.label ?? selected?.label ?? title} · transactions</h4><label className="text-xs text-[var(--text-secondary)]">Transaction status <select value={status} onChange={e=>{setStatus(e.target.value);setLimit(100)}} className="min-h-[44px] rounded-xl bg-[var(--surface-1)] px-2 ring-1 ring-[var(--border-primary)]"><option value="all">All records</option><option value="posted">Posted</option><option value="ignored">Ignored</option><option value="pending">Pending</option><option value="removed">Removed</option></select></label></div>
         <p className="text-xs text-[var(--text-secondary)]">{title} · {metric==='inMinor'?'Money In':'Money Out'} · {rows.length} matching records · showing {Math.min(limit,rows.length)} · Posted out {usd2(rows.filter(r=>!r.pending && !r.removed).reduce((n,r)=>n+Math.max(0,r.amountMinor),0))} · In {usd2(rows.filter(r=>!r.pending && !r.removed).reduce((n,r)=>n+Math.max(0,-r.amountMinor),0))}</p>
         <p className="text-xs text-[var(--text-secondary)]">Pending {rows.filter(r=>r.pending).length} · Removed {rows.filter(r=>r.removed).length} · Category review pending {rows.filter(r=>r.bucket.state!=='confirmed' && r.review!=='ignored').length} · Financial links unresolved {rows.filter(r=>r.unresolved).length}. These counts can overlap. Pending and removed records contribute no posted amount.</p>
-        {rows.length ? <ul className="space-y-1.5" data-testid="spending-list">{rows.slice(0,limit).map(renderRow)}</ul> : <p className="text-sm text-[var(--text-secondary)]">No transactions match this scope.</p>}
+        {rows.length ? <ul className="space-y-1.5" data-testid="spending-list">{rows.slice(0,limit).map(r=>renderRow(r,{parent:parent??undefined,leaf:leaf??undefined,direction:report.mode==='all_money'?(metric==='inMinor'?'in':'out'):undefined}))}</ul> : <p className="text-sm text-[var(--text-secondary)]">No transactions match this scope.</p>}
         {limit<rows.length && <button className={btn} onClick={()=>setLimit(n=>n+100)}>Show next 100 records</button>}
       </div>
     </>}

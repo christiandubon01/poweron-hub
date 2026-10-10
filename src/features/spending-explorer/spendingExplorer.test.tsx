@@ -90,8 +90,8 @@ describe('SpendingExplorer (BANK-5)', () => {
     expect(gets().slice(-1)[0]).toMatch(/view=reviewed/)
     expect(host.querySelector('[data-testid="spending-reviewed-caption"]')!.textContent).toMatch(/you confirmed.*Suggestions are not counted as reviewed.*undo/)
     const rows = [...host.querySelectorAll('[data-testid="spending-row"]')] as HTMLElement[]
-    expect(rows[0].textContent).toContain('✓ Materials'); expect(rows[0].textContent).not.toContain('suggested'); expect(chips(rows[0])).toContain('Business')
-    expect(rows[1].textContent).toContain('✓ Personal / Owner'); expect(chips(rows[1])).toContain('Personal')
+    expect(rows[0].textContent).toContain('✓ Materials'); expect(rows[0].textContent).not.toContain('suggested'); expect(rows[0].textContent).toContain('Business account')
+    expect(rows[1].textContent).toContain('✓ Personal / Owner'); expect(rows[1].textContent).toContain('Use: personal')
     expect(host.querySelectorAll('[data-testid="spending-select"]')).toHaveLength(0) // confirmed rows are never offered for batch approval
     // the Filters panel still works on top of Reviewed: the view stays "reviewed" and the bucket narrows it
     await click(host.querySelector('[data-testid="spending-filters-toggle"]'))
@@ -112,7 +112,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     await click(host.querySelector('[data-testid="spending-view-reviewed"]'))
     const [a, b, c] = [...host.querySelectorAll('[data-testid="spending-row"]')] as HTMLElement[]
     expect(a.querySelector('[data-testid="spending-category-needs-review"]')!.textContent).toBe('Relationship reviewed · Category needs review')
-    expect(chips(a)).toContain('✓ Debt payment · Chase Ink Card')
+    expect(chips(a)).toContain('Financial link: ✓ Debt payment · Chase Ink Card')
     expect(chips(a)).toContain('Suggested · Materials'); expect(chips(a)).not.toContain('✓ Materials') // the suggestion is not shown as approved
     expect(b.querySelector('[data-testid="spending-category-needs-review"]')).not.toBeNull()
     expect(c.querySelector('[data-testid="spending-category-needs-review"]')).toBeNull(); expect(chips(c)).toContain('✓ Materials') // a confirmed category keeps its label
@@ -175,7 +175,7 @@ describe('SpendingExplorer (BANK-5)', () => {
     await mount(payload([row(), row({ id: 'r2', merchant: 'HOME DEPOT', pending: true, bucket: { key: 'materials', label: 'Materials', state: 'confirmed', confidence: 'high', reasons: ['You confirmed this.'] },
       relationship: { kind: 'project', label: 'Project', target: { type: 'project', id: 'p1', label: 'Desert Willow Remodel' }, state: 'confirmed', confidence: 'high', reasons: [] }, review: 'confirmed', unassigned: false })]))
     const rows = [...host.querySelectorAll('[data-testid="spending-row"]')]
-    expect(rows[0].textContent).toMatch(/Suggested · Fuel \/ Vehicle/); expect(rows[0].textContent).toMatch(/Unassigned/); expect(rows[0].textContent).toMatch(/−\$62\.10/)
+    expect(rows[0].textContent).toMatch(/Suggested · Fuel \/ Vehicle/); expect(rows[0].textContent).toMatch(/Financial link unresolved/); expect(rows[0].textContent).toMatch(/−\$62\.10/)
     expect(rows[1].getAttribute('data-pending')).toBe('true'); expect(rows[1].textContent).toMatch(/Pending/)
     expect(rows[1].textContent).toMatch(/✓ Materials/); expect(rows[1].textContent).toMatch(/✓ Project · Desert Willow Remodel/)
   })

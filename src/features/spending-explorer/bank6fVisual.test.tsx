@@ -162,7 +162,7 @@ describe('BANK-6F step 3 · Spending Snapshot', () => {
 
 describe('BANK-6F step 4 · transaction detail (inline, four sections, same decisions)', () => {
   const posts = () => (globalThis.fetch as any).mock.calls.filter(([, i]: any) => i?.method === 'POST').map(([, i]: any) => JSON.parse(i.body))
-  const open = async (i = 0) => click(qa('[data-testid="spending-row"] button[aria-expanded]')[i])
+  const open = async (i = 0) => click(qa('[data-testid="transaction-toggle"]')[i])
   const detail = () => q('[data-testid="spending-detail"]')!
   const buttons = () => qa('button', detail()).map(b => b.textContent!.trim())
 

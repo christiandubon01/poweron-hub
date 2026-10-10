@@ -8,6 +8,7 @@ import type { ReportMode, ReportScope } from '@/finance/bankSpendingReports'
 import { projectReport, matchesExplorerFilters } from './reportProjection'
 import { parentDisplayColor } from '@/features/display-colors/hierarchyColors'
 import { useHierarchy } from './HierarchyProvider'
+import { RelatedTransactions } from './RelatedTransactions'
 import { TransactionRow as Row } from './TransactionRow'
 import { shortDate, usd0, usd2, withMask } from './format'
 import { BucketPicker } from './BucketPicker'
@@ -127,6 +128,8 @@ function ExplorerClassificationSettings() {
  */
 export default function SpendingExplorer() {
   const { load, data, rows, filters, update, reset, busy, message, decide, decideBatch, loadHistory, loadMore, refresh } = useSpendingExplorer()
+  const [relatedBusy,setRelatedBusy]=useState(false)
+  const [related,setRelated]=useState<{id:string;selection?:{parent?:string;leaf?:string;direction?:string}}|null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [mode, setMode] = useState<'explorer' | 'smart'>('explorer')
   const [population,setPopulation] = useState<'review' | ReportMode>('review')
@@ -241,12 +244,16 @@ export default function SpendingExplorer() {
     clearSelection()
     setBatchNote(batchSummary(out))
   }
+  const relatedScope:Record<string,string>={from:reportScope.from,to:reportScope.to,accounts:filters.accounts,population,view:filters.view,...Object.fromEntries(['account','bucket','scope','review','confidence','project','search'].filter(k=>!!filters[k as keyof typeof filters]).map(k=>[k,String(filters[k as keyof typeof filters])])),...(filters.min?{minMinor:String(Math.round(Number(filters.min)*100))}:{}),...(filters.max?{maxMinor:String(Math.round(Number(filters.max)*100))}:{})}
+  const relatedKey=JSON.stringify([mode,relatedScope])
+  const relatedProps=(r:ExplorerRow,selection?:{parent?:string;leaf?:string;direction?:string})=>({onRelated:()=>setRelated(old=>old?.id===r.id?null:{id:r.id,selection}),relatedContent:related?.id===r.id?<RelatedTransactions key={relatedKey+JSON.stringify(selection)} seed={r} scope={{...relatedScope,...selection}} options={data!.options} onClose={()=>{setRelated(null);refreshAll()}} onDecide={decide} loadHistory={loadHistory} onChanged={refreshAll} onBusyChange={setRelatedBusy}/>:undefined})
   const showingSelected = reviewing && items.length > 0
   return <HierarchyProvider value={sourceReport?.hierarchy ?? data.hierarchy} onChanged={refreshAll}><section data-testid="spending-explorer" aria-label="Spending explorer" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Spending explorer · bank evidence</h3>
       <span className="text-xs text-[var(--text-secondary)]">{population==='review'?'Suggestions only. Nothing here changes your balances, ledger or reports.':'Bank evidence only. Category decisions do not change balances or post accounting entries.'}</span>
     </div>
+    <fieldset disabled={relatedBusy} className="min-w-0" aria-label="Explorer controls">
     <p className={`${eyebrow} mt-4`}>Workflow</p>
     <SegmentedControl className="mt-2" label="Review mode" value={mode} onChange={setMode} options={[
       {value:'explorer',label:'Explore',testId:'spending-mode-explorer'},{value:'smart',label:'Smart Review',testId:'spending-mode-smart'}]} />
@@ -261,7 +268,7 @@ export default function SpendingExplorer() {
     {showColors && <ExplorerClassificationSettings />}
     {mode==='smart'?<SmartReview onChanged={refreshAll}/>:population!=='review'?<>
       {message && <p role="alert" className="mt-2 text-sm">{message}</p>}
-      {reportError?<p role="alert" className="mt-3">{reportError}</p>:!report?<p className="mt-3">Loading complete evidence…</p>:<ReportView report={report} accountLabel={data.options.accounts.find(x=>x.ref===filters.account)?.label} renderRow={r=><Row key={r.id} row={r} options={data.options} busy={busy || !!r.removed} onDecide={async body=>{await decide(body);setReportRevision(n=>n+1)}} loadHistory={loadHistory} environment={data.environment} selectable={false} selected={false} onToggle={()=>{}} reviewedView />}/>}
+      {reportError?<p role="alert" className="mt-3">{reportError}</p>:!report?<p className="mt-3">Loading complete evidence…</p>:<ReportView report={report} accountLabel={data.options.accounts.find(x=>x.ref===filters.account)?.label} renderRow={(r,selection)=><Row {...relatedProps(r,selection)} key={r.id} row={r} options={data.options} busy={busy || !!r.removed} onDecide={async body=>{await decide(body);setReportRevision(n=>n+1)}} loadHistory={loadHistory} environment={data.environment} selectable={false} selected={false} onToggle={()=>{}} reviewedView />}/>}
     </>:<>
     <p className="mt-3 text-xs text-[var(--text-secondary)]" data-testid="spending-scope-caption">Summary: last {a.windowDays} days · {data.accounts === 'all' ? 'all connected accounts' : 'mapped accounts'}</p>
     <p className="mt-2 rounded-xl bg-[var(--surface-1)] px-3 py-2 text-sm font-semibold" data-testid="review-date-account-scope">Transaction list: {reportScope.from} — {reportScope.to} · {filters.account ? data.options.accounts.find(x=>x.ref===filters.account)?.label ?? 'Selected account' : filters.accounts==='all'?'All connected accounts':'Mapped accounts'}</p>
@@ -283,7 +290,7 @@ export default function SpendingExplorer() {
     {showingSelected
       ? <SelectedReview items={items} off={off} overrides={overrides} categoryChoices={categoryChoices} categories={categories} busy={busy} onToggle={toggle} onCategory={setCategory} onUncheckCategory={uncheckCategory} />
       : rows.length === 0 ? <p className="mt-3 text-sm text-[var(--text-secondary)]" data-testid="spending-empty">No transactions match this view.</p>
-      : <ul className="mt-2 space-y-1.5" data-testid="spending-list">{rows.map(r => <Row key={r.id} checkboxColumn={rows.some(approvable)} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
+      : <ul className="mt-2 space-y-1.5" data-testid="spending-list">{rows.map(r => <Row {...relatedProps(r)} key={r.id} checkboxColumn={rows.some(approvable)} row={r} options={data.options} busy={busy} onDecide={decide} environment={data.environment} loadHistory={loadHistory} selectable={approvable(r)} selected={chosenIds.has(r.id)} onToggle={toggle} overrideLabel={overrides.has(r.id) ? labelFor(overrides.get(r.id) ?? null) : null} reviewedView={filters.view === 'reviewed'} />)}</ul>}
     {rows.length < data.total && <button type="button" className={`${btn} mt-2`} onClick={() => void loadMore()} disabled={busy} data-testid="spending-more">Show more ({data.total - rows.length} left)</button>}
     {pendingRestore.size > 0 && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="spending-pending-restore">{pendingRestore.size} saved selection{pendingRestore.size === 1 ? ' is' : 's are'} on transactions not loaded yet. {pendingRestore.size === 1 ? 'It returns' : 'They return'} if {pendingRestore.size === 1 ? 'it loads' : 'they load'}; use Show more.</p>}
     {items.length > 0 && <SelectionBar prefix="spending" count={chosen.length} totalMinor={totalOutMinor} confirming={confirming}
@@ -293,5 +300,6 @@ export default function SpendingExplorer() {
       <button type="button" className={btnPrimary} disabled={busy || chosen.length === 0} onClick={() => setConfirming(true)} data-testid="spending-approve-selected">Approve selected…</button>
     </SelectionBar>}
     </>}
+    </fieldset>
   </section></HierarchyProvider>
 }

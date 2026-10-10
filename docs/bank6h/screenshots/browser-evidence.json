@@ -1,0 +1,47 @@
+{
+  "browser": "Chromium touch viewport; not Safari/WebKit",
+  "synthetic": true,
+  "errors": [],
+  "checks": [
+    {
+      "name": "related-dark",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "preview-dark",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "saved-synthetic-dark",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "historical-dark",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "description-dark",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "related-light",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "touch-768",
+      "width": 768,
+      "viewport": 768
+    },
+    {
+      "name": "touch-390",
+      "width": 390,
+      "viewport": 390
+    }
+  ]
+}

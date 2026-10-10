@@ -143,6 +143,17 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
       if (error) failed()
       return !!data
     },
+    async checkedCategoryAvailable(org,actor) {
+      const {data,error}=await svc.rpc('bank_spending_replace_category_checked',{p_organization_id:org,p_actor:actor,p_transaction_id:null,p_category:null,p_expected:null})
+      return !error && (Array.isArray(data)?data[0]:data)?.outcome==='available'
+    },
+    async replaceCategoryChecked(org,actor,id,category,expected) {
+      const {data,error}=await svc.rpc('bank_spending_replace_category_checked',{p_organization_id:org,p_actor:actor,p_transaction_id:id,p_category:category,p_expected:expected})
+      if(error)throw new BankConnectionError(error.code==='40001'?'conflict':'persistence_failed',409,'Record changed or could not be saved. Refresh and preview again.')
+      const out=Array.isArray(data)?data[0]:data
+      if(!out || !['created','changed','unchanged'].includes(out.outcome))failed()
+      return {outcome:out.outcome}
+    },
     async replaceDecision(row: NewDecision) {
       const dimension = row.kind === 'category' ? 'bucket' : row.kind === 'ignored' ? 'ignore' : 'relationship'
       const { data, error } = await svc.rpc('financial_provider_replace_interpretation', {

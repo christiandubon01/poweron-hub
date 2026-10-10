@@ -69,6 +69,8 @@ export interface NewDecision {
 }
 
 export interface SpendingRepo {
+  checkedCategoryAvailable?(organizationId:string,actor:string):Promise<boolean>
+  replaceCategoryChecked?(organizationId:string,actor:string,id:string,category:string,expected:import('../../../finance/relatedTransactions').CategoryRevision):Promise<{outcome:'created'|'changed'|'unchanged'}>
   loadHierarchy?(organizationId: string): Promise<SpendingHierarchy>
   loadReportContext?(organizationId: string, sinceDate: string): Promise<SpendingContext>
   loadContext(organizationId: string, sinceDate: string): Promise<SpendingContext>
