@@ -14,7 +14,7 @@ import { APPROVED_REPORTING_POLICY, buildSpendingReport, type ReportMode } from 
 import type { ExplorerRow } from '../../src/services/bankProvider/spending/types'
 
 const h = { ...defaultHierarchy(), available:true,writesEnabled:true }
-h.parents = h.parents.filter(p=>['vehicle','overhead','materials'].includes(p.key)).map((p,i)=>({...p,color:['#2f8fcf','#7f68d6','#c0652f'][i]}))
+h.parents = h.parents.map(p=>({...p,color:({vehicle:'#2f8fcf',overhead:'#7f68d6',materials:'#c0652f'} as Record<string,string>)[p.key]??null}))
 h.categories.push({key:'custom_maintenance',name:'Maintenance',parentKey:'vehicle',builtin:false,archived:false},{key:'custom_shop_supplies',name:'Shop Supplies',parentKey:'materials',builtin:false,archived:false})
 const rows:ExplorerRow[] = [
   ['WELLS FARGO MONTHLY SERVICE FEE',1500,'bank_finance_fees'],['ADOBE SOFTWARE',5999,'software_subscriptions'],['OFFICE DEPOT',18400,'office_admin'],
@@ -41,6 +41,11 @@ window.fetch=async(input,init)=>{
   const url=String(input)
   if(!url.startsWith('/.netlify/functions/plaid-spending') || init?.method==='POST')throw new Error('Synthetic preview blocks external requests and transaction writes.')
   const q=new URL(url,window.location.origin).searchParams
+  if(q.has('definition_preview')){
+    const key=q.get('definition_preview')!,parent=q.get('definition_type')==='parent',children=parent?h.categories.filter(c=>c.parentKey===key):[],keys=parent?children.map(c=>c.key):[key],definition=(parent?h.parents:h.categories).find(d=>d.key===key)!
+    const references=rows.filter(r=>keys.includes(r.bucket.key!)).map(r=>({table:'financial_provider_interpretations',id:`synthetic_${r.id}`,category:r.bucket.key,status:r.bucket.state,provider_transaction_ref:r.id}))
+    return Response.json({definition,children,references,counts:{financial_provider_interpretations:references.length,financial_provider_merchant_rules:0},complete:true,executionAllowed:false,reason:'Synthetic reference inventory only. Cleanup SQL and execution are unavailable; no live data or writes.'})
+  }
   const payload=q.get('smart')==='1'?{...smartPayload(),hierarchy:previewHierarchy()}:q.has('history')?{history:[]}:q.has('report')?buildSpendingReport(rows,q.get('report') as ReportMode,scopeFor(q),APPROVED_REPORTING_POLICY,{complete:true,reason:null},previewHierarchy()):explorerPayload(q)
   return new Response(JSON.stringify(payload),{status:200,headers:{'Content-Type':'application/json'}})
 }

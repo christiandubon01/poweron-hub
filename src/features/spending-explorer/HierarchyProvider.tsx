@@ -25,7 +25,7 @@ export function HierarchyProvider({ value, onChanged, saveDefinition = browserSa
     if (!hierarchy.available || !hierarchy.writesEnabled) throw new Error('Classification management has not been enabled.')
     const normalize = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase()
     const definitions = edit.type === 'parent' ? hierarchy.parents : hierarchy.categories
-    if (definitions.some(d => d.key !== edit.key && normalize(d.name) === normalize(edit.name))) throw new Error('That name is already used in this organization. Choose a distinct name.')
+    if (definitions.some(d => d.key !== edit.key && (edit.type === 'parent' || ('parentKey' in d && d.parentKey === (edit.parentKey ?? null))) && normalize(d.name) === normalize(edit.name))) throw new Error('That name is already used under this parent. Choose a distinct name.')
     const key = await saveDefinition(edit)
     if (edit.type === 'category') colors.acceptSavedCategoryColor(key, edit.color ?? null)
     else await colors.setColor('category', parentColorKey(key), edit.color ?? null)

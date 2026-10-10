@@ -161,11 +161,11 @@ describe('BANK-6D surfaces', () => {
     const panel = q('[data-testid="colors-panel"]')!
     expect(panel.textContent).toContain('never mean approved or reviewed'); expect(panel.textContent).toContain('shared with your organization')
     expect(panel.textContent).not.toContain('Other / Needs Review') // unknown is always neutral, never colored
-    await click([...panel.querySelectorAll('[data-testid="color-line"] button')].find(b => b.textContent!.startsWith('Fuel / Vehicle'))!)
-    await click(panel.querySelector('[aria-label="Color for Fuel / Vehicle"] [aria-label="Teal"]'))
+    await click([...q('[data-testid="settings-leaf"][data-key="fuel_vehicle"]')!.querySelectorAll('button')].find(b => b.textContent==='Change Color')!)
+    await click(q('[data-testid="hierarchy-manager"]')!.querySelector('[aria-label="Color for Fuel / Vehicle"] [aria-label="Teal"]'))
     expect(m.writes).toEqual([['category', 'fuel_vehicle', TEAL]])
     expect((rowById('r1').querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset).toMatchObject({ stripe: 'solid', color: TEAL })
-    await click(panel.querySelector('[aria-label="Color for Fuel / Vehicle"] [aria-label="No color"]'))
+    await click(q('[data-testid="hierarchy-manager"]')!.querySelector('[aria-label="Color for Fuel / Vehicle"] [aria-label="No color"]'))
     expect(m.writes[1]).toEqual(['category', 'fuel_vehicle', null])
     expect((rowById('r1').querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset.stripe).toBe('none')
     expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toEqual([]) // no financial endpoint was called
@@ -176,8 +176,8 @@ describe('BANK-6D surfaces', () => {
     await render(<DisplayColorsProvider store={m.store}><SpendingExplorer /></DisplayColorsProvider>, payload(rows))
     await click(q('[data-testid="spending-view-all"]')); await click(q('[data-testid="spending-colors-toggle"]'))
     const panel = q('[data-testid="colors-panel"]')!
-    await click([...panel.querySelectorAll('[data-testid="color-line"] button')].find(b => b.textContent!.startsWith('Fuel / Vehicle'))!)
-    await click(panel.querySelector('[aria-label="Color for Fuel / Vehicle"] [aria-label="Teal"]'))
+    await click([...q('[data-testid="settings-leaf"][data-key="fuel_vehicle"]')!.querySelectorAll('button')].find(b => b.textContent==='Change Color')!)
+    await click(q('[data-testid="hierarchy-manager"]')!.querySelector('[aria-label="Color for Fuel / Vehicle"] [aria-label="Teal"]'))
     expect(q('[data-testid="colors-panel"] [role="alert"]')!.textContent).toBe('Only owners and admins can change colors.')
     expect((rowById('r1').querySelector('[data-testid="color-stripe"]') as HTMLElement).dataset.stripe).toBe('none')
   })

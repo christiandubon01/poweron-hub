@@ -9,6 +9,7 @@
  * Organization and role come from the authenticated profile only (a body organizationId is ignored). Owner/admin only.
  */
 import { relatedTransactions, previewCategoryBatch, confirmCategoryBatch } from '../../../src/services/bankProvider/spending/merchantExplorer'
+import { previewDefinitionCleanup } from '../../../src/services/bankProvider/spending/definitionCleanup'
 import { applyDecision, getExplorer, getSmartReview, getSpendingReport, getTransactionHistory } from '../../../src/services/bankProvider/spending/spendingService'
 import { createSpendingRepo } from '../../../src/services/bankProvider/spending/spendingRepo'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
@@ -31,6 +32,7 @@ export function buildHandler(overrides = {}) {
     try {
       if (event.httpMethod === 'GET') {
         const q = event.queryStringParameters ?? {}
+        if (q.definition_preview !== undefined) return jsonResponse(200, await previewDefinitionCleanup(auth.svc,auth.actor,q.definition_type,q.definition_preview))
         if (q.related !== undefined) return jsonResponse(200, await relatedTransactions(deps,auth.actor,q))
         if (q.report !== undefined) return jsonResponse(200, await getSpendingReport(deps, auth.actor, q))
         if (typeof q.history === 'string') return jsonResponse(200, await getTransactionHistory(deps, auth.actor, q.history)) // the audit trail of ONE transaction

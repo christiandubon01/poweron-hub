@@ -292,7 +292,7 @@ function ImportDeviceColors({ labelOf }: { labelOf: (kind: 'category' | 'account
   </section>
 }
 
-export function ColorsPanel({ categories, parents = [] }: { categories: Array<{ key: string; label: string; hint?: string }>; parents?: Array<{ key: string; label: string; color: string | null }> }) {
+export function ColorsPanel({ categories, parents = [], hideClassifications = false }: { hideClassifications?: boolean; categories: Array<{ key: string; label: string; hint?: string }>; parents?: Array<{ key: string; label: string; color: string | null }> }) {
   const { enabled, colors, accounts, tint, setTint, setColor, storage, error } = useDisplayColors()
   const [open, setOpen] = useState<string | null>(null)
   if (!enabled) return null
@@ -314,15 +314,15 @@ export function ColorsPanel({ categories, parents = [] }: { categories: Array<{ 
       </div>
       <p className="mt-1 text-xs text-[var(--text-secondary)]">The color rail always shows. Tint applies only to confirmed categories, never to suggestions. Tint settings stay on this device.</p>
     </div>
-    {parents.length > 0 && <section aria-label="Parent bucket colors">
+    {!hideClassifications && parents.length > 0 && <section aria-label="Parent bucket colors">
       <p className={heading}>Parent buckets · {parents.length}</p>
       <p className="text-xs text-[var(--text-secondary)]">Shared display colors. Changing a color never enables classification writes.</p>
       <ul className="mt-1 space-y-0.5">{parents.map(p => <ColorLine key={p.key} kind="category" label={p.label} detail="Parent reporting bucket" value={colors.categories[parentColorKey(p.key)] ?? p.color} open={open === `p:${p.key}`} onOpen={() => toggle(`p:${p.key}`)} onChange={v => void setColor('category', parentColorKey(p.key), v)} />)}</ul>
     </section>}
-    <section aria-label="Expense category colors">
+    {!hideClassifications && <section aria-label="Expense category colors">
       <p className={heading}>Expense categories · {categories.length}</p>
       <ul className="mt-1 space-y-0.5">{categories.map(c => <ColorLine key={c.key} kind="category" label={c.label} detail={c.hint} value={colors.categories[c.key] ?? null} open={open === `c:${c.key}`} onOpen={() => toggle(`c:${c.key}`)} onChange={v => void setColor('category', c.key, v)} />)}</ul>
-    </section>
+    </section>}
     {accounts.length > 0 && <section aria-label="Account colors">
       <p className={heading}>Accounts · {accounts.length}</p>
       <ul className="mt-1 space-y-0.5">{accounts.map(a => <ColorLine key={a.id} kind="account" label={a.label} detail={a.detail} value={colors.accounts[a.id.toLowerCase()] ?? null} open={open === `a:${a.id}`} onOpen={() => toggle(`a:${a.id}`)} onChange={v => void setColor('account', a.id, v)} />)}</ul>

@@ -1,5 +1,7 @@
 # Classification Settings renaming
 
+**Naming policy superseded by the Settings tree revision:** leaf names are now parent-scoped, not organization-wide. The pending SQL draft was revised before installation; consult `settings-tree-status.md` for current rules and release evidence. Historical verification below describes the earlier release.
+
 Verified 2026-10-10. This is a focused extension of the existing manager; BANK-6H bulk-saving capability and its SQL installation gate are unchanged.
 
 ## Reuse and implementation

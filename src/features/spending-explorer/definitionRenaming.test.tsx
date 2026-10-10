@@ -31,4 +31,29 @@ describe('existing Classification Settings rename controls',()=>{
   await act(async()=>host.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})))
   expect(host.querySelector('[role="alert"]')!.textContent).toContain('already used');expect(save).not.toHaveBeenCalled()
  })
+ it('shows expandable roots and one copy of each leaf, keeps non-spending groups separate, and gates destructive previews',async()=>{
+  const save=vi.fn(async(e:DefinitionEdit)=>e.key!);await mount(save)
+  expect(host.querySelector('[aria-label="Spending category tree"]')).toBeTruthy()
+  expect([...host.querySelectorAll('summary')].map(e=>e.textContent)).toEqual(expect.arrayContaining(['Business','Personal','Other money activity','Unorganized groups']))
+  expect(host.querySelectorAll('[data-key="bank_finance_fees"]')).toHaveLength(1)
+  const builtin=host.querySelector('[data-key="bank_finance_fees"]')!
+  expect([...builtin.querySelectorAll('button')].find(b=>b.textContent==='Delete preview')!.disabled).toBe(true)
+  const parent=host.querySelector('[data-key="vehicle"]')!
+  vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>({executionAllowed:false,complete:false,references:[],counts:{financial_provider_interpretations:300},children:[],reason:'Partial inventory'})})))
+  await act(async()=>[...parent.querySelectorAll('button')].find(b=>b.textContent==='Merge preview')!.click())
+  expect(host.querySelector('[data-testid="cleanup-preview"]')!.textContent).toContain('Partial reference list')
+  expect([...host.querySelectorAll('button')].find(b=>b.textContent==='Confirm merge · unavailable')!.disabled).toBe(true)
+  expect(save).not.toHaveBeenCalled();vi.unstubAllGlobals()
+ })
+ it('allows the same leaf name under different parents but rejects a duplicate when moved into the same parent',async()=>{
+  const save=vi.fn(async(e:DefinitionEdit)=>e.key!);await mount(save)
+  await click('Edit / Rename category Fuel / Vehicle');await name('Bank / Finance Fees')
+  await act(async()=>host.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})))
+  expect(save).toHaveBeenCalledTimes(1)
+  await click('Edit / Rename category Bank / Finance Fees')
+  // The first matching renamed leaf is now under Vehicle; moving it to Overhead conflicts.
+  await act(async()=>{const el=host.querySelector('select')!;el.value='overhead';el.dispatchEvent(new Event('change',{bubbles:true}))})
+  await act(async()=>host.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})))
+  expect(host.querySelector('[role="alert"]')!.textContent).toContain('already used');expect(save).toHaveBeenCalledTimes(1)
+ })
 })

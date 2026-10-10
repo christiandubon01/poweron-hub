@@ -1,0 +1,37 @@
+{
+  "browser": "Chromium touch viewport; not native Safari/WebKit",
+  "synthetic": true,
+  "errors": [],
+  "checks": [
+    {
+      "name": "settings-tree-dark",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "settings-palette-dark",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "settings-moved-leaf",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "settings-tree-light",
+      "width": 1024,
+      "viewport": 1024
+    },
+    {
+      "name": "settings-touch-768",
+      "width": 768,
+      "viewport": 768
+    },
+    {
+      "name": "settings-touch-390",
+      "width": 390,
+      "viewport": 390
+    }
+  ]
+}

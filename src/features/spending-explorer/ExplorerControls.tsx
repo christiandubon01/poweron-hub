@@ -15,7 +15,7 @@
  *   repeated_spending unassigned spending from a merchant with a repeating pattern
  *   needs_review      money out not yet confirmed or ignored ("Money out to review")
  */
-import { Search, SlidersHorizontal, Palette, X } from 'lucide-react'
+import { Search, SlidersHorizontal, Settings, X } from 'lucide-react'
 import { DEFAULT_FILTERS, type ExplorerData, type ExplorerView, type Filters } from './useSpendingExplorer'
 import { SegmentedControl, SelectField } from './controls'
 import { btn, btnQuiet, focusRing, panel } from './ui'
@@ -96,7 +96,7 @@ export function FilterBar({ filters, data, update, reset, showFilters, setShowFi
         options={[{ value: '30', label: '30 days' }, { value: '60', label: '60 days' }, { value: '90', label: '90 days' }]} />
       <button type="button" className={`${btn} inline-flex items-center gap-1.5`} aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)} data-testid="spending-filters-toggle">
         <SlidersHorizontal size={16} aria-hidden="true" />Filters{active ? ` (${active})` : ''}</button>
-      {colorsEnabled && <button type="button" className={`${btn} inline-flex items-center gap-1.5`} aria-expanded={showColors} onClick={() => setShowColors(s => !s)} data-testid="spending-colors-toggle"><Palette size={16} aria-hidden="true" />Colors</button>}
+      {colorsEnabled && <button type="button" className={`${btn} inline-flex items-center gap-1.5`} aria-expanded={showColors} onClick={() => setShowColors(s => !s)} data-testid="spending-colors-toggle"><Settings size={16} aria-hidden="true" />Settings</button>}
     </div>
     {chips.length > 0 && <div className="flex flex-wrap items-center gap-1.5" aria-label="Filters in use" data-testid="spending-filter-chips">
       {chips.map(c => <span key={c.key} data-testid="spending-filter-chip" data-filter={c.key}

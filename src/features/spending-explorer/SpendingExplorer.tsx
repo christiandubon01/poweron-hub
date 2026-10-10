@@ -119,7 +119,7 @@ function ExplorerClassificationSettings() {
   const {hierarchy}=useHierarchy(),{categoryColor}=useDisplayColors()
   const activity=[['business','Business spending'],['debt','Debt repayments'],['transfer','Transfers'],['refund','Refunds'],['income','Money in'],['unresolved','Unresolved activity']]
   const parents=[...hierarchy.parents.map(p=>({key:p.key,label:p.name,color:parentDisplayColor(p.key,hierarchy,categoryColor)})),...activity.filter(([key])=>!hierarchy.parents.some(p=>p.key===key)).map(([key,label])=>({key,label,color:parentDisplayColor(key,hierarchy,categoryColor)}))]
-  return <><ColorsPanel parents={parents} categories={hierarchy.categories.filter(c=>c.key!=='other_needs_review').map(c=>({key:c.key,label:c.name,hint:c.archived?'Archived · historical assignments remain':hierarchy.parents.find(p=>p.key===c.parentKey)?.name}))}/><HierarchyManager/></>
+  return <><HierarchyManager/><ColorsPanel hideClassifications parents={parents} categories={hierarchy.categories.map(c=>({key:c.key,label:c.name}))}/></>
 }
 
 /**
@@ -264,7 +264,7 @@ export default function SpendingExplorer() {
       <button className={`${btn} mt-2`} aria-pressed={population==='review'} data-testid="spending-scope-review" onClick={()=>setPopulation('review')}>Transaction review</button><p className="mt-1 text-xs text-[var(--text-secondary)]">Category review is an owner decision. An unresolved financial link is a separate question. Unassigned Spending is a defined spending population, not a queue.</p></div>
       <div className="mt-3"><FilterBar filters={filters} data={data} update={update} reset={reset} showFilters={showFilters} setShowFilters={setShowFilters} showColors={showColors} setShowColors={setShowColors} colorsEnabled={colorsEnabled} /></div>
     </>}
-    {mode==='smart' && <button className={`${btn} mt-3`} onClick={()=>setShowColors(v=>!v)} aria-expanded={showColors}>Colors · Classification settings</button>}
+    {mode==='smart' && <button className={`${btn} mt-3`} onClick={()=>setShowColors(v=>!v)} aria-expanded={showColors}>Settings</button>}
     {showColors && <ExplorerClassificationSettings />}
     {mode==='smart'?<SmartReview onChanged={refreshAll}/>:population!=='review'?<>
       {message && <p role="alert" className="mt-2 text-sm">{message}</p>}
