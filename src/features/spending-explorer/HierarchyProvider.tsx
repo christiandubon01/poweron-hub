@@ -13,6 +13,7 @@ async function browserSave(edit: DefinitionEdit): Promise<string> {
   const { data, error } = await (supabase as any).rpc('bank_spending_manage_definition', {
     p_type: edit.type, p_key: edit.key ?? null, p_name: edit.name.trim(), p_parent_key: edit.parentKey ?? null, p_color: edit.color ?? null, p_archived: edit.archived ?? false,
   })
+  if (error?.code === '23505') throw new Error('That name is already used in this organization. Choose a distinct name.')
   if (error || typeof data !== 'string') throw new Error('Could not save classification. Refresh and check its name, parent and management availability.')
   return data
 }
@@ -22,6 +23,9 @@ export function HierarchyProvider({ value, onChanged, saveDefinition = browserSa
   useEffect(() => setHierarchy(value ?? defaultHierarchy()), [value])
   const save: DefinitionSave = async edit => {
     if (!hierarchy.available || !hierarchy.writesEnabled) throw new Error('Classification management has not been enabled.')
+    const normalize = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase()
+    const definitions = edit.type === 'parent' ? hierarchy.parents : hierarchy.categories
+    if (definitions.some(d => d.key !== edit.key && normalize(d.name) === normalize(edit.name))) throw new Error('That name is already used in this organization. Choose a distinct name.')
     const key = await saveDefinition(edit)
     if (edit.type === 'category') colors.acceptSavedCategoryColor(key, edit.color ?? null)
     else await colors.setColor('category', parentColorKey(key), edit.color ?? null)

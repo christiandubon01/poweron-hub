@@ -40,6 +40,7 @@ beforeAll(async () => {
 afterAll(async () => db?.close())
 async function owner() { await db.exec(`RESET ROLE; SET ROLE authenticated; SET request.jwt.claim.sub = '${OWNER}';`) }
 describe('BANK-6G separately reviewable metadata SQL (local PostgreSQL only)', () => {
+  // Additional name-override coverage below uses the same installed management contract.
   it('seeds built-ins for both organizations with custom writes disabled', async () => {
     const r = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM bank_spending_category_definitions')
     expect(r.rows[0].n).toBe(36)
@@ -119,4 +120,33 @@ describe('BANK-6G separately reviewable metadata SQL (local PostgreSQL only)', (
     await owner()
     await expect(db.query('SELECT bank_spending_report_source($1,$2)',[ORG,'2026-10-01'])).rejects.toMatchObject({ code:'42501' })
   },30000)
+  it('persists built-in/custom display overrides and moves without changing financial records; uniqueness is organization scoped', async () => {
+    await db.exec('RESET ROLE;')
+    await db.exec(readFileSync('docs/bank6h/definition-names-proposal.sql', 'utf8'))
+    await db.query("INSERT INTO financial_provider_interpretations(id,organization_id,kind,status,category,debt_account_id) VALUES ($1,$2,'category','confirmed','bank_finance_fees',NULL),($3,$2,'debt_payment','confirmed',NULL,$4)",['c0000000-0000-4000-8000-000000000001',ORG,'c0000000-0000-4000-8000-000000000002','d0000000-0000-4000-8000-000000000001'])
+    const before = (await db.query('SELECT * FROM financial_provider_interpretations')).rows
+    const evidence = (await db.query('SELECT count(*) AS n FROM financial_provider_transactions')).rows
+    const sample = (await db.query('SELECT * FROM financial_provider_transactions ORDER BY id LIMIT 1')).rows
+    await owner()
+    for (const [type,key,name,parent] of [
+      ['parent','vehicle','Transport Costs',null], ['parent','overhead','Office Overhead',null],
+      ['category','bank_finance_fees','Bank Charges','vehicle'], ['category','custom_supplies','Workshop Stock','overhead'],
+    ]) await db.query('SELECT bank_spending_manage_definition($1,$2,$3,$4,NULL,false)',[type,key,name,parent])
+    const custom = (await db.query<{ key:string }>("SELECT bank_spending_manage_definition('parent',NULL,'My Parent',NULL,NULL,false) AS key")).rows[0].key
+    await db.query("SELECT bank_spending_manage_definition('parent',$1,'Renamed Parent',NULL,NULL,false)",[custom])
+    const read = (await db.query<{ h:any }>('SELECT bank_spending_read_hierarchy($1) AS h',[ORG])).rows[0].h
+    expect(read.parents.find((p:any)=>p.key==='vehicle').name).toBe('Transport Costs')
+    expect(read.parents.find((p:any)=>p.key===custom).name).toBe('Renamed Parent')
+    expect(read.categories.find((c:any)=>c.key==='bank_finance_fees')).toMatchObject({name:'Bank Charges',parent_key:'vehicle',builtin:true})
+    expect(read.categories.find((c:any)=>c.key==='custom_supplies').name).toBe('Workshop Stock')
+    await expect(db.query("SELECT bank_spending_manage_definition('category','materials',' bank   charges ','materials',NULL,false)")).rejects.toMatchObject({code:'23505'})
+    await expect(db.query("SELECT bank_spending_manage_definition('parent','materials','TRANSPORT COSTS',NULL,NULL,false)")).rejects.toMatchObject({code:'23505'})
+    await db.exec('RESET ROLE;')
+    expect((await db.query('SELECT * FROM financial_provider_interpretations')).rows).toEqual(before)
+    expect((await db.query('SELECT count(*) AS n FROM financial_provider_transactions')).rows).toEqual(evidence)
+    expect((await db.query('SELECT * FROM financial_provider_transactions ORDER BY id LIMIT 1')).rows).toEqual(sample)
+    expect((await db.query('SELECT name FROM bank_spending_parent_definitions WHERE organization_id=$1 AND key=$2',[OTHER,'vehicle'])).rows[0]).toEqual({name:'Vehicle Expenses'})
+    await db.exec(`SET ROLE authenticated; SET request.jwt.claim.sub = '${MEMBER}';`)
+    await expect(db.query("SELECT bank_spending_manage_definition('parent','vehicle','Forbidden',NULL,NULL,false)")).rejects.toMatchObject({code:'42501'})
+  })
 })
