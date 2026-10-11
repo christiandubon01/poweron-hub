@@ -118,7 +118,9 @@ These use tables that already exist in production (migration 153). Each still ne
 |---|---|---|---|---|
 | `PLAID_BALANCES_ENABLED=true` | PLAID-2E balances | `Refresh balances` on a connection: ONE cached `/accounts/get` (no per-call fee), appends rows to `financial_provider_balance_snapshots` | `SELECT count(*), max(observed_at) FROM financial_provider_balance_snapshots;` rows grow by at most one per account per refresh; `financial_accounts`, `financial_transactions` and mappings unchanged (section 1 fingerprint) | unset the switch; snapshots stay as history |
 
-Not a switch (always on once deployed, harmless without the SQL): the reconciliation engine and the Explorer's mirrored confirmed-transfer leg (pure code over data already loaded), the attention list, the blocked-run review (needs the 1C SQL to ever see a blocked run).
+Not a switch (always on once deployed, harmless without the SQL): the attention list and the blocked-run review (needs the 1C SQL to ever see a blocked run).
+
+**Correction (PLAID-3A):** the reconciliation engine and the Explorer's mirrored confirmed-transfer leg are NOT always on. An earlier version of this section said they were, and the code did run them unconditionally. They now run only when `CASH_OS_RECONCILIATION_ENABLED` is exactly `true`; with it unset the classification is proven identical to the pre-engine implementation (section 9).
 
 ## 7. Recommended activation order (each step waits for approval and a green validation)
 
@@ -126,11 +128,65 @@ Not a switch (always on once deployed, harmless without the SQL): the reconcilia
 2. Install **plaid2c** (history) *before* the first large modification batches, so revisions are captured from the start → validate (section 5).
 3. Install **plaid2a** → validate (section 4) → `PLAID_PENDING_CONTINUITY_ENABLED=true` → `relink_pending` once → review `status <> 'linked'` rows.
 4. `PLAID_BALANCES_ENABLED=true` → Refresh balances → compare against the bank's own screens before trusting them (freshness shown per account).
-5. Only then, with the owner present: `PLAID_ACCOUNT_ADDITIONS_ENABLED=true` → Add accounts at this bank (Plaid Link update mode, keep existing accounts selected) → Review shared accounts → Save new accounts → Sync (new accounts arrive through the same cursor; history depth is whatever Plaid makes available; the Item's 90-day request is fixed) → map the new accounts in Cash OS.
-6. Optional: install the **plaid1b** `financial_provider_sync_runs` half (not its revisions half) → `PLAID_SYNC_AUDIT_ENABLED=true`.
+5. Cash OS reconciliation, Matches review and the consolidated position (PLAID-3; section 9): impact preview first (read-only, switch still off) -> install **plaid3b** -> `CASH_OS_RECONCILIATION_ENABLED=true` -> review proposals one at a time -> `CASH_OS_POSITION_ENABLED=true` (needs `PLAID_BALANCES_ENABLED=true` for balance figures).
+6. Only then, with the owner present: `PLAID_ACCOUNT_ADDITIONS_ENABLED=true` → Add accounts at this bank (Plaid Link update mode, keep existing accounts selected) → Review shared accounts → Save new accounts → Sync (new accounts arrive through the same cursor; history depth is whatever Plaid makes available; the Item's 90-day request is fixed) → map the new accounts in Cash OS.
+7. Optional: install the **plaid1b** `financial_provider_sync_runs` half (not its revisions half) → `PLAID_SYNC_AUDIT_ENABLED=true`.
 
 Never: `PLAID_BACKGROUND_SYNC_ENABLED` on Netlify Free (background functions are Pro/Enterprise; unverified for this site).
 
 ## 8. Disable / rollback summary
 
 Unset the switch → feature off, nothing else changes. History, snapshots, links and inherited decisions already written are ordinary rows the owner can read; inherited decisions can be undone individually. No step deletes provider evidence.
+
+## 9. PLAID-3: reconciliation switch, Matches review, consolidated position
+
+Status: PREPARED. Nothing here has been installed or enabled. Three independent switches and one SQL proposal:
+
+| Switch (Netlify env, exact value `true`) | Default | What it turns on | Needs |
+|---|---|---|---|
+| `CASH_OS_RECONCILIATION_ENABLED` | off | the pairing engine (transfers, card payments, refunds), the **Matches** mode in the Spending Explorer, pair-aware reports | nothing for reading; **plaid3b** for deciding |
+| `CASH_OS_POSITION_ENABLED` | off | `GET plaid-position` and the cash position panel | `PLAID_BALANCES_ENABLED=true` for any balance figure (otherwise "not available", never zero) |
+| `PLAID_BALANCES_ENABLED` | off | (existing) balances | see section 6 |
+
+With every switch unset, the product behaves exactly as it did before this work: the classification is the frozen pre-engine implementation (a differential test replays hundreds of generated organizations, including dense histories, against it), the Explorer payload gains no key, `plaid-position` answers `{enabled:false}` before reading anything, and the Matches mode is not offered.
+
+### 9.1 Read-only impact preview (do this BEFORE enabling anything; the switch stays off)
+
+As the signed-in owner, request `GET /.netlify/functions/plaid-spending?impact=1&from=YYYY-MM-DD&to=YYYY-MM-DD`. It classifies every posted row twice (switch off and on) and lists, per activity (income / business / personal / debt / transfer / refund / unresolved), the counts and amounts both ways and every row that moves (capped at 200, with a note when truncated). Money in and out must be **conserved** (`summary.conserved: true`). Expected differences: proposed transfer and card-payment legs leave "Money in" / "Business spending" and become "unresolved" until confirmed; ambiguous groups are no longer paired arbitrarily. Read the list; nothing changes in the database.
+
+### 9.2 INSTALL — PLAID-3B `plaid3b_match_decisions` (needs approval)
+
+File `docs/plaid2/match-decisions-proposal.sql` (hash: `node scripts/plaid/proposal-evidence.mjs`). One function, `financial_provider_decide_match`, **SECURITY INVOKER**, fixed `search_path`, `EXECUTE` for `service_role` only. It creates no table, column or index and writes only `financial_provider_interpretations` rows (it only *locks* provider evidence). Install as one named tracked migration; never `db push`. Preflight: section 2.1 plus
+
+```sql
+SELECT to_regproc('public.financial_provider_decide_match(uuid,uuid,text,uuid,uuid,text,text,jsonb)') IS NOT NULL AS already_there;   -- false
+SELECT to_regproc('public.financial_provider_json_is_safe(jsonb)') IS NOT NULL AS json_guard;                                         -- true
+```
+
+Post-install validation (read-only):
+
+```sql
+SELECT p.prosecdef AS security_definer,                                             -- false
+       has_function_privilege('anon',          p.oid, 'EXECUTE') AS anon,           -- false
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authenticated,  -- false
+       has_function_privilege('service_role',  p.oid, 'EXECUTE') AS service_role,   -- true
+       p.proconfig                                                                  -- {search_path=public}
+  FROM pg_proc p WHERE p.proname = 'financial_provider_decide_match';
+```
+
+Then re-run the section 1 fingerprint (identical: nothing was written). With the SQL installed and the switch on, the Matches screen's "database update" banner disappears (a probe call, which touches no data).
+
+### 9.3 Activation (separate approval, one switch at a time)
+
+1. `CASH_OS_RECONCILIATION_ENABLED=true`. Open Cash OS -> Transactions -> Spending explorer -> **Matches**. Nothing is decided for the owner. Work the **To review** list one pair at a time: "Why this match?", both accounts, dates and amounts side by side. **Confirm match** writes two interpretation rows; **Not a match** writes one; **Reverse…** (two taps) undoes both. A business<->personal pair is flagged: confirming it records an owner draw or contribution, not an ordinary transfer.
+2. Check after the first confirmation (read-only): `SELECT provider_transaction_ref, kind, status, counterpart_provider_transaction_ref, suggestion_basis ->> 'pair_id' AS pair FROM financial_provider_interpretations WHERE kind = 'transfer' ORDER BY created_at DESC LIMIT 4;` — two `confirmed` rows naming each other with the same pair id. Section 1 fingerprint: evidence, mappings and items unchanged (only the interpretation count grows).
+3. `CASH_OS_POSITION_ENABLED=true` (with `PLAID_BALANCES_ENABLED=true` and one Refresh balances). The **Cash position** panel appears above the Spending explorer. Compare each balance with the bank's own screen; unclassified money in is deliberately **not** income until you confirm it as a customer payment.
+
+### 9.4 Rollback
+
+Unset a switch and redeploy the environment: the feature disappears and the code returns to the proven legacy behavior. Pair decisions already written are ordinary interpretation rows: each leg names the other, so the reports keep treating a confirmed pair as one internal movement even with the switch off (a test pins this); the owner can still undo any decision from the Explorer. Dropping the function after uninstalling loses nothing: `DROP FUNCTION public.financial_provider_decide_match(uuid, uuid, text, uuid, uuid, text, text, jsonb);`
+
+### 9.5 Operational limits (Netlify Free, measured; see the ledger)
+
+At the largest evidence set a request can hold (50,000 rows, the complete report source) the in-process computation is about 2-3 s (explorer rows 1.7-2.3 s, reconciliation 0.4 s, position 0.07 s). The Explorer window is capped at 5,000 rows (about 0.2 s). Native PostgreSQL 16 at 50,000 evidence / 20,000 decision rows: pair-decision read 4 ms, newest balance 0.1 ms, evidence page 20 ms, pair function p50/p95 51/58 ms. These are measurements on a scratch host, not a production verification.
+
