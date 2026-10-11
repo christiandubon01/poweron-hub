@@ -28,9 +28,12 @@ const toCash = (r: any): CashAccountRow => ({ id: r.id, displayName: r.display_n
 
 export function createBankAccountRepo(svc: Svc): BankAccountRepo {
   const itemStatuses = async (organizationId: string) => {
-    const { data, error } = await svc.from('financial_provider_items').select('id, institution_name, status').eq('organization_id', organizationId)
+    const read = (columns: string) => svc.from('financial_provider_items').select(columns).eq('organization_id', organizationId)
+    let { data, error } = await read('id, institution_name, status, environment')
+    // Before migration 156 there is no environment column and every Item is a Sandbox Item.
+    if (error && (error.code === '42703' || /environment/.test(String(error.message ?? '')))) ({ data, error } = await read('id, institution_name, status'))
     if (error) failed()
-    return new Map<string, { institutionName: string | null; status: string }>((data ?? []).map((i: any) => [i.id, { institutionName: i.institution_name ?? null, status: i.status }]))
+    return new Map<string, { institutionName: string | null; status: string; environment: 'sandbox' | 'production' }>((data ?? []).map((i: any) => [i.id, { institutionName: i.institution_name ?? null, status: i.status, environment: i.environment === 'production' ? 'production' as const : 'sandbox' as const }]))
   }
   return {
     async listProviderAccounts(organizationId, itemId) {
@@ -70,7 +73,7 @@ export function createBankAccountRepo(svc: Svc): BankAccountRepo {
       const { data, error } = await svc.from('financial_provider_accounts').select(ACCOUNT_COLUMNS).eq('organization_id', organizationId).order('created_at', { ascending: true })
       if (error) failed()
       const items = await itemStatuses(organizationId)
-      return (data ?? []).map((r: any) => ({ ...toAccount(r), institutionName: items.get(r.provider_item_ref)?.institutionName ?? null, itemStatus: items.get(r.provider_item_ref)?.status ?? 'disconnected' }))
+      return (data ?? []).map((r: any) => ({ ...toAccount(r), institutionName: items.get(r.provider_item_ref)?.institutionName ?? null, itemStatus: items.get(r.provider_item_ref)?.status ?? 'disconnected', itemEnvironment: items.get(r.provider_item_ref)?.environment ?? 'sandbox' as const }))
     },
     async getFinancialAccount(organizationId, id) {
       const { data, error } = await svc.from('financial_accounts').select(`${CASH_COLUMNS}, status`).eq('organization_id', organizationId).eq('id', id).maybeSingle()

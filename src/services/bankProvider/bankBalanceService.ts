@@ -11,7 +11,7 @@
  * Off unless the server sets PLAID_BALANCES_ENABLED=true. A skipped or rejected account never fails the others.
  */
 import { BankConnectionError, assertAuthority, decryptFor, loadCredential, note, type BankActor } from './bankConnectionService'
-import type { BankAccountDeps } from './bankAccountService'
+import type { BankAccountDeps, BankAccountRepo } from './bankAccountService'
 import { PlaidApiFailure } from './plaidPort'
 import { BALANCE_SOURCE, type BankBalanceRepo } from './bankBalanceRepo'
 import { classifyAccount, interpretBalance, toExactMinor, type InterpretedBalance } from './balanceModel'
@@ -21,7 +21,19 @@ export interface BankBalanceDeps extends BankAccountDeps {
   balancesEnabled?: boolean
   now?: () => number
 }
-const clock = (d: BankBalanceDeps) => (d.now ? d.now() : Date.now())
+/**
+ * PLAID-3C: what READING balances needs. No Plaid port and no encryption key: reading never calls the bank, so the position endpoint does not need (or get) credentials.
+ * A full BankBalanceDeps satisfies it.
+ */
+export interface BalanceReadDeps {
+  accounts: Pick<BankAccountRepo, 'listAllProviderAccounts' | 'listActiveMappings' | 'listCashAccounts'>
+  balances: Pick<BankBalanceRepo, 'latestSnapshots'>
+  balancesEnabled?: boolean
+  /** The environment this server is configured for. Items of any other environment are never read here (BANK-6P): a Sandbox test balance must never appear as real money. */
+  environment?: string
+  now?: () => number
+}
+const clock = (d: { now?: () => number }) => (d.now ? d.now() : Date.now())
 
 /** A bank can report a balance timestamp in the future or years in the past; only a sane one is trusted as "when this was true". */
 export function trustedProviderTime(lastUpdatedAt: string | null, nowMs: number): string | null {
@@ -109,13 +121,15 @@ export interface AccountBalanceView extends InterpretedBalance {
 }
 
 /** Newest snapshot per live provider account, interpreted. Never includes provider ids, tokens or raw provider data. */
-export async function getBalances(deps: BankBalanceDeps, actor: BankActor): Promise<{ accounts: AccountBalanceView[]; enabled: boolean }> {
+export async function getBalances(deps: BalanceReadDeps, actor: BankActor): Promise<{ accounts: AccountBalanceView[]; enabled: boolean }> {
   assertAuthority(actor)
   if (deps.balancesEnabled !== true) return { accounts: [], enabled: false }
   const org = actor.organizationId
   const [all, mappings, cash] = await Promise.all([deps.accounts.listAllProviderAccounts(org), deps.accounts.listActiveMappings(org), deps.accounts.listCashAccounts(org)])
   const ownerOf = new Map(cash.map(c => [c.id, c.ownershipContext === 'personal' ? 'personal' as const : c.ownershipContext === 'business' ? 'business' as const : null]))
-  const live = all.filter(a => a.status === 'active' && a.itemStatus !== 'disconnected')
+  // BANK-6P: only Items of THIS server's environment. (An undefined environment applies no filter: unit-test fakes only; the handler always sets it.)
+  const env = deps.environment === undefined ? null : deps.environment === 'production' ? 'production' : 'sandbox'
+  const live = all.filter(a => a.status === 'active' && a.itemStatus !== 'disconnected' && (env === null || (a.itemEnvironment ?? 'sandbox') === env))
   const latest = await deps.balances.latestSnapshots(org, live.map(a => a.id))
   const mapped = new Map(mappings.map(m => [m.providerAccountRef, m.financialAccountId]))
   const now = clock(deps)

@@ -145,6 +145,19 @@ export async function loadCompleteContext(deps: SpendingDeps, organizationId: st
   return { ...ctx, reconciliation: on }
 }
 
+/**
+ * PLAID-3C: the best evidence for a date range, with the truth about how complete it is. The complete (BANK-6G report-source) snapshot when the reviewed schema is
+ * installed and verifiably complete; otherwise the capped Explorer window, whose own coverage flag says whether any cap was reached. Used by the Matches review and the
+ * consolidated position, so both describe the same evidence the same way.
+ */
+export async function loadContextForRange(deps: SpendingDeps, organizationId: string, range: { completeSince: string; explorerSince: string }): Promise<{ ctx: SpendingContext; coverage: { complete: boolean; reason: string | null } }> {
+  const complete = await loadCompleteContext(deps, organizationId, range.completeSince)
+  if (complete && complete.reportCoverage?.complete === true) return { ctx: complete, coverage: { complete: true, reason: null } }
+  const ctx = await loadExplorerContext(deps, organizationId, range.explorerSince)
+  if (ctx.legacyCoverage?.complete === true) return { ctx, coverage: { complete: true, reason: null } }
+  return { ctx, coverage: { complete: false, reason: complete?.reportCoverage?.reason ?? ctx.legacyCoverage?.reason ?? 'Only recent history was loaded, so activity near its edges may be missing.' } }
+}
+
 /** Known money Cash OS already expects around the evidence dates. Pure reads: no occurrence is ever materialized here. */
 export function buildBillCandidates(ctx: Pick<SpendingContext, 'obligations' | 'occurrences' | 'commitments' | 'txs'>, rangeStart: string, rangeEnd: string): KnownBillCandidate[] {
   const out: KnownBillCandidate[] = []

@@ -19,7 +19,7 @@ import { addDays } from './analytics'
 import { reconciliationFor } from './classifier'
 import { buildMatchReview, type MatchAccountInfo, type MatchItem, type MatchReview, type MatchState } from './matchReview'
 import { buildPair, pairFingerprint, pairIsValid, type ReconAccount } from './reconciliation'
-import { loadCompleteContext, loadExplorerContext, type SpendingContext, type SpendingDeps } from './spendingService'
+import { loadContextForRange, type SpendingDeps } from './spendingService'
 import type { AccountContext, EvidenceTx } from './types'
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/
@@ -55,11 +55,8 @@ export interface MatchReviewResponse {
 }
 
 /** The evidence for the review: the complete report source when installed, else the capped Explorer window, with the truth about coverage. */
-async function loadForReview(deps: SpendingDeps, organizationId: string, asOf: string, from: string): Promise<{ ctx: SpendingContext; coverage: { complete: boolean; reason: string | null } }> {
-  const complete = await loadCompleteContext(deps, organizationId, addDays(from, -125))
-  if (complete && complete.reportCoverage?.complete === true) return { ctx: complete, coverage: { complete: true, reason: null } }
-  const ctx = await loadExplorerContext(deps, organizationId, addDays(asOf, -200))
-  return { ctx, coverage: { complete: false, reason: complete?.reportCoverage?.reason ?? ctx.legacyCoverage?.reason ?? 'Only recent history was loaded, so matches near its edges may be missing.' } }
+async function loadForReview(deps: SpendingDeps, organizationId: string, asOf: string, from: string) {
+  return loadContextForRange(deps, organizationId, { completeSince: addDays(from, -125), explorerSince: addDays(asOf, -200) })
 }
 
 export async function getMatchReview(deps: SpendingDeps, actor: BankActor, raw: Record<string, unknown>): Promise<MatchReviewResponse> {

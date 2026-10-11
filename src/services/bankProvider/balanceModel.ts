@@ -61,6 +61,8 @@ export interface InterpretedBalance {
   creditInFavourMinor: number | null
   /** Credit cards only. Spendable CREDIT, never cash. */
   unusedCreditMinor: number | null
+  /** Where `unusedCreditMinor` came from: the bank's own `available`, or computed here as limit - owed (derived). null when unknown. */
+  unusedCreditBasis: 'provider_available' | 'limit_minus_owed' | null
   creditLimitMinor: number | null
   /** Constant guard: nothing in this object is ever added to bank cash. */
   unusedCreditIsCash: false
@@ -80,7 +82,7 @@ const nn = (v: number | null | undefined) => (typeof v === 'number' && Number.is
 export function interpretBalance(account: { type: string | null; subtype: string | null }, snap: BalanceSnapshotInput | null, nowMs: number, itemHealthy = true): InterpretedBalance {
   const { accountClass, restricted } = classifyAccount(account.type, account.subtype)
   const base: InterpretedBalance = { accountClass, restricted, freshness: 'unknown', ageHours: null, observedAt: null, retrievedAt: null, observedIsProvider: false,
-    bankBalanceMinor: null, availableMinor: null, owedMinor: null, creditInFavourMinor: null, unusedCreditMinor: null, creditLimitMinor: null, unusedCreditIsCash: false }
+    bankBalanceMinor: null, availableMinor: null, owedMinor: null, creditInFavourMinor: null, unusedCreditMinor: null, unusedCreditBasis: null, creditLimitMinor: null, unusedCreditIsCash: false }
   if (!snap) return base
   const f = freshnessOf(snap.observedAt, nowMs, itemHealthy)
   const out = { ...base, freshness: f.freshness, ageHours: f.ageHours, observedAt: snap.observedAt, retrievedAt: snap.retrievedAt, observedIsProvider: snap.observedIsProvider }
@@ -91,7 +93,8 @@ export function interpretBalance(account: { type: string | null; subtype: string
     const inFavour = current !== null && current < 0 ? -current : null
     // Unused credit: the bank's own `available` when given, else limit - owed. Only for cards; a loan has no revolving credit.
     const unused = accountClass === 'credit_card' ? (available !== null ? Math.max(available, 0) : limit !== null && owed !== null ? Math.max(limit - owed, 0) : null) : null
-    return { ...out, owedMinor: owed, creditInFavourMinor: inFavour, unusedCreditMinor: unused, creditLimitMinor: accountClass === 'credit_card' ? limit : null }
+    const basis = unused === null ? null : available !== null ? 'provider_available' as const : 'limit_minus_owed' as const
+    return { ...out, owedMinor: owed, creditInFavourMinor: inFavour, unusedCreditMinor: unused, unusedCreditBasis: basis, creditLimitMinor: accountClass === 'credit_card' ? limit : null }
   }
   return out
 }

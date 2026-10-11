@@ -6,6 +6,8 @@ import CashOsObligations from './CashOsObligations'
 import { projectOptionsFromBackup } from '@/finance/cashProjectFacts'
 import { CashOsAccountMenu, CashOsAccountRestore } from './CashOsAccountMenu'
 import BankConnectionCard from '@/features/bank-connection/BankConnectionCard'
+import CashPositionPanel from '@/features/cash-position/CashPositionPanel'
+import type { ManualLedgerAccount } from '@/finance/bankPosition'
 import SpendingExplorer from '@/features/spending-explorer/SpendingExplorer'
 import { AccountColorCard, AccountColorDot, DisplayColorsProvider } from '@/features/display-colors/DisplayColors'
 import { Chip } from '@/features/spending-explorer/controls'
@@ -74,6 +76,11 @@ const addBtn = (onAdd: () => void) => (
   <button onClick={onAdd} className="min-h-[44px] rounded-xl bg-orange-500 px-4 text-sm font-semibold text-white [@media(hover:hover)]:hover:bg-orange-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--text-primary)]">+ Add</button>
 )
 
+/** The manual-ledger balances Cash OS already holds (the same numbers its account cards show), for the position to set beside the bank's. Read only. */
+const ledgerAccounts = (snapshot: CashOsSnapshot): ManualLedgerAccount[] => snapshot.accounts.map(a => ({
+  id: a.id, name: a.display_name, accountClass: a.account_class, ownership: a.ownership_context, includeInCash: a.include_in_cash, status: a.status, balanceMinor: snapshot.accountBalancesMinor[a.id] ?? 0,
+}))
+
 export function CashTransactionsView({
   snapshot,
   onAdd,
@@ -91,6 +98,7 @@ export function CashTransactionsView({
   // BANK-6D: organization-wide display colors, keyed by financial_accounts.id (never a name). Visual only.
   return <DisplayColorsProvider organizationId={snapshot.setup?.organizationId ?? null} accounts={[...accounts, ...archivedAccounts].map(a => ({ id: a.id, label: a.display_name, detail: `${a.ownership_context === 'business' ? 'Business' : 'Personal'} · ${ACCOUNT_TYPE_LABEL[a.account_type] ?? 'Account'}${a.status === 'archived' ? ' · Archived' : ''}` }))}><div className="space-y-5">
     <BankConnectionCard />
+    <CashPositionPanel ledger={ledgerAccounts(snapshot)} />
     <SpendingExplorer />
     <CashCard title="Financial accounts" action={onAdd ? addBtn(onAdd) : undefined}>
       {/* BANK-6F: account cards in the Cash OS card language. The balance is the same money() value as before; only its typeface changed. */}

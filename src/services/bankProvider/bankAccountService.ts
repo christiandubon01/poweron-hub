@@ -60,7 +60,8 @@ export interface BankAccountRepo {
   /** Marks a healthy/connecting Item as needing the owner to sign in again (status only; nothing else changes). */
   markItemLoginRequired(organizationId: string, itemId: string): Promise<void>
   getProviderAccount(organizationId: string, id: string): Promise<(ProviderAccountRow & { itemStatus: string }) | null>
-  listAllProviderAccounts(organizationId: string): Promise<Array<ProviderAccountRow & { institutionName: string | null; itemStatus: string }>>
+  /** `itemEnvironment`: the Plaid environment of the Item the account belongs to (absent on a database from before migration 156 = every Item is Sandbox). */
+  listAllProviderAccounts(organizationId: string): Promise<Array<ProviderAccountRow & { institutionName: string | null; itemStatus: string; itemEnvironment?: 'sandbox' | 'production' }>>
   getFinancialAccount(organizationId: string, id: string): Promise<(CashAccountRow & { status: string }) | null>
   listCashAccounts(organizationId: string): Promise<CashAccountRow[]>
   listActiveMappings(organizationId: string): Promise<MappingRow[]>

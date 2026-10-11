@@ -5,3 +5,5 @@ export const shortDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleD
 export const CONF: Record<string, string> = { high: 'High', possible: 'Possible', low: 'Low' }
 /** An account name with its last four digits, unless the name already shows them (e.g. "Wells Fargo Business Checking 6960"). */
 export const withMask = (name: string, mask: string | null | undefined) => (mask && !name.includes(mask) ? `${name} ••••${mask}` : name)
+/** Sign-aware dollars and cents for balances and differences (an overdrawn account must not look positive). */
+export const signedUsd2 = (minor: number) => `${minor < 0 ? '−' : ''}$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

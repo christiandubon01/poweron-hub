@@ -113,7 +113,8 @@ describe.runIf(!!PGlite)('balance service on the real snapshot table (PGlite)', 
     const item = await makeItem(db, org, ['chk', 'sav', 'card'])
     const providerIds = Object.fromEntries((await rows(db, `SELECT id, provider_account_id FROM public.financial_provider_accounts WHERE provider_item_ref = $1`, [item.id])).map(r => [r.id, r.provider_account_id]))
     const provRow = (key) => ({ id: item.accounts[key], providerItemRef: item.id, providerAccountId: providerIds[item.accounts[key]], name: key, officialName: null, mask: '1234', status: 'active',
-      providerAccountType: key === 'card' ? 'credit' : 'depository', providerAccountSubtype: key === 'card' ? 'credit card' : key === 'sav' ? 'savings' : 'checking', institutionName: 'Wells Fargo', itemStatus: 'healthy' })
+      providerAccountType: key === 'card' ? 'credit' : 'depository', providerAccountSubtype: key === 'card' ? 'credit card' : key === 'sav' ? 'savings' : 'checking', institutionName: 'Wells Fargo', itemStatus: 'healthy',
+      itemEnvironment: 'production' }) // PLAID-3C: an account now carries its Item's environment; this Item is a Production Item (makeItem), and getBalances reads only the server's own environment
     const envelope = encryptProviderToken('access-production-x', KEY, contextFor({ organizationId: org }, 'plaid', 'p'))
     const state = { now: NOW, readings }
     const plaid = { getAccountBalances: vi.fn(async () => state.readings) }
