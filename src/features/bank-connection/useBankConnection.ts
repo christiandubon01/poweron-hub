@@ -49,6 +49,8 @@ export interface BankSyncSummary {
   lastAttemptAt?: string | null
   /** PLAID-1C: an unfinished resumable update (pages received so far are not visible anywhere until it completes). */
   progress?: { phase: 'fetching' | 'ready_to_apply'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null
+  /** PLAID-2H: an update waiting for owner review (counts only). */
+  blocked?: { runId: string; reason: 'RUN_TOO_LARGE' | 'APPLY_FAILED_REPEATEDLY'; stagedRows: number; pagesStaged: number; restarts: number; applyFailures: number; startedAt: string } | null
 }
 /** PLAID-2E: one account's newest bank-reported balance, already separated into bank cash / card debt / unused credit (no provider id, no token). */
 export interface BankBalanceSummary {
@@ -310,6 +312,12 @@ export function useBankConnection() {
     try { await request('plaid-balances', { method: 'POST', body: { action: 'refresh', itemId } }); await refreshBalanceList() }
     catch (error) { setMessage((error as Error).message); await refresh() } finally { setBusy(false) }
   }, [refreshBalanceList, refresh])
+  /** PLAID-2H: the owner's explicit decision to drop a blocked, never-applied update. Needs the run id from status; the server also requires the typed word. */
+  const discardBlocked = useCallback(async (itemId: string, runId: string) => {
+    setBusy(true); setMessage(null)
+    try { const out = await request('plaid-sync', { method: 'POST', body: { action: 'discard_blocked_run', itemId, runId, confirm: 'DISCARD' } }); if (typeof out?.next === 'string') setMessage(out.next) }
+    catch (error) { setMessage((error as Error).message) } finally { await refreshSyncs(); setBusy(false) }
+  }, [refreshSyncs])
   const mapAccount = useCallback(async (providerAccountId: string, financialAccountId: string) => {
     setBusy(true); setMessage(null)
     try { await request('plaid-accounts', { method: 'POST', body: { action: 'map', providerAccountId, financialAccountId } }); await refreshAccounts() }
@@ -322,5 +330,5 @@ export function useBankConnection() {
   }, [refreshAccounts])
 
   return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow }
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked }
 }

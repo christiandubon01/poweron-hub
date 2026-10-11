@@ -41,6 +41,8 @@ export interface StagedChange {
   provider_category?: Record<string, unknown> | null
 }
 export interface ApplyResult { outcome: 'applied' | 'already_applied' | 'stale' | 'lease_lost' | 'blocked'; added: number; modified: number; removed: number; pendingLinked: number }
+/** PLAID-2H: a run that is waiting for owner review (too large, or its final apply failed repeatedly). Never includes a cursor. */
+export interface BlockedRunView { runId: string; reason: 'RUN_TOO_LARGE' | 'APPLY_FAILED_REPEATEDLY'; stagedRows: number; pagesStaged: number; restarts: number; applyFailures: number; startedAt: string }
 export interface StagingProgress { status: 'fetching' | 'fetched'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string }
 
 export interface SyncStagingRepo {
@@ -53,6 +55,8 @@ export interface SyncStagingRepo {
   /** Counts a failed final apply (only while holding the lease). 'blocked' = the run now needs owner review; 'stale' = not counted. */
   recordApplyFailure(organizationId: string, input: { itemId: string; runId: string; generation: number; leaseStartedAt: string }): Promise<'retry' | 'blocked' | 'stale'>
   getProgress(organizationId: string, itemId: string): Promise<StagingProgress | null>
+  /** PLAID-2H: the Item's blocked run, if any (organization-scoped read). */
+  getBlockedRun?(organizationId: string, itemId: string): Promise<BlockedRunView | null>
 }
 
 function failed(operation: string, error?: any): never {
@@ -117,6 +121,15 @@ export function createSyncStagingRepo(svc: Svc): SyncStagingRepo {
         .eq('organization_id', organizationId).eq('provider_item_ref', itemId).in('status', ['fetching', 'fetched']).maybeSingle()
       if (error) failed('get_progress', error)
       return data ? { status: data.status, pagesStaged: Number(data.pages_staged), restarts: Number(data.restarts), startedAt: data.created_at, updatedAt: data.updated_at } : null
+    },
+    async getBlockedRun(organizationId, itemId) {
+      const { data, error } = await svc.from('financial_provider_sync_staging_runs').select('id, blocked_reason, staged_rows, pages_staged, restarts, apply_failures, created_at')
+        .eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('status', 'blocked').maybeSingle()
+      if (error) failed('get_blocked_run', error)
+      if (!data) return null
+      const reason = data.blocked_reason === 'APPLY_FAILED_REPEATEDLY' ? 'APPLY_FAILED_REPEATEDLY' : 'RUN_TOO_LARGE'
+      return { runId: data.id, reason, stagedRows: Number(data.staged_rows) || 0, pagesStaged: Number(data.pages_staged) || 0, restarts: Number(data.restarts) || 0,
+        applyFailures: Number(data.apply_failures) || 0, startedAt: data.created_at }
     },
   }
 }

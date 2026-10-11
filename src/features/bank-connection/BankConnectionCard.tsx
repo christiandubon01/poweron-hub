@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AccountAdditionPreview, BankAccountSummary, BankBalanceSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption, SharedAccountView } from './useBankConnection'
 import { useBankConnection } from './useBankConnection'
+import { buildAttention } from '../../services/bankProvider/attention'
 
 const STATUS: Record<BankConnectionSummary['status'], { label: string; color: string; glyph: string }> = {
   healthy: { label: 'Connected', color: 'var(--fin-cash)', glyph: '●' },
@@ -92,7 +93,7 @@ const SYNC_LABEL: Record<BankSyncSummary['state'], string> = {
 }
 
 /** Compact bank-evidence status. It is NOT the ledger: nothing here changes a balance, report or Outlook number. */
-function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: string; sync: BankSyncSummary | undefined; busy: boolean; onSync: (id: string) => Promise<void> }) {
+function SyncSection({ connectionId, sync, busy, onSync, onDiscard }: { connectionId: string; sync: BankSyncSummary | undefined; busy: boolean; onSync: (id: string) => Promise<void>; onDiscard?: (id: string, runId: string) => Promise<void> }) {
   const state = sync?.state ?? 'not_synced'
   const when = sync?.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null
   return <div className="w-full" data-testid="bank-sync-section" data-state={state}>
@@ -102,6 +103,16 @@ function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: strin
         <p data-testid="bank-sync-state">{SYNC_LABEL[state]}{state === 'synced' && when ? <span className="text-[var(--text-secondary)]"> · Last synced {when}</span> : null}</p>
         {sync && (sync.counts.posted > 0 || sync.counts.pending > 0) && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-counts">{sync.counts.posted} posted · {sync.counts.pending} pending</p>}
         {state === 'partial' && sync?.progress && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-progress">{sync.progress.pagesStaged} page(s) received so far{sync.progress.phase === 'ready_to_apply' ? ' · ready to finish' : ''}.</p>}
+        {sync?.blocked && <div role="alert" style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-blocked">
+          <p className="font-semibold">This bank update is waiting for your review</p>
+          <p>{sync.blocked.reason === 'RUN_TOO_LARGE'
+            ? `It holds ${sync.blocked.stagedRows.toLocaleString('en-US')} changes (${sync.blocked.pagesStaged} pages), more than Cash OS applies in one step. Nothing from it was saved.`
+            : `Saving it failed ${sync.blocked.applyFailures} times. Nothing from it was saved.`} Your saved position and records are unchanged.</p>
+          <p>{sync.blocked.reason === 'RUN_TOO_LARGE'
+            ? 'Discarding it will not make it smaller: syncing again fetches the same update and stops at the same limit until a larger limit is approved separately.'
+            : 'You can discard it and sync again to fetch it fresh.'}</p>
+          {onDiscard && <button type="button" className={btn} disabled={busy} data-testid="bank-sync-discard" onClick={() => { if (window.confirm('Discard this unsaved bank update? Your saved records and position are not changed.')) void onDiscard(connectionId, sync.blocked!.runId) }}>Discard this update</button>}
+        </div>}
         {sync?.updatesAvailable && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-updates">New bank updates are available.</p>}
         {state === 'error' && sync?.recoveryText && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-recovery">{sync.recoveryText}{sync.lastErrorCode ? ` (code ${sync.lastErrorCode})` : ''}</p>}
         {state !== 'synced' && sync?.lastSyncedAt && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-last-success">Last successful sync {new Date(sync.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>}
@@ -152,7 +163,7 @@ function BalancesSection({ connectionId, balances, busy, onRefresh }: { connecti
  */
 export default function BankConnectionCard() {
   const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow } = useBankConnection()
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked } = useBankConnection()
   if (load !== 'ready') return null
   // Only Items of THIS environment are active here. An Item of the other environment (e.g. the earlier Sandbox test) is kept, shown for clarity, and has no actions.
   const here = connections.filter(c => (c.environment ?? 'sandbox') === (environment ?? 'sandbox'))
@@ -168,6 +179,11 @@ export default function BankConnectionCard() {
         if (window.confirm(`You are already connected to ${names}. To add more accounts from the same bank login, use “Add accounts” on that connection instead. Continue only to connect a DIFFERENT bank.`)) void connect(true)
       }}>{busy ? 'Connecting…' : 'Connect another bank'}</button>}
     </div>
+    {(() => {
+      const items = buildAttention({ connections: active, syncs, balances: balancesEnabled ? balances : undefined, nowMs: Date.now() })
+      return items.length > 0 ? <ul className="mt-2 space-y-1 text-xs" data-testid="bank-attention" aria-label="Needs attention">{items.map(i => <li key={i.id} data-severity={i.severity}
+        style={{ color: i.severity === 'action' ? 'var(--fin-negative)' : i.severity === 'warning' ? 'var(--fin-warning)' : 'var(--text-secondary)' }}><span aria-hidden="true">{i.severity === 'info' ? '○ ' : '▲ '}</span>{i.message}</li>)}</ul> : null
+    })()}
     {active.length > 0 && environment === 'production' && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="bank-connect-another-note">Each connection is billed by Plaid. Connect a bank only once.</p>}
     {active.length === 0 && <p className="mt-2 text-sm text-[var(--text-secondary)]" data-testid="bank-not-connected">Not connected. Connecting a bank does not change any balance or report.</p>}
     <div className="mt-2 divide-y divide-[var(--border-primary)]">{active.map(c => {
@@ -184,7 +200,7 @@ export default function BankConnectionCard() {
           <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Disconnect this bank? Your history and records are kept.')) void disconnect(c.id) }}>Disconnect</button>
         </div>
         {addPreview?.itemId === c.id && <AddAccountsPreview preview={addPreview} busy={busy} onSave={saveNewAccounts} onClose={dismissPreview} />}
-        <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} />
+        <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} onDiscard={discardBlocked} />
         {balancesEnabled && c.status !== 'disconnected' && <BalancesSection connectionId={c.id} balances={balances} busy={busy} onRefresh={refreshBalancesNow} />}
         <div className="w-full">
           <div className="flex flex-wrap items-center justify-between gap-2">

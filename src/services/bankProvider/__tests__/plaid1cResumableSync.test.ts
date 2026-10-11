@@ -6,7 +6,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { resumableSyncStep, relinkPendingPosted, MAX_RUN_RESTARTS, STEP_BUDGET_MS } from '../resumableSync'
+import { resumableSyncStep, relinkPendingPosted, discardBlockedRun, MAX_RUN_RESTARTS, STEP_BUDGET_MS } from '../resumableSync'
 import { createSyncStagingRepo } from '../syncStagingRepo'
 import { createPendingContinuityRepo } from '../pendingContinuityRepo'
 import { getSyncStatus } from '../bankSyncService'
@@ -286,6 +286,36 @@ describe.runIf(!!PGliteCtor)('PLAID-1C resumable sync on PostgreSQL (PGlite)', (
     expect(w.plaid.syncTransactions.mock.calls.length).toBe(calls)
     const s = (await getSyncStatus(w.deps, OWNER)).syncs.find(x => x.connectionId === w.itemId)
     expect(s).toMatchObject({ state: 'error', recovery: 'owner_review' })
+  })
+
+  it('PLAID-2H owner review of a blocked run: counts are visible, discarding needs the named run and a typed confirmation, and evidence and cursor never change', async () => {
+    const w = await world(undefined, { pageMs: 100 }); backfill(w, 4, 5)
+    w.deps.maxStagedRows = 12
+    await expect(w.step()).rejects.toMatchObject({ code: 'sync_failed' })
+    const status = (await getSyncStatus(w.deps, OWNER)).syncs.find(x => x.connectionId === w.itemId)
+    expect(status).toMatchObject({ state: 'error', recovery: 'owner_review', blocked: { reason: 'RUN_TOO_LARGE', stagedRows: 10, pagesStaged: 2, restarts: 0, applyFailures: 0 } })
+    expect(JSON.stringify(status)).not.toMatch(/cursor|p1|final/i)
+    const runId = (await db.query(`SELECT id FROM public.financial_provider_sync_staging_runs WHERE provider_item_ref = $1 AND status = 'blocked'`, [w.itemId])).rows[0].id
+    const before = { evidence: await w.evidence(), item: await w.row() }
+    // refusals change nothing
+    await expect(discardBlockedRun(w.deps, OWNER, { itemId: w.itemId, runId, confirm: 'yes' })).rejects.toMatchObject({ code: 'invalid_request' })
+    await expect(discardBlockedRun(w.deps, OWNER, { itemId: w.itemId, runId: '00000000-0000-4000-8000-000000000000', confirm: 'DISCARD' })).rejects.toMatchObject({ code: 'conflict' })
+    await expect(discardBlockedRun(w.deps, OWNER, { itemId: w.itemId, runId: 'nope', confirm: 'DISCARD' })).rejects.toMatchObject({ code: 'invalid_request' })
+    await expect(discardBlockedRun(w.deps, { ...OWNER, role: 'employee' }, { itemId: w.itemId, runId, confirm: 'DISCARD' })).rejects.toMatchObject({ code: 'forbidden' })
+    await expect(discardBlockedRun(w.deps, { ...OWNER, organizationId: ORG_B }, { itemId: w.itemId, runId, confirm: 'DISCARD' })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(discardBlockedRun({ ...w.deps, resumableSyncEnabled: false }, OWNER, { itemId: w.itemId, runId, confirm: 'DISCARD' })).rejects.toMatchObject({ code: 'feature_disabled' })
+    expect((await db.query(`SELECT status FROM public.financial_provider_sync_staging_runs WHERE id = $1`, [runId])).rows[0].status).toBe('blocked')
+    // the explicit decision
+    const out = await discardBlockedRun(w.deps, OWNER, { itemId: w.itemId, runId, confirm: 'DISCARD' })
+    expect(out).toMatchObject({ discarded: true, reason: 'RUN_TOO_LARGE' }); expect(out.next).toMatch(/separate owner-approved database change/)
+    expect((await db.query(`SELECT status, abandon_reason, (SELECT count(*)::int FROM public.financial_provider_sync_staged_changes s WHERE s.run_id = r.id) AS staged FROM public.financial_provider_sync_staging_runs r WHERE id = $1`, [runId])).rows[0])
+      .toEqual({ status: 'abandoned', abandon_reason: 'OWNER_DISCARDED', staged: 0 })
+    expect(await w.evidence()).toEqual(before.evidence); expect((await w.row()).sync_cursor).toBe(before.item.sync_cursor) // nothing visible moved
+    await expect(discardBlockedRun(w.deps, OWNER, { itemId: w.itemId, runId, confirm: 'DISCARD' })).rejects.toMatchObject({ code: 'conflict' }) // idempotent: a second press changes nothing
+    // the next sync starts again from the committed cursor (and, with the normal limit, completes)
+    w.deps.maxStagedRows = undefined
+    expect((await w.drive()).at(-1)).toMatchObject({ phase: 'complete', state: 'synced' })
+    expect((await w.evidence()).length).toBe(20)
   })
 
   it('PLAID-1E repeated final-apply failures stop after three attempts with an owner-review status; staged rows, evidence and cursor are preserved', async () => {

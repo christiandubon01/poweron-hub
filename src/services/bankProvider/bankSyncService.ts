@@ -102,7 +102,11 @@ export interface BankSyncDeps extends BankAccountDeps {
   /** PLAID-1C server switch (PLAID_RESUMABLE_SYNC_ENABLED === 'true'); requires the PLAID-1C SQL. Off by default. */
   resumableSyncEnabled?: boolean
   /** PLAID-1C: progress of an open resumable run (never a cursor). Only read while resumable sync is enabled. */
-  staging?: { getProgress(organizationId: string, itemId: string): Promise<{ status: 'fetching' | 'fetched'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null> }
+  staging?: {
+    getProgress(organizationId: string, itemId: string): Promise<{ status: 'fetching' | 'fetched'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null>
+    /** PLAID-2H */
+    getBlockedRun?(organizationId: string, itemId: string): Promise<{ runId: string; reason: 'RUN_TOO_LARGE' | 'APPLY_FAILED_REPEATEDLY'; stagedRows: number; pagesStaged: number; restarts: number; applyFailures: number; startedAt: string } | null>
+  }
 }
 
 /** PLAID-1B: one append-only audit event of a sync run. Cursor progress is a one-way 16-hex fingerprint, never the cursor itself. */
@@ -184,10 +188,13 @@ export async function getSyncStatus(deps: BankSyncDeps, actor: BankActor) {
     // PLAID-1C: an unfinished resumable update is shown as such; nothing from it is visible in evidence or reports until it completes.
     const progress = deps.resumableSyncEnabled === true && deps.staging ? await deps.staging.getProgress(actor.organizationId, item.id) : null
     const ui: SyncUiState = progress && derived !== 'syncing' && derived !== 'login_required' && derived !== 'error' ? 'partial' : derived
+    // PLAID-2H: a run waiting for owner review is shown with what it holds (counts only) so the owner can decide; never a cursor.
+    const blockedRun = deps.resumableSyncEnabled === true && deps.staging?.getBlockedRun ? await deps.staging.getBlockedRun(actor.organizationId, item.id) : null
     const lastErrorCode = ui === 'error' ? (state?.lastErrorCode ?? null) : null
     const recovery = ui === 'error' ? recoveryFor(lastErrorCode) : ui === 'login_required' ? 'reconnect' : 'none'
     out.push({ connectionId: item.id, state: ui, lastSyncedAt: state?.lastSuccessfulAt ?? null, lastAttemptAt: state?.completedAt ?? state?.startedAt ?? null, counts, updatesAvailable,
       lastErrorCode, recovery, recoveryText: RECOVERY_TEXT[recovery],
+      blocked: blockedRun ? { runId: blockedRun.runId, reason: blockedRun.reason, stagedRows: blockedRun.stagedRows, pagesStaged: blockedRun.pagesStaged, restarts: blockedRun.restarts, applyFailures: blockedRun.applyFailures, startedAt: blockedRun.startedAt } : null,
       progress: progress ? { phase: progress.status === 'fetched' ? 'ready_to_apply' : 'fetching', pagesStaged: progress.pagesStaged, restarts: progress.restarts, startedAt: progress.startedAt, updatedAt: progress.updatedAt } : null })
   }
   return { syncs: out, backgroundSyncEnabled: deps.backgroundSyncEnabled === true, resumableSyncEnabled: deps.resumableSyncEnabled === true }

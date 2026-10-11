@@ -62,4 +62,23 @@ describe('PLAID-2E balances on the bank card', () => {
     const post = fetchMock.mock.calls.find(c => String(c[0]).endsWith('plaid-balances') && c[1]?.method === 'POST')!
     expect(JSON.parse(post[1].body)).toEqual({ action: 'refresh', itemId: 'i1' })
   })
+
+  it('PLAID-2H: the card lists what needs attention, actions first, from the status it already has', async () => {
+    await mount({ ...status, 'plaid-balances': { body: BALANCES }, 'plaid-sync': { body: { syncs: [{ connectionId: 'i1', state: 'error', lastSyncedAt: null, counts: { posted: 0, pending: 0, removed: 0 }, updatesAvailable: false, lastErrorCode: 'ACCOUNT_UNKNOWN', recovery: 'refresh_accounts', recoveryText: 'Review or refresh the accounts.' }] } } })
+    const items = [...host.querySelectorAll('[data-testid="bank-attention"] li')]
+    expect(items[0].getAttribute('data-severity')).toBe('action'); expect(items[0].textContent).toMatch(/ACCOUNT_UNKNOWN/)
+    expect(items.some(i => /stale/.test(i.textContent ?? ''))).toBe(true)
+  })
+
+  it('PLAID-2H: a blocked update is explained in counts, offers a confirmed discard, and says discarding does not shrink an oversized update', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await mount({ ...status, 'plaid-sync': { body: { syncs: [{ connectionId: 'i1', state: 'error', lastSyncedAt: null, counts: { posted: 0, pending: 0, removed: 0 }, updatesAvailable: false, lastErrorCode: 'RUN_TOO_LARGE', recovery: 'owner_review',
+      recoveryText: 'This needs owner review before syncing again.', blocked: { runId: '11111111-1111-4111-8111-111111111111', reason: 'RUN_TOO_LARGE', stagedRows: 60000, pagesStaged: 120, restarts: 0, applyFailures: 0, startedAt: '2026-10-11T00:00:00Z' } }], resumableSyncEnabled: true } } })
+    const box = host.querySelector('[data-testid="bank-sync-blocked"]')!
+    expect(box.textContent).toMatch(/60,000 changes \(120 pages\)/); expect(box.textContent).toMatch(/Nothing from it was saved/); expect(box.textContent).toMatch(/stops at the same limit/)
+    await act(async () => { (host.querySelector('[data-testid="bank-sync-discard"]') as HTMLButtonElement).click() }); await flush()
+    const post = fetchMock.mock.calls.find(c => String(c[0]).endsWith('plaid-sync') && c[1]?.method === 'POST')!
+    expect(JSON.parse(post[1].body)).toEqual({ action: 'discard_blocked_run', itemId: 'i1', runId: '11111111-1111-4111-8111-111111111111', confirm: 'DISCARD' })
+    confirm.mockRestore()
+  })
 })

@@ -221,3 +221,24 @@ export async function relinkPendingPosted(deps: ResumableSyncDeps, actor: BankAc
   const start = clock(deps)
   return runPendingContinuity(deps.continuity, actor.organizationId, item.id, { now: () => clock(deps), deadlineMs: start + REQUEST_LIMIT_MS - 1_500, maxCalls: 6 })
 }
+
+/**
+ * PLAID-2H: the owner's explicit decision about a BLOCKED run. Nothing is applied: discarding drops only the staged copy of an update that was never
+ * visible, the committed cursor and every evidence row stay exactly as they are, and the next sync re-fetches from the committed cursor.
+ * The caller must name the run it reviewed and type the confirmation; a run that is no longer blocked (or belongs to another connection) is left alone.
+ */
+export async function discardBlockedRun(deps: ResumableSyncDeps, actor: BankActor, input: { itemId?: unknown; runId?: unknown; confirm?: unknown }): Promise<{ discarded: boolean; reason: string | null; next: string }> {
+  assertAuthority(actor)
+  if (deps.resumableSyncEnabled !== true || !deps.staging.getBlockedRun) throw new BankConnectionError('feature_disabled', 403, 'Resumable sync is not enabled yet.')
+  const { item } = await loadCredential(deps, actor, input.itemId as string)
+  if (typeof input.runId !== 'string' || !/^[0-9a-f-]{36}$/i.test(input.runId)) throw new BankConnectionError('invalid_request', 400, 'Name the blocked update you reviewed.')
+  if (input.confirm !== 'DISCARD') throw new BankConnectionError('invalid_request', 400, 'Type DISCARD to confirm. Nothing was changed.')
+  const blockedRun = await deps.staging.getBlockedRun(actor.organizationId, item.id)
+  if (!blockedRun || blockedRun.runId !== input.runId) throw new BankConnectionError('conflict', 409, 'That update is no longer waiting for review. Nothing was changed.')
+  await deps.staging.abandonRun(actor.organizationId, blockedRun.runId, 'OWNER_DISCARDED')
+  note(deps, { event: 'bank.sync.blocked_run_discarded', organizationId: actor.organizationId, itemId: item.id, outcome: blockedRun.reason })
+  return { discarded: true, reason: blockedRun.reason,
+    next: blockedRun.reason === 'RUN_TOO_LARGE'
+      ? 'The update is larger than Cash OS applies in one step, so syncing again will stop at the same limit. Raising the limit needs a separate owner-approved database change.'
+      : 'Press Sync to fetch the update again from your saved position. If it fails again, it needs a developer review.' }
+}
