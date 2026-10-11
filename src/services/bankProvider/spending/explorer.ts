@@ -55,6 +55,11 @@ export interface ExplorerInput {
   /** BANK-6B: active owner-approved merchant rules (merchantKey -> category). Suggestions only. */
   ownerRules?: Map<string, BucketKey>
   includeRemoved?: boolean
+  /**
+   * PLAID-3A: the reconciliation switch (CASH_OS_RECONCILIATION_ENABLED, decided server-side; default off). Passed to the classifier, and it alone enables
+   * the confirmed-pair mirroring below. With anything but `true` this function is exactly the BANK-5/6 implementation.
+   */
+  reconciliation?: boolean
 }
 
 const KNOWN_MONEY = new Set<RelationshipKind>(['obligation', 'debt', 'payroll', 'transfer'])
@@ -62,7 +67,7 @@ const KNOWN_MONEY = new Set<RelationshipKind>(['obligation', 'debt', 'payroll', 
 export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytics: SpendingAnalytics; outOfScopeDates: string[] } {
   const accounts = new Map(input.accounts.map(a => [a.providerAccountRef, a]))
   const live = input.txs.filter(t => input.includeRemoved || !t.removed)
-  const suggestions = classifyAll({ txs: live.filter(t => !t.removed), accounts, decisions: input.decisions, bills: input.bills, debts: input.debts, projects: input.projects, ownerRules: input.ownerRules })
+  const suggestions = classifyAll({ txs: live.filter(t => !t.removed), accounts, decisions: input.decisions, bills: input.bills, debts: input.debts, projects: input.projects, ownerRules: input.ownerRules, reconciliation: input.reconciliation === true })
   const confirmedBy = new Map<string, { bucket?: Decision; rel?: Decision; ignored?: Decision }>()
   for (const d of input.decisions) {
     if (d.status !== 'confirmed') continue
@@ -72,15 +77,18 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     else slot.rel = d
     confirmedBy.set(d.txId, slot)
   }
-  // PLAID-2F: a confirmed transfer that NAMES its counterpart is one statement about both legs. The other leg is shown as confirmed through that
-  // pairing (never as its own decision, and never when it already has a relationship decision of its own or the counterpart is not live evidence).
-  const liveIds = new Set(live.filter(t => !t.removed).map(t => t.id))
-  for (const d of input.decisions) {
-    if (d.status !== 'confirmed' || d.kind !== 'transfer' || !d.counterpartTxId || !liveIds.has(d.counterpartTxId) || !liveIds.has(d.txId)) continue
-    const slot = confirmedBy.get(d.counterpartTxId) ?? {}
-    if (slot.rel) continue
-    slot.rel = { ...d, id: `pair:${d.id}`, txId: d.counterpartTxId, counterpartTxId: d.txId }
-    confirmedBy.set(d.counterpartTxId, slot)
+  // PLAID-3A (switch ON only): a confirmed transfer that NAMES its counterpart is one statement about both legs. A pair confirmed in the match review
+  // already has a decision row on each leg; this covers a LEGACY one-leg confirmation, and never overrides a relationship decision the other leg has
+  // itself, nor applies when the counterpart is not live evidence.
+  if (input.reconciliation === true) {
+    const liveIds = new Set(live.filter(t => !t.removed).map(t => t.id))
+    for (const d of input.decisions) {
+      if (d.status !== 'confirmed' || d.kind !== 'transfer' || !d.counterpartTxId || !liveIds.has(d.counterpartTxId) || !liveIds.has(d.txId)) continue
+      const slot = confirmedBy.get(d.counterpartTxId) ?? {}
+      if (slot.rel) continue
+      slot.rel = { ...d, id: `pair:${d.id}`, txId: d.counterpartTxId, counterpartTxId: d.txId }
+      confirmedBy.set(d.counterpartTxId, slot)
+    }
   }
   const debtLabel = new Map(input.debts.map(d => [d.id, d.label])), projectLabel = new Map(input.projects.map(p => [p.id, p.name]))
   const targetOf = (d: Decision): RelationshipTarget | null => {
@@ -104,7 +112,7 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
       : sug.bucket ? { key: sug.bucket.bucket, label: bucketLabel(sug.bucket.bucket), state: 'suggested', confidence: sug.bucket.confidence, reasons: sug.bucket.reasons, basis: sug.bucket.basis, ...(sug.bucket.mixed ? { mixed: true } : {}) }
       : { key: direction === 'money_out' ? 'other_needs_review' : null, label: direction === 'money_out' ? bucketLabel('other_needs_review') : null, state: 'none', confidence: null, reasons: direction === 'money_out' ? ['Nothing recognised this transaction yet.'] : [] }
     const relationship: ExplorerRow['relationship'] = dec.rel
-      ? { kind: dec.rel.kind as RelationshipKind, label: RELATIONSHIP_LABELS[dec.rel.kind as RelationshipKind], target: targetOf(dec.rel), state: 'confirmed', confidence: dec.rel.confidence ?? 'high', reasons: [dec.rel.id.startsWith('pair:') ? 'Paired with the transfer you confirmed on the other account.' : 'You confirmed this.'] }
+      ? { kind: dec.rel.kind as RelationshipKind, label: RELATIONSHIP_LABELS[dec.rel.kind as RelationshipKind], target: targetOf(dec.rel), state: 'confirmed', confidence: dec.rel.confidence ?? 'high', reasons: [input.reconciliation === true && dec.rel.id.startsWith('pair:') ? 'Paired with the transfer you confirmed on the other account.' : 'You confirmed this.'] }
       : sug.relationship ? { kind: sug.relationship.kind, label: RELATIONSHIP_LABELS[sug.relationship.kind], target: sug.relationship.target, state: 'suggested', confidence: sug.relationship.confidence, reasons: sug.relationship.reasons }
       : { kind: 'unknown', label: RELATIONSHIP_LABELS.unknown, target: null, state: 'none', confidence: null, reasons: [] }
     const ignored = !!dec.ignored

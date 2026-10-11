@@ -48,6 +48,11 @@ export interface SpendingContext {
   /** BANK-6B: active owner-approved merchant rules. Absent / rulesAvailable false before migration 157. */
   merchantRules?: MerchantRule[]
   rulesAvailable?: boolean
+  /**
+   * PLAID-3A: stamped by loadExplorerContext / loadCompleteContext from `deps.reconciliationEnabled` (server configuration), never by the repository and
+   * never from a request. `explorerFromContext` reads ONLY this field, so a context that was not stamped runs the legacy behavior.
+   */
+  reconciliation?: boolean
 }
 export interface MerchantRule { id: string; merchantKey: string; merchantLabel: string | null; category: string; updatedAt: string | null }
 
@@ -72,7 +77,8 @@ export interface SpendingRepo {
   checkedCategoryAvailable?(organizationId:string,actor:string):Promise<boolean>
   replaceCategoryChecked?(organizationId:string,actor:string,id:string,category:string,expected:import('../../../finance/relatedTransactions').CategoryRevision):Promise<{outcome:'created'|'changed'|'unchanged'}>
   loadHierarchy?(organizationId: string): Promise<SpendingHierarchy>
-  loadReportContext?(organizationId: string, sinceDate: string): Promise<SpendingContext>
+  /** `opts.accountTypes`: also read the provider account types (PLAID-3A; only requested when the reconciliation switch is on). */
+  loadReportContext?(organizationId: string, sinceDate: string, opts?: { accountTypes?: boolean }): Promise<SpendingContext>
   loadContext(organizationId: string, sinceDate: string): Promise<SpendingContext>
   getEvidence(organizationId: string, id: string): Promise<{ id: string; pending: boolean; removed: boolean; amountMinor: number } | null>
   /** The audit trail of one transaction (every decision ever made, including undone and rejected ones). */
@@ -94,10 +100,43 @@ export interface SpendingRepo {
   markUndone(organizationId: string, decisionId: string, actorUserId: string, reason: string): Promise<void>
 }
 export interface HistoryEntry { kind: string; status: string; category: string | null; source: string; confidence: string | null; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
-export interface SpendingDeps { repo: SpendingRepo; environment?: 'sandbox' | 'production'; log?: (e: { event: string; organizationId: string; outcome?: string; code?: string }) => void; now?: () => number }
+export interface SpendingDeps {
+  repo: SpendingRepo
+  environment?: 'sandbox' | 'production'
+  /** PLAID-3A: CASH_OS_RECONCILIATION_ENABLED === 'true' (read from server configuration by the handler). Default off = exact legacy behavior. */
+  reconciliationEnabled?: boolean
+  log?: (e: { event: string; organizationId: string; outcome?: string; code?: string }) => void
+  now?: () => number
+}
 const clock = (d: SpendingDeps) => d.now ? d.now() : Date.now()
 const today = (d: SpendingDeps) => new Date(clock(d)).toISOString().slice(0, 10)
 const logNote = (d: SpendingDeps, e: { event: string; organizationId: string; outcome?: string; code?: string }) => { try { d.log?.(e) } catch { /* logging never breaks the flow */ } }
+
+/**
+ * PLAID-3A: the ONLY ways a service loads a spending context (this function, loadCompleteContext and the read-only loadImpactContext). Each stamps the server's reconciliation switch onto it, so every consumer
+ * (Explorer, Smart Review, batch approval, accept/reject, merchant explorer, BANK-6G reports, match review, position) sees the same decision.
+ * A test scans this folder and fails if anything else calls `repo.loadContext` / `repo.loadReportContext`.
+ */
+export async function loadExplorerContext(deps: SpendingDeps, organizationId: string, sinceDate: string): Promise<SpendingContext> {
+  const ctx = await deps.repo.loadContext(organizationId, sinceDate)
+  return { ...ctx, reconciliation: deps.reconciliationEnabled === true }
+}
+/**
+ * Impact preview only: the complete context UNSTAMPED, always with account types, regardless of the switch, so the same evidence can be classified both ways
+ * (see reconciliationImpact.ts). It is read-only and its result is never used to build a report or a suggestion.
+ */
+export async function loadImpactContext(deps: SpendingDeps, organizationId: string, sinceDate: string): Promise<SpendingContext | null> {
+  if (!deps.repo.loadReportContext) return null
+  return deps.repo.loadReportContext(organizationId, sinceDate, { accountTypes: true })
+}
+/** The complete (report-source) context, or null when the reviewed report schema is not installed. */
+export async function loadCompleteContext(deps: SpendingDeps, organizationId: string, sinceDate: string): Promise<SpendingContext | null> {
+  if (!deps.repo.loadReportContext) return null
+  const on = deps.reconciliationEnabled === true
+  // Only when the switch is on does the report path also need the account types (the BANK-6G source does not return them).
+  const ctx = on ? await deps.repo.loadReportContext(organizationId, sinceDate, { accountTypes: true }) : await deps.repo.loadReportContext(organizationId, sinceDate)
+  return { ...ctx, reconciliation: on }
+}
 
 /** Known money Cash OS already expects around the evidence dates. Pure reads: no occurrence is ever materialized here. */
 export function buildBillCandidates(ctx: Pick<SpendingContext, 'obligations' | 'occurrences' | 'commitments' | 'txs'>, rangeStart: string, rangeEnd: string): KnownBillCandidate[] {
@@ -131,7 +170,7 @@ export function explorerFromContext(ctx: SpendingContext, asOf: string, accountS
   const bills = buildBillCandidates(ctx, start, end)
   const built = buildRows({
     asOf, accountScope, activeEnvironment, txs: ctx.txs, accounts: ctx.accounts, decisions: ctx.decisions, bills, debts: ctx.debts, projects: ctx.projects,
-    ownerRules: ownerRulesOf(ctx), includeRemoved,
+    ownerRules: ownerRulesOf(ctx), includeRemoved, reconciliation: ctx.reconciliation === true,
     obligationLabels: new Map(ctx.obligations.map(o => [o.id, o.name])), commitmentLabels: new Map(ctx.commitments.map(c => [c.id, c.title])),
   })
   for (const row of built.rows) if (row.bucket.key) row.bucket.label = categoryName(row.bucket.key, ctx.hierarchy)
@@ -178,7 +217,7 @@ export function reviewCounts(rows: Array<{ review: string; bucket: { state: stri
 export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery: Record<string, unknown> = {}) {
   assertAuthority(actor)
   const asOf = today(deps)
-  const ctx = await deps.repo.loadContext(actor.organizationId, addDays(asOf, -200))
+  const ctx = await loadExplorerContext(deps, actor.organizationId, addDays(asOf, -200))
   const q = parseQuery(rawQuery, ctx.hierarchy)
   const environment = deps.environment ?? 'sandbox' // the environment this server is configured for
   const accounts = q.accounts ?? 'mapped' // the default business view is the owner's MAPPED accounts; 'all' is an explicit choice
@@ -300,7 +339,7 @@ async function confirmBatch(deps: SpendingDeps, actor: BankActor, rawIds: unknow
     for (const id of rawRemember) { requireId(id, 'transaction'); if (!ids.includes(id)) throw bad('A merchant was marked to remember for a transaction that is not selected.'); remember.add(id) }
   }
   const org = actor.organizationId
-  const ctx = await deps.repo.loadContext(org, addDays(today(deps), -200)) // organization-scoped: another organization's ids are simply not found
+  const ctx = await loadExplorerContext(deps, org, addDays(today(deps), -200)) // organization-scoped: another organization's ids are simply not found
   const hierarchy = ctx.hierarchy ?? defaultHierarchy()
   for (const [id, key] of overrides) {
     if (!canAssign(key, hierarchy) || !explicitBatchKeys(hierarchy).includes(key)) throw bad('Choose an everyday expense category. Payroll, personal, transfers and owner draws are decided one at a time.')
@@ -381,7 +420,7 @@ async function forgetRule(deps: SpendingDeps, actor: BankActor, rawKey: unknown)
 export async function getSmartReview(deps: SpendingDeps, actor: BankActor, rawQuery: Record<string, unknown> = {}) {
   assertAuthority(actor)
   const asOf = today(deps)
-  const ctx = await deps.repo.loadContext(actor.organizationId, addDays(asOf, -200))
+  const ctx = await loadExplorerContext(deps, actor.organizationId, addDays(asOf, -200))
   const q = parseQuery(rawQuery, ctx.hierarchy)
   const environment = deps.environment ?? 'sandbox'
   const accounts = q.accounts ?? 'mapped'
@@ -408,7 +447,7 @@ export async function getSpendingReport(deps: SpendingDeps, actor: BankActor, ra
   const account = raw.account === undefined || raw.account === '' ? undefined : requireId(raw.account, 'account')
   const scope = { from: from as string, to: to as string, accounts: raw.accounts === 'all' ? 'all' as const : 'mapped' as const, environment: deps.environment ?? 'sandbox', account }
   if (!deps.repo.loadReportContext) return buildSpendingReport([], raw.report as ReportMode, scope, APPROVED_REPORTING_POLICY, { complete: false, reason: 'Complete reporting is not available until the reviewed schema is installed.' })
-  const ctx = await deps.repo.loadReportContext(actor.organizationId, addDays(scope.from, -110))
+  const ctx = (await loadCompleteContext(deps, actor.organizationId, addDays(scope.from, -110)))!
   const { rows } = explorerFromContext(ctx, asOf, 'all', scope.environment, true)
   const report = buildSpendingReport(rows, raw.report as ReportMode, scope, APPROVED_REPORTING_POLICY, ctx.reportCoverage ?? { complete: false, reason: 'Evidence coverage was not verified.' }, ctx.hierarchy)
   if (Buffer.byteLength(JSON.stringify(report), 'utf8') > 4_500_000) return { ...report, summary:null,groups:[],rows:[],coverage:{complete:false,reason:'Complete drill-down exceeds the response safety limit. Choose a narrower date/account scope.'} }
@@ -472,7 +511,7 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
     case 'reject_suggestion': {
       const dimension = input.dimension
       if (dimension !== 'bucket' && dimension !== 'relationship') throw bad('Choose bucket or relationship.')
-      const ctx = await deps.repo.loadContext(org, addDays(today(deps), -200))
+      const ctx = await loadExplorerContext(deps, org, addDays(today(deps), -200))
       const row = explorerFromContext(ctx, today(deps)).rows.find(r => r.id === txId)
       if (!row) throw new BankConnectionError('not_found', 404, 'Transaction not found.')
       if (dimension === 'bucket') {

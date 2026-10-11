@@ -30,6 +30,9 @@ export const backgroundSyncEnabled = (env: Record<string, string | undefined> = 
 export const resumableSyncEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_RESUMABLE_SYNC_ENABLED ?? '').trim() === 'true'
 export const pendingContinuityEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_PENDING_CONTINUITY_ENABLED ?? '').trim() === 'true'
 export const balancesEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_BALANCES_ENABLED ?? '').trim() === 'true'
+/** PLAID-3A / 3C: Cash OS switches. Server configuration only (never a request value); on only when exactly "true"; both default OFF. */
+export const reconciliationEnabled = (env: Record<string, string | undefined> = process.env) => (env.CASH_OS_RECONCILIATION_ENABLED ?? '').trim() === 'true'
+export const positionEnabled = (env: Record<string, string | undefined> = process.env) => (env.CASH_OS_POSITION_ENABLED ?? '').trim() === 'true'
 export const syncAuditEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_SYNC_AUDIT_ENABLED ?? '').trim() === 'true'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 

@@ -54,7 +54,7 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
   }
   return {
     loadHierarchy: org => loadSpendingHierarchy(svc, org),
-    loadReportContext: (org, sinceDate) => readReportContext(svc, org, sinceDate),
+    loadReportContext: (org, sinceDate, opts) => readReportContext(svc, org, sinceDate, opts),
     async loadContext(organizationId, sinceDate): Promise<SpendingContext> {
       const rows = await pageAll<any>(() => svc.from('financial_provider_transactions')
         .select('id, provider_account_ref, transaction_date, name, merchant_name, provider_amount_minor, pending, removed_at, provider_category')

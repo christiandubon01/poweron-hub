@@ -107,6 +107,12 @@ export interface ClassifierInput {
   projects: ProjectOption[]
   /** BANK-6B: active owner-approved merchant rules (merchantKey -> everyday category). They only improve suggestions. */
   ownerRules?: Map<string, BucketKey>
+  /**
+   * PLAID-3A: the reconciliation switch (CASH_OS_RECONCILIATION_ENABLED, decided server-side). `true` = the account-class aware reconciliation engine
+   * pairs transfers / card payments and matches refunds. Anything else (the default) runs the LEGACY pairing below, byte-for-byte the behavior of
+   * commit 27d1950. This flag is the authoritative boundary: no report or suggestion changes unless it is true.
+   */
+  reconciliation?: boolean
 }
 
 /** Owner-confirmed bucket decisions grouped by merchant: the ONLY learned signal, and it only ever informs a bucket. */
@@ -251,26 +257,65 @@ function matchKnownBills(txs: EvidenceTx[], accounts: Map<string, AccountContext
 }
 
 // ── transfers ─────────────────────────────────────────────────────────────────────────────────────────────────────
-// PLAID-2F: pairing is done by the reconciliation engine (account-class aware, unambiguous-only, owner decisions respected). This function only
-// turns its answer into explainable suggestions and keeps the one-sided "looks like a transfer / card payment" hints.
+function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountContext>): Map<string, RelationshipSuggestion> {
+  const out = new Map<string, RelationshipSuggestion>()
+  const strongOf = (t: EvidenceTx) => {
+    const d = (t.category?.detailed ?? '').toUpperCase(), p = (t.category?.primary ?? '').toUpperCase()
+    return { keyword: TRANSFER_KEYWORD.test(searchText(t.name, t.merchantName)), pfc: p.startsWith('TRANSFER_'), account: d.includes('ACCOUNT_TRANSFER') }
+  }
+  const outs = txs.filter(t => t.amountMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
+  const ins = txs.filter(t => t.amountMinor < 0)
+  const taken = new Set<string>()
+  for (const o of outs) {
+    const candidates = ins.filter(i => !taken.has(i.id) && i.providerAccountRef !== o.providerAccountRef && i.pending === o.pending && Math.abs(i.amountMinor) === o.amountMinor && daysBetween(i.date, o.date) <= 3)
+      .sort((a, b) => daysBetween(a.date, o.date) - daysBetween(b.date, o.date) || a.id.localeCompare(b.id))
+    const match = candidates[0]
+    if (!match) continue
+    taken.add(match.id)
+    const a = strongOf(o), b = strongOf(match)
+    const signal = a.keyword || b.keyword || a.account || b.account || a.pfc || b.pfc
+    const conf: Confidence = signal ? 'high' : 'possible'
+    const labelOf = (t: EvidenceTx) => accounts.get(t.providerAccountRef)?.financialAccountName ?? accounts.get(t.providerAccountRef)?.label ?? 'another account'
+    out.set(o.id, { kind: 'transfer', target: { type: 'counterpart_tx', id: match.id, label: labelOf(match) }, confidence: conf, reasons: [`An equal ${money(o.amountMinor)} movement arrived in ${labelOf(match)} within ${daysBetween(match.date, o.date)} day(s).`, ...(signal ? ['The description or bank category says transfer.'] : ['Only the equal opposite amounts suggest a transfer.'])] })
+    out.set(match.id, { kind: 'transfer', target: { type: 'counterpart_tx', id: o.id, label: labelOf(o) }, confidence: conf, reasons: [`An equal ${money(o.amountMinor)} movement left ${labelOf(o)} within ${daysBetween(match.date, o.date)} day(s).`, ...(signal ? ['The description or bank category says transfer.'] : ['Only the equal opposite amounts suggest a transfer.'])] })
+  }
+  for (const t of txs) {
+    if (out.has(t.id)) continue
+    const s = strongOf(t)
+    if (s.keyword || s.account) out.set(t.id, { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'possible', reasons: ['The description or bank category says transfer, but no matching movement was found in another connected account (it may go to an account that is not connected).'] })
+    else if (s.pfc) out.set(t.id, { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'low', reasons: ['The bank category looks like a transfer, but that category is also used for payments to people.'] })
+  }
+  return out
+}
+
+// PLAID-3A (switch ON only): pairing is done by the reconciliation engine (account-class aware, unambiguous-only, owner decisions respected).
+// These two functions turn its answer into explainable suggestions and keep the one-sided "looks like a transfer" hints.
 function reconciliationFor(txs: EvidenceTx[], accounts: Map<string, AccountContext>, decisions: Decision[]): ReconResult {
   const confirmedPairs: Array<[string, string]> = [], rejectedPairs: Array<[string, string]> = []
   const amount = new Map(txs.map(t => [t.id, t.amountMinor]))
+  const excluded = new Map<string, string>()
   for (const d of decisions) {
+    if (d.status === 'confirmed') {
+      // A leg the owner already decided as something else is never offered to an automatic pairing or refund match.
+      if (d.kind === 'ignored') excluded.set(d.txId, 'ignored')
+      else if (d.kind === 'category') { if (d.category !== 'transfers') excluded.set(d.txId, 'categorized') }
+      else if (d.kind !== 'transfer') excluded.set(d.txId, d.kind)
+    }
     if (d.kind !== 'transfer' || !d.counterpartTxId) continue
     const a = amount.get(d.txId), b = amount.get(d.counterpartTxId)
     if (a === undefined || b === undefined) continue
-    const pair: [string, string] = a > 0 && b < 0 ? [d.txId, d.counterpartTxId] : a < 0 && b > 0 ? [d.counterpartTxId, d.txId] : null as any
+    const pair: [string, string] | null = a > 0 && b < 0 ? [d.txId, d.counterpartTxId] : a < 0 && b > 0 ? [d.counterpartTxId, d.txId] : null
     if (!pair) continue
-    ;(d.status === 'confirmed' ? confirmedPairs : rejectedPairs).push(pair)
+    if (d.status === 'confirmed') confirmedPairs.push(pair)
+    else if (d.status === 'rejected') rejectedPairs.push(pair)
   }
   return reconcile({
-    txs, confirmedPairs, rejectedPairs,
-    accounts: [...accounts.values()].map(a => reconAccountOf(a.providerAccountRef, a.financialAccountName ?? a.label ?? 'another account', a.providerType, a.providerSubtype)),
+    txs, confirmedPairs, rejectedPairs, excluded,
+    accounts: [...accounts.values()].map(a => reconAccountOf(a.providerAccountRef, a.financialAccountName ?? a.label ?? 'another account', a.providerType, a.providerSubtype, a.ownership)),
   })
 }
 
-function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountContext>, recon: ReconResult): Map<string, RelationshipSuggestion> {
+function reconciledTransferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountContext>, recon: ReconResult): Map<string, RelationshipSuggestion> {
   const out = new Map<string, RelationshipSuggestion>()
   const strongOf = (t: EvidenceTx) => {
     const d = (t.category?.detailed ?? '').toUpperCase(), p = (t.category?.primary ?? '').toUpperCase()
@@ -278,7 +323,9 @@ function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountCon
   }
   const labelOf = (t: EvidenceTx) => accounts.get(t.providerAccountRef)?.financialAccountName ?? accounts.get(t.providerAccountRef)?.label ?? 'another account'
   const byId = new Map(txs.map(t => [t.id, t]))
+  const paired = new Set<string>()
   for (const p of recon.pairs) {
+    paired.add(p.outflowId); paired.add(p.inflowId)
     if (p.state === 'confirmed') continue // already an owner decision; the Explorer shows it as confirmed
     const o = byId.get(p.outflowId)!, i = byId.get(p.inflowId)!
     const what = p.kind === 'card_payment' ? 'a payment on a credit card (the card purchases are the expenses)' : 'a movement between your own accounts'
@@ -291,7 +338,7 @@ function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountCon
     }
   }
   for (const t of txs) {
-    if (out.has(t.id)) continue
+    if (out.has(t.id) || paired.has(t.id)) continue // a confirmed pair needs no hint; a suggested pair already has its own
     const s = strongOf(t)
     if (s.keyword || s.account) out.set(t.id, { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'possible', reasons: ['The description or bank category says transfer, but no matching movement was found in another connected account (it may go to an account that is not connected).'] })
     else if (s.pfc) out.set(t.id, { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'low', reasons: ['The bank category looks like a transfer, but that category is also used for payments to people.'] })
@@ -305,7 +352,7 @@ function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountCon
  */
 function inflowBucketFor(tx: EvidenceTx, refund?: ReconResult['refunds'][number]): BucketSuggestion | null {
   const text = searchText(tx.name, tx.merchantName)
-  // PLAID-2F: money returning to the account that paid, from the same merchant, reverses that purchase. Never income; ambiguous matches stay low.
+  // PLAID-3A (switch ON only; `refund` is undefined otherwise): money returning to the account that paid, from the same merchant, reverses that purchase. Never income.
   if (refund) return { bucket: 'refund', confidence: refund.confidence === 'high' ? 'possible' : 'low', basis: 'merchant_rule', reasons: [...refund.reasons, 'Confirm it so it reduces that purchase instead of counting as income.'] }
   if (REFUND_WORDS.test(text)) return { bucket: 'refund', confidence: 'possible', basis: 'merchant_rule', reasons: ['The description mentions a refund or return. Confirm it, and later link it to the purchase it reverses.'] }
   if (DEPOSIT_WORDS.test(text)) return { bucket: 'customer_payment', confidence: 'possible', basis: 'merchant_rule', reasons: ['A deposit or incoming payment. It may be a customer payment, but the wording alone does not say who paid or for what job.'] }
@@ -362,9 +409,10 @@ export function classifyAll(input: ClassifierInput): Map<string, TxSuggestion> {
   const rejected = new Map<string, Set<string>>()
   for (const d of input.decisions) if (d.status === 'rejected') rejected.set(d.txId, new Set([...(rejected.get(d.txId) ?? []), rejectedKey(d)]))
 
-  const recon = reconciliationFor(live, input.accounts, input.decisions)
-  const transfers = transferSuggestions(live, input.accounts, recon)
-  const refunds = new Map(recon.refunds.map(r => [r.refundId, r]))
+  // The switch decides, here and nowhere else, which pairing runs. OFF (the default) is the legacy greedy pairing, unchanged.
+  const recon = input.reconciliation === true ? reconciliationFor(live, input.accounts, input.decisions) : null
+  const transfers = recon ? reconciledTransferSuggestions(live, input.accounts, recon) : transferSuggestions(live, input.accounts)
+  const refunds = new Map((recon?.refunds ?? []).map(r => [r.refundId, r]))
   const relationships = new Map<string, RelationshipSuggestion>()
   const claimed = new Set<string>()
   for (const tx of live) {

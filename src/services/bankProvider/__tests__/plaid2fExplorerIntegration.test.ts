@@ -5,7 +5,7 @@ import type { AccountContext, Decision, EvidenceTx } from '../spending/types'
 const acct = (ref: string, label: string, type: string, subtype: string): AccountContext => ({ providerAccountRef: ref, label, mask: null, ownership: 'business', financialAccountId: `fa-${ref}`, financialAccountName: label, environment: 'production', providerType: type, providerSubtype: subtype })
 const ACCOUNTS = [acct('chk', 'Checking', 'depository', 'checking'), acct('sav', 'Savings', 'depository', 'savings'), acct('card', 'Visa', 'credit', 'credit card')]
 const tx = (id: string, account: string, amountMinor: number, date: string, name: string): EvidenceTx => ({ id, providerAccountRef: account, date, name, merchantName: null, amountMinor, pending: false, removed: false, category: null })
-const build = (txs: EvidenceTx[], decisions: Decision[] = []) => buildRows({ asOf: '2026-09-30', txs, accounts: ACCOUNTS, decisions, bills: [], obligationLabels: new Map(), commitmentLabels: new Map(), debts: [], projects: [] }).rows
+const build = (txs: EvidenceTx[], decisions: Decision[] = []) => buildRows({ asOf: '2026-09-30', txs, accounts: ACCOUNTS, decisions, bills: [], obligationLabels: new Map(), commitmentLabels: new Map(), debts: [], projects: [], reconciliation: true }).rows
 const rowOf = (rows: ReturnType<typeof build>, id: string) => rows.find(r => r.id === id)!
 
 describe('PLAID-2F inside the Explorer', () => {

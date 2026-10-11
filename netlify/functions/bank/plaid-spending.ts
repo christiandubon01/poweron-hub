@@ -10,10 +10,11 @@
  */
 import { relatedTransactions, previewCategoryBatch, confirmCategoryBatch } from '../../../src/services/bankProvider/spending/merchantExplorer'
 import { previewDefinitionCleanup } from '../../../src/services/bankProvider/spending/definitionCleanup'
+import { reconciliationImpact } from '../../../src/services/bankProvider/spending/reconciliationImpact'
 import { applyDecision, getExplorer, getSmartReview, getSpendingReport, getTransactionHistory } from '../../../src/services/bankProvider/spending/spendingService'
 import { createSpendingRepo } from '../../../src/services/bankProvider/spending/spendingRepo'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
-import { corsPreflight, errorResponse, jsonResponse, parseJsonBody, resolveOwnerContext, safeLog } from './plaidAuth'
+import { corsPreflight, errorResponse, jsonResponse, parseJsonBody, reconciliationEnabled, resolveOwnerContext, safeLog } from './plaidAuth'
 
 const ACTIONS = new Set(['preview_categories', 'confirm_categories', 'confirm_batch', 'set_bucket', 'set_relationship', 'accept_suggestion', 'reject_suggestion', 'undo', 'ignore', 'unignore', 'forget_rule'])
 
@@ -28,11 +29,13 @@ export function buildHandler(overrides = {}) {
     if (!auth.ok) return auth.response
     // The environment is server configuration, never a request value. Spending only READS evidence, so it needs no Plaid credentials.
     const environment = (process.env.PLAID_ENV ?? '').trim().toLowerCase() === 'production' ? 'production' : 'sandbox'
-    const deps = { repo: (overrides.spendingRepo ?? createSpendingRepo)(auth.svc), log: safeLog, now: overrides.now, environment }
+    // PLAID-3A: the reconciliation switch is server configuration (CASH_OS_RECONCILIATION_ENABLED), default off, and is stamped on every context by the service layer.
+    const deps = { repo: (overrides.spendingRepo ?? createSpendingRepo)(auth.svc), log: safeLog, now: overrides.now, environment, reconciliationEnabled: (overrides.reconciliationEnabled ?? reconciliationEnabled)() }
     try {
       if (event.httpMethod === 'GET') {
         const q = event.queryStringParameters ?? {}
         if (q.definition_preview !== undefined) return jsonResponse(200, await previewDefinitionCleanup(auth.svc,auth.actor,q.definition_type,q.definition_preview))
+        if (q.impact !== undefined) return jsonResponse(200, await reconciliationImpact(deps, auth.actor, q)) // PLAID-3A: read-only OFF-versus-ON comparison, available while the switch is OFF
         if (q.related !== undefined) return jsonResponse(200, await relatedTransactions(deps,auth.actor,q))
         if (q.report !== undefined) return jsonResponse(200, await getSpendingReport(deps, auth.actor, q))
         if (typeof q.history === 'string') return jsonResponse(200, await getTransactionHistory(deps, auth.actor, q.history)) // the audit trail of ONE transaction

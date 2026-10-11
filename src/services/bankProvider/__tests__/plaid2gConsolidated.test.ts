@@ -76,7 +76,7 @@ describe('end to end: the same economic event is never counted twice', () => {
   ]
   const decision = (id: string, txId: string, kind: Decision['kind'], over: Partial<Decision> = {}): Decision => ({ id, txId, kind, status: 'confirmed', category: null, projectId: null, obligationId: null, commitmentId: null, debtAccountId: null, counterpartTxId: null, confidence: 'high', source: 'owner', decidedAt: '2026-09-20T00:00:00Z', ...over })
   const report = (decisions: Decision[]) => {
-    const rows = buildRows({ asOf: '2026-09-30', txs: TXS, accounts: ACCOUNTS, decisions, bills: [], obligationLabels: new Map(), commitmentLabels: new Map(), debts: [], projects: [] }).rows
+    const rows = buildRows({ asOf: '2026-09-30', txs: TXS, accounts: ACCOUNTS, decisions, bills: [], obligationLabels: new Map(), commitmentLabels: new Map(), debts: [], projects: [], reconciliation: true }).rows
     return buildSpendingReport(rows, 'all_money', { from: '2026-09-01', to: '2026-09-30', accounts: 'all', environment: 'production' }, APPROVED_REPORTING_POLICY, { complete: true, reason: null })
   }
 

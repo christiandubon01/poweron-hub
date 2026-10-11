@@ -1,6 +1,6 @@
 /** Related evidence and explicit category-only edits. No rules, relationship decisions or ledger writes. */
 import { BankConnectionError, UUID, assertAuthority, type BankActor } from '../bankConnectionService'
-import { explorerFromContext, parseQuery, type SpendingDeps } from './spendingService'
+import { explorerFromContext, loadCompleteContext, parseQuery, type SpendingDeps } from './spendingService'
 import { filterRows } from './explorer'
 import { APPROVED_REPORTING_POLICY, buildSpendingReport, REPORT_MODES, type ReportMode } from './reporting'
 import { canAssign, defaultHierarchy } from './hierarchy'
@@ -20,7 +20,7 @@ export async function relatedTransactions(deps:SpendingDeps,actor:BankActor,raw:
   const scope={from,to,accounts:q.accounts ?? 'mapped',account:q.account,environment:deps.environment ?? 'sandbox'}
   const empty:RelatedResult={rows:[],complete:false,reason:'Complete history is unavailable.',total:null,identity:'',grouping,historical,from,to,accounts:scope.accounts,account:scope.account,hierarchy:defaultHierarchy(),batchAvailable:false}
   if(!deps.repo.loadReportContext)return empty
-  const ctx=await deps.repo.loadReportContext(actor.organizationId,from)
+  const ctx=(await loadCompleteContext(deps,actor.organizationId,from))!
   const h=ctx.hierarchy??defaultHierarchy(), seed=ctx.txs.find(t=>t.id===raw.related)
   if(!seed)throw new BankConnectionError('not_found',404,'Transaction not found in this date/account environment.')
   if(grouping==='description'&&!seed.name?.trim())return {...empty,hierarchy:h,reason:'The bank supplied no description to match.'}

@@ -1,8 +1,8 @@
 /**
  * src/services/bankProvider/spending/reconciliation.ts
  *
- * PURE (PLAID-2F). Conservative reconciliation of money that moves BETWEEN the owner's own connected accounts, so the same economic event is
- * never counted twice:
+ * PURE (PLAID-2F, hardened in PLAID-3A). Conservative reconciliation of money that moves BETWEEN the owner's own connected accounts, so the same
+ * economic event is never counted twice:
  *
  *   internal transfer   money leaves one bank account and arrives in another bank account (checking -> savings, checking -> checking).
  *                       Neither leg is income or an expense.
@@ -10,8 +10,11 @@
  *                       paying the card is a liability settlement, never a second expense, and never income on the card side.
  *   refund / reversal   money returns to the account that paid for a purchase. It reverses that purchase; it is never income.
  *
+ * ONLY RUNS WHEN THE RECONCILIATION SWITCH IS ON (CASH_OS_RECONCILIATION_ENABLED). The classifier calls it only for `reconciliation: true`; with the
+ * switch off the legacy pairing runs instead and nothing in this file executes.
+ *
  * DERIVED, NOT PROVIDER FACT: nothing here is stored. The result is recomputed from evidence plus the owner's recorded decisions, so a decision
- * (confirm / reject / undo) is the only thing that persists, and undoing one simply makes the engine suggest again.
+ * (confirm / reject / reverse) is the only thing that persists, and reversing one simply makes the engine suggest again.
  *
  * CONSERVATIVE RULES (each tested):
  *   - A pair needs: different accounts, equal amounts, opposite provider signs, the same pending state (a pending leg waits for its posted
@@ -19,19 +22,45 @@
  *   - A pair is made only when it is UNAMBIGUOUS: the outflow has exactly one candidate and the inflow exactly one candidate. Otherwise the
  *     whole group goes to owner review with every candidate listed. (One exception: several identical movements between the same two accounts
  *     are paired in date order, at most 'possible', since every pairing is economically identical.)
- *   - 'high' confidence needs a textual or provider-category signal on a leg ("transfer", "credit card payment", PFC TRANSFER_*). Equal amounts
- *     alone are only 'possible': coincidences happen (a $50 purchase and an unrelated $50 vendor refund).
- *   - Owner decisions win: a confirmed pair is final, a rejected pair is never suggested again, a transaction in a confirmed pair is never
- *     offered to anything else.
+ *   - 'high' confidence needs a textual or provider-category signal on a leg ("transfer", "credit card payment", PFC TRANSFER_*) AND known account
+ *     types AND accounts of the same ownership. Equal amounts alone are only 'possible': coincidences happen (a $50 purchase and an unrelated
+ *     $50 vendor refund). A pair between a BUSINESS and a PERSONAL account is never better than 'possible': its business meaning (owner draw or
+ *     contribution) is the owner's decision.
+ *   - Owner decisions win: a confirmed pair is final, a rejected pair is never suggested again, a leg the owner already decided as something else
+ *     (a bill, a project, payroll, personal, a purchase category, ignored) is never offered to anything, and a transaction in a confirmed pair is
+ *     never offered to anything else.
  */
 import { merchantKey, searchText } from './merchant'
 import type { EvidenceTx } from './types'
 import { classifyAccount, type AccountClass } from '../balanceModel'
 
-export interface ReconAccount { ref: string; label: string; accountClass: AccountClass | null }
+export interface ReconAccount {
+  ref: string
+  label: string
+  accountClass: AccountClass | null
+  /** Ownership of the MAPPED Cash OS account; null = not mapped / unknown. */
+  ownership?: 'business' | 'personal' | null
+}
 export type PairKind = 'internal_transfer' | 'card_payment'
 export type PairConfidence = 'high' | 'possible'
-export interface ReconPair { kind: PairKind; outflowId: string; inflowId: string; confidence: PairConfidence; daysApart: number; reasons: string[]; state: 'suggested' | 'confirmed' }
+/** Why a pair is capped at 'possible' even though it matches. Shown to the owner. */
+export type PairCap = 'no_signal' | 'class_unknown' | 'cross_scope' | 'identical_group'
+export interface ReconPair {
+  kind: PairKind
+  outflowId: string
+  inflowId: string
+  confidence: PairConfidence
+  daysApart: number
+  reasons: string[]
+  state: 'suggested' | 'confirmed'
+  /** Canonical string of the evidence this pair rests on (see pairFingerprint). A decision is bound to it. */
+  fingerprint: string
+  /** The two accounts are mapped to Cash OS accounts of DIFFERENT ownership (business <-> personal). */
+  crossScope: boolean
+  /** Both legs are still pending: shown for information; nothing can be confirmed until both post. */
+  provisional: boolean
+  caps: PairCap[]
+}
 export interface ReconAmbiguity { kind: 'ambiguous_match'; outflowIds: string[]; inflowIds: string[]; reasons: string[] }
 export interface ReconRefund { refundId: string; originalId: string | null; candidateIds: string[]; confidence: 'high' | 'possible' | 'ambiguous'; reasons: string[] }
 export interface ReconResult { pairs: ReconPair[]; ambiguous: ReconAmbiguity[]; refunds: ReconRefund[] }
@@ -42,6 +71,8 @@ export interface ReconInput {
   confirmedPairs?: Array<[string, string]>
   /** Owner-rejected pairs (either order). */
   rejectedPairs?: Array<[string, string]>
+  /** Legs the owner already decided as something else (transaction id -> short reason). Never offered to any automatic pairing or refund match. */
+  excluded?: Map<string, string>
 }
 
 export const BANK_WINDOW_DAYS = 3
@@ -53,7 +84,17 @@ const money = (m: number) => `$${(Math.abs(m) / 100).toFixed(2)}`
 const TRANSFER_WORDS = /\b(?:TRANSFER|XFER|ONLINE TRANSFER|ACH TRANSFER)\b/
 const CARD_WORDS = /\b(?:CREDIT CARD|CARD PAYMENT|CARD PMT|CRCARDPMT|CARD SERVICES|AUTOPAY|AUTO PAY|EPAY|PAYMENT THANK YOU|THANK YOU|ONLINE PMT|PMT)\b/
 const REFUND_WORDS = /\b(?:REFUND|RETURN|REVERSAL|CHARGEBACK|CREDIT ADJUSTMENT)\b/
-const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
+export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
+
+/**
+ * The evidence a pair decision rests on: both legs' ids, accounts, signed amounts, dates and pending flags. It deliberately excludes descriptions
+ * (banks rewrite them) and includes everything that changes the financial meaning. The database function that records a decision rebuilds this exact
+ * string from the locked evidence rows and refuses to record a decision made on different evidence.
+ */
+export function pairFingerprint(o: Pick<EvidenceTx, 'id' | 'providerAccountRef' | 'amountMinor' | 'date' | 'pending'>, i: Pick<EvidenceTx, 'id' | 'providerAccountRef' | 'amountMinor' | 'date' | 'pending'>): string {
+  const leg = (t: typeof o) => `${t.id}:${t.providerAccountRef}:${t.amountMinor}:${t.date}:${t.pending ? 1 : 0}`
+  return `v1|o:${leg(o)}|i:${leg(i)}`
+}
 
 const pfc = (t: EvidenceTx) => ({ primary: (t.category?.primary ?? '').toUpperCase(), detailed: (t.category?.detailed ?? '').toUpperCase() })
 const transferSignal = (t: EvidenceTx) => {
@@ -67,10 +108,12 @@ const cardSignal = (t: EvidenceTx) => {
 
 export function reconcile(input: ReconInput): ReconResult {
   const acct = new Map(input.accounts.map(a => [a.ref, a]))
+  const excluded = input.excluded ?? new Map<string, string>()
   const live = input.txs.filter(t => !t.removed && t.amountMinor !== 0).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
   const byId = new Map(live.map(t => [t.id, t]))
   const label = (t: EvidenceTx) => acct.get(t.providerAccountRef)?.label ?? 'another account'
   const klass = (t: EvidenceTx): AccountClass | null => acct.get(t.providerAccountRef)?.accountClass ?? null
+  const owner = (t: EvidenceTx) => acct.get(t.providerAccountRef)?.ownership ?? null
   const rejected = new Set((input.rejectedPairs ?? []).map(([a, b]) => pairKey(a, b)))
   const pairs: ReconPair[] = []
   const used = new Set<string>()
@@ -82,29 +125,42 @@ export function reconcile(input: ReconInput): ReconResult {
     used.add(o); used.add(i)
     const card = klass(ti) === 'credit_card'
     pairs.push({ kind: card ? 'card_payment' : 'internal_transfer', outflowId: o, inflowId: i, confidence: 'high', daysApart: days(to.date, ti.date), state: 'confirmed',
+      fingerprint: pairFingerprint(to, ti), crossScope: !!owner(to) && !!owner(ti) && owner(to) !== owner(ti), provisional: to.pending || ti.pending, caps: [],
       reasons: [`You confirmed this ${card ? 'card payment' : 'transfer'}.`] })
   }
 
-  // 2. Candidate graph over the remaining posted/pending-consistent legs.
-  const outs = live.filter(t => t.amountMinor > 0 && !used.has(t.id) && klass(t) !== 'credit_card')
-  const ins = live.filter(t => t.amountMinor < 0 && !used.has(t.id))
-  const window = (o: EvidenceTx, i: EvidenceTx) => (klass(i) === 'credit_card' ? CARD_WINDOW_DAYS : BANK_WINDOW_DAYS)
+  // 2. Candidate graph over the remaining legs. A leg the owner already decided as something else is not a candidate.
+  const eligible = (t: EvidenceTx) => !used.has(t.id) && !excluded.has(t.id)
+  const outs = live.filter(t => t.amountMinor > 0 && eligible(t) && klass(t) !== 'credit_card')
+  const ins = live.filter(t => t.amountMinor < 0 && eligible(t))
+  const window = (i: EvidenceTx) => (klass(i) === 'credit_card' ? CARD_WINDOW_DAYS : BANK_WINDOW_DAYS)
   const candidatesOf = (o: EvidenceTx) => ins.filter(i => i.providerAccountRef !== o.providerAccountRef && i.pending === o.pending && -i.amountMinor === o.amountMinor
-    && klass(i) !== 'loan' && klass(i) !== 'investment' && days(i.date, o.date) <= window(o, i) && !rejected.has(pairKey(o.id, i.id)))
+    && klass(i) !== 'loan' && klass(i) !== 'investment' && days(i.date, o.date) <= window(i) && !rejected.has(pairKey(o.id, i.id)))
   const cand = new Map(outs.map(o => [o.id, candidatesOf(o)]))
   const back = new Map<string, EvidenceTx[]>()
   for (const o of outs) for (const i of cand.get(o.id)!) back.set(i.id, [...(back.get(i.id) ?? []), o])
 
   const ambiguous: ReconAmbiguity[] = []
   const grouped = new Set<string>()
-  const emit = (o: EvidenceTx, i: EvidenceTx, forcedPossible = false, extra: string[] = []) => {
+  const emit = (o: EvidenceTx, i: EvidenceTx, identicalGroup = false, extra: string[] = []) => {
     const card = klass(i) === 'credit_card'
     const signal = card ? (cardSignal(o) || cardSignal(i) || transferSignal(o) || transferSignal(i)) : (transferSignal(o) || transferSignal(i))
-    const confidence: PairConfidence = signal && !forcedPossible ? 'high' : 'possible'
-    pairs.push({ kind: card ? 'card_payment' : 'internal_transfer', outflowId: o.id, inflowId: i.id, confidence, daysApart: days(o.date, i.date), state: 'suggested',
-      reasons: [`An equal ${money(o.amountMinor)} movement left ${label(o)} and arrived in ${label(i)} within ${days(o.date, i.date)} day(s).`,
+    const classUnknown = klass(o) === null || klass(i) === null
+    const crossScope = !!owner(o) && !!owner(i) && owner(o) !== owner(i)
+    const caps: PairCap[] = []
+    if (!signal) caps.push('no_signal')
+    if (classUnknown) caps.push('class_unknown')
+    if (crossScope) caps.push('cross_scope')
+    if (identicalGroup) caps.push('identical_group')
+    const gap = days(o.date, i.date)
+    pairs.push({ kind: card ? 'card_payment' : 'internal_transfer', outflowId: o.id, inflowId: i.id, confidence: caps.length ? 'possible' : 'high', daysApart: gap, state: 'suggested',
+      fingerprint: pairFingerprint(o, i), crossScope, provisional: o.pending && i.pending, caps,
+      reasons: [`An equal ${money(o.amountMinor)} movement left ${label(o)} and arrived in ${label(i)} within ${gap} day(s).`,
         card ? 'The arrival is a payment on a credit card: the card purchases are the expenses, not this payment.' : 'Money between your own accounts is not income or an expense.',
-        signal ? 'The description or bank category supports it.' : 'Only the equal opposite amounts suggest it; please confirm.', ...extra] })
+        signal ? 'The description or bank category supports it.' : 'Only the equal opposite amounts suggest it; please confirm.',
+        ...(classUnknown ? ['The type of one account is not known, so this cannot be called a card payment or a transfer with certainty.'] : []),
+        ...(crossScope ? [`This moves money between a ${owner(o)} account and a ${owner(i)} account. That may be an owner draw or a contribution rather than a plain transfer: you decide.`] : []),
+        ...extra] })
   }
 
   for (const o of outs) {
@@ -132,7 +188,7 @@ export function reconcile(input: ReconInput): ReconResult {
       os.forEach((t, k) => emit(t, is[k], true, [`${O.length} identical movements between the same two accounts were paired in date order.`]))
       continue
     }
-    ambiguous.push({ kind: 'ambiguous_match', outflowIds: O.map(t => t.id), inflowIds: I.map(t => t.id),
+    ambiguous.push({ kind: 'ambiguous_match', outflowIds: O.map(t => t.id).sort(), inflowIds: I.map(t => t.id).sort(),
       reasons: [`${O.length} outgoing and ${I.length} incoming movements of ${money(o.amountMinor)} could match each other, so none is paired automatically. Pick the right pairs.`] })
   }
   for (const p of pairs) { used.add(p.outflowId); used.add(p.inflowId) }
@@ -140,7 +196,7 @@ export function reconcile(input: ReconInput): ReconResult {
   // 3. Refunds / reversals: an inflow that returns money to the account that paid, from the same merchant, for an earlier purchase.
   const refunds: ReconRefund[] = []
   const takenOriginals = new Set<string>()
-  for (const r of live.filter(t => t.amountMinor < 0 && !used.has(t.id) && klass(t) !== 'loan')) {
+  for (const r of live.filter(t => t.amountMinor < 0 && !used.has(t.id) && !excluded.has(t.id) && klass(t) !== 'loan')) {
     const key = merchantKey(r.name, r.merchantName)
     const hasWord = REFUND_WORDS.test(searchText(r.name, r.merchantName))
     const originals = live.filter(o => o.amountMinor > 0 && !used.has(o.id) && o.providerAccountRef === r.providerAccountRef && o.date <= r.date && days(o.date, r.date) <= REFUND_WINDOW_DAYS
@@ -157,10 +213,10 @@ export function reconcile(input: ReconInput): ReconResult {
       reasons: [full ? `It returns exactly the ${money(o.amountMinor)} purchase of ${o.date} at the same merchant.` : `It returns part (${money(r.amountMinor)}) of the ${money(o.amountMinor)} purchase of ${o.date} at the same merchant.`,
         hasWord ? 'The description says refund or return.' : 'Only the merchant and amount suggest a refund; please confirm.'] })
   }
-  return { pairs: pairs.sort((a, b) => a.outflowId.localeCompare(b.outflowId)), ambiguous, refunds }
+  return { pairs: pairs.sort((a, b) => a.outflowId.localeCompare(b.outflowId) || a.inflowId.localeCompare(b.inflowId)), ambiguous: ambiguous.sort((a, b) => a.outflowIds[0].localeCompare(b.outflowIds[0])), refunds }
 }
 
-/** Maps account type text from provider evidence into the engine's account class (null = unknown, treated like a bank account for transfers). */
-export function reconAccountOf(ref: string, label: string, type: string | null | undefined, subtype: string | null | undefined): ReconAccount {
-  return { ref, label, accountClass: type || subtype ? classifyAccount(type, subtype).accountClass : null }
+/** Maps account type text from provider evidence into the engine's account class (null = unknown). */
+export function reconAccountOf(ref: string, label: string, type: string | null | undefined, subtype: string | null | undefined, ownership: 'business' | 'personal' | null = null): ReconAccount {
+  return { ref, label, accountClass: type || subtype ? classifyAccount(type, subtype).accountClass : null, ownership }
 }
