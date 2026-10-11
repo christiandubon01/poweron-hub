@@ -30,7 +30,7 @@ const NAMES = {
 const AMOUNTS = [1500, 2500, 5000, 7777, 12000, 50000, 100000]
 const BUCKETS = ['materials', 'fuel_vehicle', 'transfers', 'personal_owner', 'customer_payment', 'refund', 'owner_draw', 'meals']
 
-function scenario(seed: number) {
+function scenario(seed: number, dense = false) {
   const r = rng(seed), pick = <T,>(xs: T[]): T => xs[Math.floor(r() * xs.length)], int = (n: number) => Math.floor(r() * n)
   const types = [['depository', 'checking'], ['depository', 'savings'], ['credit', 'credit card'], ['loan', 'auto'], [undefined, undefined], ['depository', 'cd']]
   const accounts = ['a0', 'a1', 'a2', 'a3', 'a4'].map((ref, k) => {
@@ -41,10 +41,10 @@ function scenario(seed: number) {
   const txs: any[] = []
   let n = 0
   const add = (account: string, amountMinor: number, day: number, name: string, extra: any = {}) => { txs.push({ id: `t${seed}-${++n}`, providerAccountRef: account, date: `2026-09-${String(1 + day).padStart(2, '0')}`, name, merchantName: r() < 0.2 ? name.split(' ')[0] : null, amountMinor, pending: r() < 0.08, removed: r() < 0.03, category: r() < 0.15 ? { primary: pick(['TRANSFER_OUT', 'TRANSFER_IN', 'GENERAL_MERCHANDISE', 'LOAN_PAYMENTS']), detailed: pick(['TRANSFER_OUT_ACCOUNT_TRANSFER', 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT', 'GENERAL_MERCHANDISE_OTHER']), confidence: 'HIGH' } : null, ...extra }); return txs[txs.length - 1] }
-  const total = seed % 2 ? 3 + int(10) : 25 + int(70) // alternate sparse and dense histories
+  const total = dense ? 150 + int(300) : seed % 2 ? 3 + int(10) : 25 + int(70) // alternate sparse and dense histories (PLAID-6: `dense` = hundreds of rows with few distinct amounts)
   for (let k = 0; k < total; k++) {
     const kind = r()
-    const amount = pick(AMOUNTS)
+    const amount = dense ? pick(AMOUNTS.slice(0, 3)) : pick(AMOUNTS)
     const day = int(14)
     if (kind < 0.30) { // an equal opposite pair across two accounts (the pattern the pairing looks for)
       const a = pick(accounts).providerAccountRef; let b = pick(accounts).providerAccountRef; if (b === a) b = accounts[(accounts.findIndex(x => x.providerAccountRef === a) + 1) % accounts.length].providerAccountRef
@@ -93,6 +93,17 @@ describe('PLAID-3A switch OFF = the legacy implementation, exactly', () => {
     expect(withPairs).toBeGreaterThan(120)
     expect(differsOn).toBeGreaterThan(80)
   })
+
+  it('PLAID-6: DENSE histories (150-450 rows, only three distinct amounts, so hundreds of candidates per leg) are still deeply equal to commit 27d1950 while OFF: the indexed legacy pairing changes nothing it computes', () => {
+    let pairs = 0
+    for (let seed = 5000; seed < 5120; seed++) {
+      const input = scenario(seed, true)
+      const legacy = legacyBuildRows(input)
+      expect(buildRows(input), `seed ${seed}`).toEqual(legacy)
+      pairs += legacy.rows.filter(x => x.relationship.target?.type === 'counterpart_tx').length
+    }
+    expect(pairs).toBeGreaterThan(2000)                                                                  // the greedy pairing really ran, a lot
+  }, 120_000)
 
   it('the legacy defect is preserved while OFF and fixed while ON: a rejected paired transfer suggestion re-appears (OFF) / stays rejected (ON)', () => {
     const acct = (ref, type, sub) => ({ providerAccountRef: ref, label: ref, mask: null, ownership: 'business', financialAccountId: `fa-${ref}`, financialAccountName: ref, environment: 'production', providerType: type, providerSubtype: sub })

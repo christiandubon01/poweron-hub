@@ -182,10 +182,15 @@ export function reconcile(input: ReconInput): ReconResult {
   const eligible = (t: EvidenceTx) => !used.has(t.id) && !excluded.has(t.id)
   const outs = live.filter(t => t.amountMinor > 0 && eligible(t) && klass(t) !== 'credit_card')
   const ins = live.filter(t => t.amountMinor < 0 && eligible(t))
-  const candidatesOf = (o: EvidenceTx) => ins.filter(i => pairIsValid(o, i, input.accounts) && !rejected.has(pairKey(o.id, i.id)))
+  // PLAID-6: pairIsValid demands equal amounts (opposite signs), so only inflows of the SAME amount can ever be candidates. Indexing them by amount turns the candidate
+  // search from "every outflow against every inflow" (quadratic: 11 s at 20,000 rows) into "every outflow against the few inflows of its own amount". The validity rule
+  // itself is unchanged and still applied; the order of candidates (date, id) is preserved, so every result is identical.
+  const insByAmount = new Map<number, EvidenceTx[]>()
+  for (const i of ins) { const l = insByAmount.get(-i.amountMinor); if (l) l.push(i); else insByAmount.set(-i.amountMinor, [i]) }
+  const candidatesOf = (o: EvidenceTx) => (insByAmount.get(o.amountMinor) ?? []).filter(i => pairIsValid(o, i, input.accounts) && !rejected.has(pairKey(o.id, i.id)))
   const cand = new Map(outs.map(o => [o.id, candidatesOf(o)]))
   const back = new Map<string, EvidenceTx[]>()
-  for (const o of outs) for (const i of cand.get(o.id)!) back.set(i.id, [...(back.get(i.id) ?? []), o])
+  for (const o of outs) for (const i of cand.get(o.id)!) { const l = back.get(i.id); if (l) l.push(o); else back.set(i.id, [o]) }
 
   const ambiguous: ReconAmbiguity[] = []
   const grouped = new Set<string>()
@@ -224,12 +229,24 @@ export function reconcile(input: ReconInput): ReconResult {
   // 3. Refunds / reversals: an inflow that returns money to the account that paid, from the same merchant, for an earlier purchase.
   const refunds: ReconRefund[] = []
   const takenOriginals = new Set<string>()
+  // PLAID-6: the merchant key of a row is computed ONCE, and the purchases a refund could return are indexed by account and merchant (in date order), so each
+  // refund looks at its own merchant's purchases instead of rescanning the whole history (it was quadratic, with a string normalisation inside the inner loop).
+  const keys = new Map<string, string>()
+  const keyOf = (t: EvidenceTx) => { let k = keys.get(t.id); if (k === undefined) { k = merchantKey(t.name, t.merchantName); keys.set(t.id, k) } return k }
+  const purchases = new Map<string, Map<string, EvidenceTx[]>>()
+  for (const o of live) {
+    if (o.amountMinor <= 0 || used.has(o.id)) continue
+    const key = keyOf(o)
+    if (key === 'UNKNOWN MERCHANT') continue
+    const byMerchant = purchases.get(o.providerAccountRef) ?? purchases.set(o.providerAccountRef, new Map()).get(o.providerAccountRef)!
+    const l = byMerchant.get(key); if (l) l.push(o); else byMerchant.set(key, [o])
+  }
   for (const r of live.filter(t => t.amountMinor < 0 && !used.has(t.id) && !excluded.has(t.id) && klass(t) !== 'loan')) {
-    const key = merchantKey(r.name, r.merchantName)
-    const hasWord = REFUND_WORDS.test(searchText(r.name, r.merchantName))
-    const originals = live.filter(o => o.amountMinor > 0 && !used.has(o.id) && o.providerAccountRef === r.providerAccountRef && o.date <= r.date && days(o.date, r.date) <= REFUND_WINDOW_DAYS
-      && merchantKey(o.name, o.merchantName) === key && key !== 'UNKNOWN MERCHANT' && -r.amountMinor <= o.amountMinor)
+    const key = keyOf(r)
+    if (key === 'UNKNOWN MERCHANT') continue
+    const originals = (purchases.get(r.providerAccountRef)?.get(key) ?? []).filter(o => o.date <= r.date && days(o.date, r.date) <= REFUND_WINDOW_DAYS && -r.amountMinor <= o.amountMinor)
     if (originals.length === 0) continue
+    const hasWord = REFUND_WORDS.test(searchText(r.name, r.merchantName))
     const exact = originals.filter(o => o.amountMinor === -r.amountMinor)
     const pool = exact.length ? exact : originals
     if (pool.length > 1) { refunds.push({ refundId: r.id, originalId: null, candidateIds: pool.map(o => o.id), confidence: 'ambiguous', reasons: [`${pool.length} earlier purchases at this merchant fit; choose the one this ${money(r.amountMinor)} returns.`] }); continue }

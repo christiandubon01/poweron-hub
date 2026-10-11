@@ -265,9 +265,14 @@ function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountCon
   }
   const outs = txs.filter(t => t.amountMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
   const ins = txs.filter(t => t.amountMinor < 0)
+  // PLAID-6: inflows indexed by their absolute amount. The candidate filter below requires |amount| to equal the outflow's, so looking only at inflows of that amount
+  // yields exactly the same candidates (and, since the sort is a total order on (days, id), the same first match) without scanning every inflow for every outflow
+  // (quadratic: 5 s at 20,000 rows). Proven identical to the frozen original by the 27d1950 parity test, including dense histories.
+  const insByAmount = new Map<number, EvidenceTx[]>()
+  for (const i of ins) { const l = insByAmount.get(-i.amountMinor); if (l) l.push(i); else insByAmount.set(-i.amountMinor, [i]) }
   const taken = new Set<string>()
   for (const o of outs) {
-    const candidates = ins.filter(i => !taken.has(i.id) && i.providerAccountRef !== o.providerAccountRef && i.pending === o.pending && Math.abs(i.amountMinor) === o.amountMinor && daysBetween(i.date, o.date) <= 3)
+    const candidates = (insByAmount.get(o.amountMinor) ?? []).filter(i => !taken.has(i.id) && i.providerAccountRef !== o.providerAccountRef && i.pending === o.pending && Math.abs(i.amountMinor) === o.amountMinor && daysBetween(i.date, o.date) <= 3)
       .sort((a, b) => daysBetween(a.date, o.date) - daysBetween(b.date, o.date) || a.id.localeCompare(b.id))
     const match = candidates[0]
     if (!match) continue
