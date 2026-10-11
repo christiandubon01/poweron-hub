@@ -27,6 +27,9 @@ export interface AccountContext {
   financialAccountName: string | null
   /** Environment of the Item this account belongs to. Undefined only in pure-engine tests / pre-migration data (treated as sandbox by the service). */
   environment?: 'sandbox' | 'production'
+  /** PLAID-2F: the provider's account type/subtype (depository/credit/loan ...). Lets reconciliation tell a card payment from a bank-to-bank transfer. */
+  providerType?: string | null
+  providerSubtype?: string | null
 }
 
 /** A thing Cash OS already knows is coming (a recurring bill occurrence or a one-off commitment) that a transaction might belong to. */

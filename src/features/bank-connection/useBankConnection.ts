@@ -50,6 +50,25 @@ export interface BankSyncSummary {
   /** PLAID-1C: an unfinished resumable update (pages received so far are not visible anywhere until it completes). */
   progress?: { phase: 'fetching' | 'ready_to_apply'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null
 }
+/** PLAID-2E: one account's newest bank-reported balance, already separated into bank cash / card debt / unused credit (no provider id, no token). */
+export interface BankBalanceSummary {
+  accountRef: string
+  connectionId: string
+  name: string | null
+  mask: string | null
+  accountClass: 'bank_cash' | 'credit_card' | 'loan' | 'investment' | 'other'
+  restricted: boolean
+  freshness: 'fresh' | 'aging' | 'stale' | 'unknown'
+  ageHours: number | null
+  observedAt: string | null
+  observedIsProvider: boolean
+  bankBalanceMinor: number | null
+  availableMinor: number | null
+  owedMinor: number | null
+  creditInFavourMinor: number | null
+  unusedCreditMinor: number | null
+  creditLimitMinor: number | null
+}
 export interface CashAccountOption { id: string; displayName: string; accountType: string; ownershipContext: string }
 /** PLAID-1A: one shared account as the bank reports it (no provider id, balance or token). */
 export interface SharedAccountView { name: string | null; officialName: string | null; mask: string | null; type: string | null; subtype: string | null; mapped?: boolean; previouslyConnected?: boolean }
@@ -86,6 +105,8 @@ export function useBankConnection() {
   const [backgroundSyncEnabled, setBackgroundSyncEnabled] = useState(false)
   const [resumableSyncEnabled, setResumableSyncEnabled] = useState(false)
   const [syncProgress, setSyncProgress] = useState<string | null>(null)
+  const [balancesEnabled, setBalancesEnabled] = useState(false)
+  const [balances, setBalances] = useState<BankBalanceSummary[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -117,7 +138,15 @@ export function useBankConnection() {
       return Array.isArray(data.syncs) ? data.syncs as BankSyncSummary[] : []
     } catch { /* keep the last known status */ return null }
   }, [])
-  useEffect(() => { void refresh(); void refreshAccounts(); void refreshSyncs() }, [refresh, refreshAccounts, refreshSyncs])
+  /** PLAID-2E, best effort: stays empty and hidden unless the server has balances switched on. */
+  const refreshBalanceList = useCallback(async () => {
+    try {
+      const data = await request('plaid-balances', { method: 'GET' })
+      setBalancesEnabled(data.enabled === true)
+      setBalances(Array.isArray(data.accounts) ? data.accounts : [])
+    } catch { /* keep the last known balances */ }
+  }, [])
+  useEffect(() => { void refresh(); void refreshAccounts(); void refreshSyncs(); void refreshBalanceList() }, [refresh, refreshAccounts, refreshSyncs, refreshBalanceList])
 
   /** Separate, retry-safe call (never part of the connection exchange): fetch + save the bank's accounts, then reload the list. */
   const discoverAccounts = useCallback(async (itemId: string) => {
@@ -275,6 +304,12 @@ export function useBankConnection() {
     catch (error) { setMessage((error as Error).message) }
     finally { setSyncProgress(null); await refreshSyncs(); await refresh(); setBusy(false) }
   }, [refreshSyncs, refresh, backgroundSyncEnabled, resumableSyncEnabled])
+  /** Owner-requested: one cached read of the bank's balances, stored as history. Changes no ledger, account or report. */
+  const refreshBalancesNow = useCallback(async (itemId: string) => {
+    setBusy(true); setMessage(null)
+    try { await request('plaid-balances', { method: 'POST', body: { action: 'refresh', itemId } }); await refreshBalanceList() }
+    catch (error) { setMessage((error as Error).message); await refresh() } finally { setBusy(false) }
+  }, [refreshBalanceList, refresh])
   const mapAccount = useCallback(async (providerAccountId: string, financialAccountId: string) => {
     setBusy(true); setMessage(null)
     try { await request('plaid-accounts', { method: 'POST', body: { action: 'map', providerAccountId, financialAccountId } }); await refreshAccounts() }
@@ -287,5 +322,5 @@ export function useBankConnection() {
   }, [refreshAccounts])
 
   return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress }
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow }
 }

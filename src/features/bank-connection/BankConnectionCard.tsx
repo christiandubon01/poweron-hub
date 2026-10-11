@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { AccountAdditionPreview, BankAccountSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption, SharedAccountView } from './useBankConnection'
+import type { AccountAdditionPreview, BankAccountSummary, BankBalanceSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption, SharedAccountView } from './useBankConnection'
 import { useBankConnection } from './useBankConnection'
 
 const STATUS: Record<BankConnectionSummary['status'], { label: string; color: string; glyph: string }> = {
@@ -112,13 +112,47 @@ function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: strin
   </div>
 }
 
+const usd = (minor: number) => `${minor < 0 ? '-' : ''}$${(Math.abs(minor) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const FRESH: Record<BankBalanceSummary['freshness'], { label: string; color: string }> = {
+  fresh: { label: 'Fresh', color: 'var(--fin-cash)' }, aging: { label: 'Getting old', color: 'var(--fin-warning)' },
+  stale: { label: 'Stale', color: 'var(--fin-negative)' }, unknown: { label: 'No balance yet', color: 'var(--text-secondary)' },
+}
+const asOf = (b: BankBalanceSummary) => b.observedAt ? `${b.observedIsProvider ? 'bank-reported' : 'retrieved'} ${new Date(b.observedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : null
+
+/**
+ * PLAID-2E: the bank's own balances, kept in three different kinds. Bank cash is money in the account; a card balance is DEBT; unused credit is
+ * borrowing capacity. None of them is added to another, and none of them is profit. Shown only when the server has balances switched on.
+ */
+function BalancesSection({ connectionId, balances, busy, onRefresh }: { connectionId: string; balances: BankBalanceSummary[]; busy: boolean; onRefresh: (id: string) => Promise<void> }) {
+  const mine = balances.filter(b => b.connectionId === connectionId)
+  const label = (b: BankBalanceSummary) => `${b.name ?? 'Account'}${b.mask ? ` ••••${b.mask}` : ''}`
+  const meta = (b: BankBalanceSummary) => <span className="text-xs" style={{ color: FRESH[b.freshness].color }} data-testid="bank-balance-freshness"><span aria-hidden="true">● </span>{FRESH[b.freshness].label}{asOf(b) ? <span className="text-[var(--text-secondary)]"> · {asOf(b)}</span> : null}</span>
+  const cash = mine.filter(b => b.accountClass === 'bank_cash'), cards = mine.filter(b => b.accountClass === 'credit_card'), loans = mine.filter(b => b.accountClass === 'loan')
+  return <div className="w-full" data-testid="bank-balances-section">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Balances · bank evidence</p>
+      <button type="button" className={btn} disabled={busy} onClick={() => void onRefresh(connectionId)} data-testid="bank-balances-refresh">Refresh balances</button>
+    </div>
+    {mine.length === 0 && <p className="py-1 text-xs text-[var(--text-secondary)]" data-testid="bank-balances-empty">No balances yet. Refresh to read what the bank reports.</p>}
+    {cash.length > 0 && <div className="py-1" data-testid="bank-balances-cash"><p className="text-sm font-semibold">Bank cash</p><ul>{cash.map(b => <li key={b.accountRef} className="text-xs" data-testid="bank-balance-row">
+      <span className="font-semibold">{label(b)}</span>{b.restricted ? <span className="text-[var(--text-secondary)]"> · restricted (not spendable cash)</span> : null}: {b.bankBalanceMinor === null ? 'unknown' : usd(b.bankBalanceMinor)} in the account
+      · available {b.availableMinor === null ? 'not reported by the bank' : usd(b.availableMinor)} · {meta(b)}</li>)}</ul></div>}
+    {cards.length > 0 && <div className="py-1" data-testid="bank-balances-cards"><p className="text-sm font-semibold">Credit cards · what you owe</p><ul>{cards.map(b => <li key={b.accountRef} className="text-xs" data-testid="bank-balance-row">
+      <span className="font-semibold">{label(b)}</span>: owe {b.owedMinor === null ? 'unknown' : usd(b.owedMinor)}{b.creditInFavourMinor ? ` (credit in your favour ${usd(b.creditInFavourMinor)})` : ''}
+      {b.unusedCreditMinor !== null ? <> · unused credit {usd(b.unusedCreditMinor)} <span className="text-[var(--text-secondary)]">(not cash)</span></> : null} · {meta(b)}</li>)}</ul></div>}
+    {loans.length > 0 && <div className="py-1" data-testid="bank-balances-loans"><p className="text-sm font-semibold">Loans · what you owe</p><ul>{loans.map(b => <li key={b.accountRef} className="text-xs" data-testid="bank-balance-row">
+      <span className="font-semibold">{label(b)}</span>: owe {b.owedMinor === null ? 'unknown' : usd(b.owedMinor)} · {meta(b)}</li>)}</ul></div>}
+    <p className="text-xs text-[var(--text-secondary)]">Account balances are not profit. They do not change your ledger, Cash OS accounts or reports.</p>
+  </div>
+}
+
 /**
  * Minimal bank connection surface (Sandbox or Production, per server configuration). It renders nothing when the caller cannot manage bank connections or the feature is
  * not configured. Connecting a bank does not change any balance, project, obligation, debt or Outlook number.
  */
 export default function BankConnectionCard() {
   const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress } = useBankConnection()
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow } = useBankConnection()
   if (load !== 'ready') return null
   // Only Items of THIS environment are active here. An Item of the other environment (e.g. the earlier Sandbox test) is kept, shown for clarity, and has no actions.
   const here = connections.filter(c => (c.environment ?? 'sandbox') === (environment ?? 'sandbox'))
@@ -151,6 +185,7 @@ export default function BankConnectionCard() {
         </div>
         {addPreview?.itemId === c.id && <AddAccountsPreview preview={addPreview} busy={busy} onSave={saveNewAccounts} onClose={dismissPreview} />}
         <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} />
+        {balancesEnabled && c.status !== 'disconnected' && <BalancesSection connectionId={c.id} balances={balances} busy={busy} onRefresh={refreshBalancesNow} />}
         <div className="w-full">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Accounts</p>

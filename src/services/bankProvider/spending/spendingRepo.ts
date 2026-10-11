@@ -65,7 +65,7 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
         category: r.provider_category && typeof r.provider_category.primary === 'string' ? { primary: r.provider_category.primary, detailed: r.provider_category.detailed ?? null, confidence: r.provider_category.confidence ?? null } : null,
       }))
       const [accts, items, maps, fin, decs] = await Promise.all([
-        svc.from('financial_provider_accounts').select('id, name, mask, provider_item_ref').eq('organization_id', organizationId),
+        svc.from('financial_provider_accounts').select('id, name, mask, provider_item_ref, provider_account_type, provider_account_subtype').eq('organization_id', organizationId),
         (async () => {
           const read = (columns: string) => svc.from('financial_provider_items').select(columns).eq('organization_id', organizationId)
           const r = await read('id, institution_name, environment')
@@ -84,7 +84,8 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
       const accounts = (accts.data ?? []).map((a: any) => {
         const f = finById.get(mapOf.get(a.id) ?? '')
         return { providerAccountRef: a.id, label: [itemName.get(a.provider_item_ref), a.name].filter(Boolean).join(' · ') || 'Bank account', mask: a.mask ?? null,
-          ownership: f && (f.ownership_context === 'business' || f.ownership_context === 'personal') ? f.ownership_context : null, financialAccountId: f?.id ?? null, financialAccountName: f?.display_name ?? null, environment: itemEnv.get(a.provider_item_ref) ?? 'sandbox' }
+          ownership: f && (f.ownership_context === 'business' || f.ownership_context === 'personal') ? f.ownership_context : null, financialAccountId: f?.id ?? null, financialAccountName: f?.display_name ?? null, environment: itemEnv.get(a.provider_item_ref) ?? 'sandbox',
+          providerType: a.provider_account_type ?? null, providerSubtype: a.provider_account_subtype ?? null }
       })
       const debts: DebtOption[] = (fin.data ?? []).filter((f: any) => f.account_class === 'liability' && f.status === 'active').map((f: any) => ({ id: f.id, label: f.display_name, accountType: f.account_type }))
 

@@ -72,6 +72,16 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     else slot.rel = d
     confirmedBy.set(d.txId, slot)
   }
+  // PLAID-2F: a confirmed transfer that NAMES its counterpart is one statement about both legs. The other leg is shown as confirmed through that
+  // pairing (never as its own decision, and never when it already has a relationship decision of its own or the counterpart is not live evidence).
+  const liveIds = new Set(live.filter(t => !t.removed).map(t => t.id))
+  for (const d of input.decisions) {
+    if (d.status !== 'confirmed' || d.kind !== 'transfer' || !d.counterpartTxId || !liveIds.has(d.counterpartTxId) || !liveIds.has(d.txId)) continue
+    const slot = confirmedBy.get(d.counterpartTxId) ?? {}
+    if (slot.rel) continue
+    slot.rel = { ...d, id: `pair:${d.id}`, txId: d.counterpartTxId, counterpartTxId: d.txId }
+    confirmedBy.set(d.counterpartTxId, slot)
+  }
   const debtLabel = new Map(input.debts.map(d => [d.id, d.label])), projectLabel = new Map(input.projects.map(p => [p.id, p.name]))
   const targetOf = (d: Decision): RelationshipTarget | null => {
     if (d.obligationId) return { type: 'obligation', id: d.obligationId, label: input.obligationLabels.get(d.obligationId) ?? 'Recurring bill' }
@@ -94,7 +104,7 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
       : sug.bucket ? { key: sug.bucket.bucket, label: bucketLabel(sug.bucket.bucket), state: 'suggested', confidence: sug.bucket.confidence, reasons: sug.bucket.reasons, basis: sug.bucket.basis, ...(sug.bucket.mixed ? { mixed: true } : {}) }
       : { key: direction === 'money_out' ? 'other_needs_review' : null, label: direction === 'money_out' ? bucketLabel('other_needs_review') : null, state: 'none', confidence: null, reasons: direction === 'money_out' ? ['Nothing recognised this transaction yet.'] : [] }
     const relationship: ExplorerRow['relationship'] = dec.rel
-      ? { kind: dec.rel.kind as RelationshipKind, label: RELATIONSHIP_LABELS[dec.rel.kind as RelationshipKind], target: targetOf(dec.rel), state: 'confirmed', confidence: dec.rel.confidence ?? 'high', reasons: ['You confirmed this.'] }
+      ? { kind: dec.rel.kind as RelationshipKind, label: RELATIONSHIP_LABELS[dec.rel.kind as RelationshipKind], target: targetOf(dec.rel), state: 'confirmed', confidence: dec.rel.confidence ?? 'high', reasons: [dec.rel.id.startsWith('pair:') ? 'Paired with the transfer you confirmed on the other account.' : 'You confirmed this.'] }
       : sug.relationship ? { kind: sug.relationship.kind, label: RELATIONSHIP_LABELS[sug.relationship.kind], target: sug.relationship.target, state: 'suggested', confidence: sug.relationship.confidence, reasons: sug.relationship.reasons }
       : { kind: 'unknown', label: RELATIONSHIP_LABELS.unknown, target: null, state: 'none', confidence: null, reasons: [] }
     const ignored = !!dec.ignored

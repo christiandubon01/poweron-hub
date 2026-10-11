@@ -414,7 +414,7 @@ describe('Plaid SDK adapter (no network)', () => {
   it('an institution lookup failure is non-fatal (display name only)', async () => {
     expect(await make({ institutionsGetById: async () => { throw axiosError('INSTITUTION_NOT_FOUND', 'INVALID_INPUT') } }).port.getInstitutionName('ins_x')).toBeNull()
   })
-  it('exposes no /transactions/get, refresh or sandbox-shortcut method (BANK-3 added /accounts/get; BANK-4 added /transactions/sync and webhook-key lookup)', () => {
-    expect(Object.keys(make().port).sort()).toEqual(['createLinkToken', 'exchangePublicToken', 'getAccounts', 'getInstitutionName', 'getItem', 'getWebhookVerificationKey', 'removeItem', 'syncTransactions'])
+  it('exposes no /transactions/get, refresh, real-time balance or sandbox-shortcut method (BANK-3 added /accounts/get; BANK-4 added /transactions/sync and webhook-key lookup; PLAID-2E reads cached balances from /accounts/get)', () => {
+    expect(Object.keys(make().port).sort()).toEqual(['createLinkToken', 'exchangePublicToken', 'getAccountBalances', 'getAccounts', 'getInstitutionName', 'getItem', 'getWebhookVerificationKey', 'removeItem', 'syncTransactions'])
   })
 })

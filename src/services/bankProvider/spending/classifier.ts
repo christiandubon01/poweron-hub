@@ -13,6 +13,7 @@
  *   - Pending evidence gets suggestions for display only.
  */
 import { distinctiveTokens, merchantKey, normalizeText, searchText } from './merchant'
+import { reconAccountOf, reconcile, type ReconResult } from './reconciliation'
 import { OTHER_BUCKET, CONFIDENCE_RANK, bucketLabel, isBucketKey, type BucketKey, type Confidence, type Direction } from './taxonomy'
 import type {
   AccountContext, BucketSuggestion, Decision, DebtOption, EvidenceTx, KnownBillCandidate, ProjectOption, RelationshipSuggestion, TxSuggestion,
@@ -250,27 +251,44 @@ function matchKnownBills(txs: EvidenceTx[], accounts: Map<string, AccountContext
 }
 
 // ── transfers ─────────────────────────────────────────────────────────────────────────────────────────────────────
-function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountContext>): Map<string, RelationshipSuggestion> {
+// PLAID-2F: pairing is done by the reconciliation engine (account-class aware, unambiguous-only, owner decisions respected). This function only
+// turns its answer into explainable suggestions and keeps the one-sided "looks like a transfer / card payment" hints.
+function reconciliationFor(txs: EvidenceTx[], accounts: Map<string, AccountContext>, decisions: Decision[]): ReconResult {
+  const confirmedPairs: Array<[string, string]> = [], rejectedPairs: Array<[string, string]> = []
+  const amount = new Map(txs.map(t => [t.id, t.amountMinor]))
+  for (const d of decisions) {
+    if (d.kind !== 'transfer' || !d.counterpartTxId) continue
+    const a = amount.get(d.txId), b = amount.get(d.counterpartTxId)
+    if (a === undefined || b === undefined) continue
+    const pair: [string, string] = a > 0 && b < 0 ? [d.txId, d.counterpartTxId] : a < 0 && b > 0 ? [d.counterpartTxId, d.txId] : null as any
+    if (!pair) continue
+    ;(d.status === 'confirmed' ? confirmedPairs : rejectedPairs).push(pair)
+  }
+  return reconcile({
+    txs, confirmedPairs, rejectedPairs,
+    accounts: [...accounts.values()].map(a => reconAccountOf(a.providerAccountRef, a.financialAccountName ?? a.label ?? 'another account', a.providerType, a.providerSubtype)),
+  })
+}
+
+function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountContext>, recon: ReconResult): Map<string, RelationshipSuggestion> {
   const out = new Map<string, RelationshipSuggestion>()
   const strongOf = (t: EvidenceTx) => {
     const d = (t.category?.detailed ?? '').toUpperCase(), p = (t.category?.primary ?? '').toUpperCase()
     return { keyword: TRANSFER_KEYWORD.test(searchText(t.name, t.merchantName)), pfc: p.startsWith('TRANSFER_'), account: d.includes('ACCOUNT_TRANSFER') }
   }
-  const outs = txs.filter(t => t.amountMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
-  const ins = txs.filter(t => t.amountMinor < 0)
-  const taken = new Set<string>()
-  for (const o of outs) {
-    const candidates = ins.filter(i => !taken.has(i.id) && i.providerAccountRef !== o.providerAccountRef && i.pending === o.pending && Math.abs(i.amountMinor) === o.amountMinor && daysBetween(i.date, o.date) <= 3)
-      .sort((a, b) => daysBetween(a.date, o.date) - daysBetween(b.date, o.date) || a.id.localeCompare(b.id))
-    const match = candidates[0]
-    if (!match) continue
-    taken.add(match.id)
-    const a = strongOf(o), b = strongOf(match)
-    const signal = a.keyword || b.keyword || a.account || b.account || a.pfc || b.pfc
-    const conf: Confidence = signal ? 'high' : 'possible'
-    const labelOf = (t: EvidenceTx) => accounts.get(t.providerAccountRef)?.financialAccountName ?? accounts.get(t.providerAccountRef)?.label ?? 'another account'
-    out.set(o.id, { kind: 'transfer', target: { type: 'counterpart_tx', id: match.id, label: labelOf(match) }, confidence: conf, reasons: [`An equal ${money(o.amountMinor)} movement arrived in ${labelOf(match)} within ${daysBetween(match.date, o.date)} day(s).`, ...(signal ? ['The description or bank category says transfer.'] : ['Only the equal opposite amounts suggest a transfer.'])] })
-    out.set(match.id, { kind: 'transfer', target: { type: 'counterpart_tx', id: o.id, label: labelOf(o) }, confidence: conf, reasons: [`An equal ${money(o.amountMinor)} movement left ${labelOf(o)} within ${daysBetween(match.date, o.date)} day(s).`, ...(signal ? ['The description or bank category says transfer.'] : ['Only the equal opposite amounts suggest a transfer.'])] })
+  const labelOf = (t: EvidenceTx) => accounts.get(t.providerAccountRef)?.financialAccountName ?? accounts.get(t.providerAccountRef)?.label ?? 'another account'
+  const byId = new Map(txs.map(t => [t.id, t]))
+  for (const p of recon.pairs) {
+    if (p.state === 'confirmed') continue // already an owner decision; the Explorer shows it as confirmed
+    const o = byId.get(p.outflowId)!, i = byId.get(p.inflowId)!
+    const what = p.kind === 'card_payment' ? 'a payment on a credit card (the card purchases are the expenses)' : 'a movement between your own accounts'
+    out.set(o.id, { kind: 'transfer', target: { type: 'counterpart_tx', id: i.id, label: labelOf(i) }, confidence: p.confidence, reasons: [`This looks like ${what}.`, ...p.reasons] })
+    out.set(i.id, { kind: 'transfer', target: { type: 'counterpart_tx', id: o.id, label: labelOf(o) }, confidence: p.confidence, reasons: [`This looks like ${what}.`, ...p.reasons] })
+  }
+  for (const amb of recon.ambiguous) {
+    for (const id of [...amb.outflowIds, ...amb.inflowIds]) {
+      if (byId.has(id) && !out.has(id)) out.set(id, { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'low', reasons: amb.reasons })
+    }
   }
   for (const t of txs) {
     if (out.has(t.id)) continue
@@ -285,8 +303,10 @@ function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountCon
  * Money coming IN. Never "high": a deposit's wording cannot prove who paid or why, so these are always an individual owner decision.
  * A refund still needs the owner to pick the original purchase later (BANK-6); here it is only an interpretation.
  */
-function inflowBucketFor(tx: EvidenceTx): BucketSuggestion | null {
+function inflowBucketFor(tx: EvidenceTx, refund?: ReconResult['refunds'][number]): BucketSuggestion | null {
   const text = searchText(tx.name, tx.merchantName)
+  // PLAID-2F: money returning to the account that paid, from the same merchant, reverses that purchase. Never income; ambiguous matches stay low.
+  if (refund) return { bucket: 'refund', confidence: refund.confidence === 'high' ? 'possible' : 'low', basis: 'merchant_rule', reasons: [...refund.reasons, 'Confirm it so it reduces that purchase instead of counting as income.'] }
   if (REFUND_WORDS.test(text)) return { bucket: 'refund', confidence: 'possible', basis: 'merchant_rule', reasons: ['The description mentions a refund or return. Confirm it, and later link it to the purchase it reverses.'] }
   if (DEPOSIT_WORDS.test(text)) return { bucket: 'customer_payment', confidence: 'possible', basis: 'merchant_rule', reasons: ['A deposit or incoming payment. It may be a customer payment, but the wording alone does not say who paid or for what job.'] }
   return null
@@ -342,7 +362,9 @@ export function classifyAll(input: ClassifierInput): Map<string, TxSuggestion> {
   const rejected = new Map<string, Set<string>>()
   for (const d of input.decisions) if (d.status === 'rejected') rejected.set(d.txId, new Set([...(rejected.get(d.txId) ?? []), rejectedKey(d)]))
 
-  const transfers = transferSuggestions(live, input.accounts)
+  const recon = reconciliationFor(live, input.accounts, input.decisions)
+  const transfers = transferSuggestions(live, input.accounts, recon)
+  const refunds = new Map(recon.refunds.map(r => [r.refundId, r]))
   const relationships = new Map<string, RelationshipSuggestion>()
   const claimed = new Set<string>()
   for (const tx of live) {
@@ -361,7 +383,7 @@ export function classifyAll(input: ClassifierInput): Map<string, TxSuggestion> {
 
   const out = new Map<string, TxSuggestion>()
   for (const tx of live) {
-    let bucket: BucketSuggestion | null = tx.amountMinor > 0 ? bucketFor(tx, history, input.ownerRules) : tx.amountMinor < 0 ? inflowBucketFor(tx) : null
+    let bucket: BucketSuggestion | null = tx.amountMinor > 0 ? bucketFor(tx, history, input.ownerRules) : tx.amountMinor < 0 ? inflowBucketFor(tx, refunds.get(tx.id)) : null
     const relationship = relationships.get(tx.id) ?? null
     if (relationship?.kind === 'transfer') bucket = { bucket: 'transfers', confidence: relationship.confidence, basis: 'transfer', reasons: ['It looks like a movement between accounts.'] }
     else if (relationship?.kind === 'payroll' && !bucket) bucket = { bucket: 'payroll_people', confidence: relationship.confidence, basis: 'payroll', reasons: ['It looks like payroll.'] }

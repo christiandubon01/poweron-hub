@@ -104,6 +104,8 @@ export interface AccountBalanceView extends InterpretedBalance {
   subtype: string | null
   live: boolean
   mappedFinancialAccountId: string | null
+  /** Ownership of the MAPPED Cash OS account; null = not mapped (unmapped accounts are never counted as business or personal). */
+  ownership: 'business' | 'personal' | null
 }
 
 /** Newest snapshot per live provider account, interpreted. Never includes provider ids, tokens or raw provider data. */
@@ -111,7 +113,8 @@ export async function getBalances(deps: BankBalanceDeps, actor: BankActor): Prom
   assertAuthority(actor)
   if (deps.balancesEnabled !== true) return { accounts: [], enabled: false }
   const org = actor.organizationId
-  const [all, mappings] = await Promise.all([deps.accounts.listAllProviderAccounts(org), deps.accounts.listActiveMappings(org)])
+  const [all, mappings, cash] = await Promise.all([deps.accounts.listAllProviderAccounts(org), deps.accounts.listActiveMappings(org), deps.accounts.listCashAccounts(org)])
+  const ownerOf = new Map(cash.map(c => [c.id, c.ownershipContext === 'personal' ? 'personal' as const : c.ownershipContext === 'business' ? 'business' as const : null]))
   const live = all.filter(a => a.status === 'active' && a.itemStatus !== 'disconnected')
   const latest = await deps.balances.latestSnapshots(org, live.map(a => a.id))
   const mapped = new Map(mappings.map(m => [m.providerAccountRef, m.financialAccountId]))
@@ -119,7 +122,7 @@ export async function getBalances(deps: BankBalanceDeps, actor: BankActor): Prom
   return { enabled: true, accounts: live.map(a => ({
     ...interpretBalance({ type: a.providerAccountType, subtype: a.providerAccountSubtype }, latest.get(a.id) ?? null, now, a.itemStatus === 'healthy'),
     accountRef: a.id, connectionId: a.providerItemRef, institutionName: a.institutionName, name: a.name, mask: a.mask,
-    type: a.providerAccountType, subtype: a.providerAccountSubtype, live: true, mappedFinancialAccountId: mapped.get(a.id) ?? null,
+    type: a.providerAccountType, subtype: a.providerAccountSubtype, live: true, mappedFinancialAccountId: mapped.get(a.id) ?? null, ownership: ownerOf.get(mapped.get(a.id) ?? '') ?? null,
   })) }
 }
 export { classifyAccount }

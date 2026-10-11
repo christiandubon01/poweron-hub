@@ -120,7 +120,7 @@ describe.runIf(!!PGlite)('balance service on the real snapshot table (PGlite)', 
     const deps = {
       plaid, key: KEY, environment: 'production', log: () => {}, balancesEnabled: true, now: () => state.now,
       repo: { getItem: async (o, id) => (o === org && id === item.id ? { id, provider: 'plaid', providerItemId: 'p', status: 'healthy', environment: 'production' } : null), getActiveCredential: async (o) => (o === org ? envelope : null) },
-      accounts: { listProviderAccounts: async () => ['chk', 'sav', 'card'].map(provRow), listAllProviderAccounts: async () => ['chk', 'sav', 'card'].map(provRow), listActiveMappings: async () => [], markItemLoginRequired: vi.fn(async () => {}) },
+      accounts: { listProviderAccounts: async () => ['chk', 'sav', 'card'].map(provRow), listAllProviderAccounts: async () => ['chk', 'sav', 'card'].map(provRow), listActiveMappings: async () => [], listCashAccounts: async () => [], markItemLoginRequired: vi.fn(async () => {}) },
       balances: createBankBalanceRepo(svc),
     }
     const reading = (key, o = {}) => ({ accountId: providerIds[item.accounts[key]], type: key === 'card' ? 'credit' : 'depository', subtype: key === 'card' ? 'credit card' : 'checking', current: 100, available: 90, limit: null, currency: 'USD', lastUpdatedAt: null, ...o })
