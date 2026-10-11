@@ -261,6 +261,9 @@ export async function getExplorer(deps: SpendingDeps, actor: BankActor, rawQuery
       periodFrom: base.from,
     },
     contract: { confirmedMeans: CONFIRMED_INTERPRETATION_CONTRACT.confirmedMeans, isCanonicalAdoption: CONFIRMED_INTERPRETATION_CONTRACT.isCanonicalAdoption, text: CONFIRMED_INTERPRETATION_CONTRACT.ownerText },
+    // PLAID-3B: present ONLY while the reconciliation switch is on, so the browser knows whether to offer the Matches review. With the switch off the payload is
+    // exactly what it was before (no new key), which the switch tests assert.
+    ...(deps.reconciliationEnabled === true ? { matches: { enabled: true as const } } : {}),
   }
 }
 

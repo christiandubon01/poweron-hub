@@ -41,10 +41,9 @@ export interface ReconAccount {
   /** Ownership of the MAPPED Cash OS account; null = not mapped / unknown. */
   ownership?: 'business' | 'personal' | null
 }
-export type PairKind = 'internal_transfer' | 'card_payment'
+export type { PairKind, PairCap } from '../../../finance/bankMatchReview'
+import type { PairKind, PairCap } from '../../../finance/bankMatchReview'
 export type PairConfidence = 'high' | 'possible'
-/** Why a pair is capped at 'possible' even though it matches. Shown to the owner. */
-export type PairCap = 'no_signal' | 'class_unknown' | 'cross_scope' | 'identical_group'
 export interface ReconPair {
   kind: PairKind
   outflowId: string

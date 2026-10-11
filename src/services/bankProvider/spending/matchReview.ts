@@ -20,43 +20,9 @@
  */
 import { pairFingerprint, pairIsValid, buildPair, type ReconAccount, type ReconPair, type ReconResult, type PairCap, type PairKind } from './reconciliation'
 import type { EvidenceTx } from './types'
-import type { AccountClass } from '../balanceModel'
+import type { MatchAccountInfo, MatchHistoryEvent, MatchItem, MatchLeg, MatchState, AmbiguousGroup, AmbiguousCandidate, RefundMatch, MatchCounts, MatchAction } from '../../../finance/bankMatchReview'
 
-export type MatchState = 'suggested' | 'waiting' | 'ambiguous' | 'confirmed' | 'rejected' | 'reversed' | 'evidence_changed'
-export type MatchAction = 'confirm' | 'reject' | 'reverse' | 'reconfirm'
-
-export interface MatchAccountInfo { ref: string; label: string; mask: string | null; ownership: 'business' | 'personal' | null; accountClass: AccountClass | null; institution?: string | null }
-export interface MatchLeg {
-  id: string; date: string | null; name: string | null; merchant: string | null; amountMinor: number | null; pending: boolean
-  /** The transaction is not in the loaded evidence (removed by the bank, or outside the loaded history). */
-  missing: boolean
-  account: MatchAccountInfo | null
-}
-export interface MatchHistoryEvent { at: string | null; event: 'confirmed' | 'rejected' | 'reversed' | 'reconfirmed' | 'completed' | 'superseded' }
-export interface MatchItem {
-  key: string
-  state: MatchState
-  kind: PairKind
-  confidence: 'high' | 'possible' | null
-  needsReview: boolean
-  outflow: MatchLeg
-  inflow: MatchLeg
-  amountMinor: number
-  daysApart: number | null
-  reasons: string[]
-  caps: PairCap[]
-  crossScope: boolean
-  /** The CURRENT evidence this item rests on; a confirm / reject must send it back unchanged. */
-  fingerprint: string | null
-  decision: { at: string | null; legacy: boolean } | null
-  /** What changed since the decision was made (only for evidence_changed). */
-  changes: string[]
-  history: MatchHistoryEvent[]
-  actions: MatchAction[]
-}
-export interface AmbiguousCandidate { outflowId: string; inflowId: string; kind: PairKind; daysApart: number; confidence: 'high' | 'possible'; crossScope: boolean; fingerprint: string }
-export interface AmbiguousGroup { key: string; outflows: MatchLeg[]; inflows: MatchLeg[]; reasons: string[]; candidates: AmbiguousCandidate[] }
-export interface RefundMatch { key: string; state: 'suggested' | 'confirmed' | 'rejected'; confidence: 'high' | 'possible' | 'ambiguous' | null; refund: MatchLeg; original: MatchLeg | null; candidates: MatchLeg[]; reasons: string[] }
+export type { MatchAccountInfo, MatchHistoryEvent, MatchItem, MatchLeg, MatchState, AmbiguousGroup, AmbiguousCandidate, RefundMatch, MatchCounts, MatchAction }
 
 /** One interpretation row of kind 'transfer' (any status), as read for review. Never carries a user id. */
 export interface PairDecisionRow {
@@ -78,7 +44,7 @@ export interface MatchReview {
   items: MatchItem[]
   groups: AmbiguousGroup[]
   refunds: RefundMatch[]
-  counts: Record<MatchState, number> & { needsReview: number; refunds: number }
+  counts: MatchCounts
 }
 
 export interface MatchReviewInput {

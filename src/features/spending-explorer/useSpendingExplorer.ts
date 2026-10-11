@@ -40,7 +40,7 @@ export interface ExplorerMeta { billCandidates: number; activeObligations: numbe
 export interface ReviewCounts { reviewed: number; unreviewed: number; excluded: number }
 export interface HistoryEntry { label: string; kind: string; status: string; source: string; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
 export interface BatchResult { confirmed: number; unchanged: number; skipped: number; results: Array<{ id: string; result: string; reason?: string }> }
-export interface ExplorerData { coverage?: {complete:boolean;reason:string|null}; hierarchy?: import('@/finance/bankSpendingHierarchy').SpendingHierarchy; draftScope?: string; reviewCounts?: ReviewCounts; asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
+export interface ExplorerData { /** PLAID-3B: present only while the server's reconciliation switch is on. */ matches?: { enabled: true }; coverage?: {complete:boolean;reason:string|null}; hierarchy?: import('@/finance/bankSpendingHierarchy').SpendingHierarchy; draftScope?: string; reviewCounts?: ReviewCounts; asOf: string; accounts: AccountScope; environment?: 'sandbox' | 'production'; meta: ExplorerMeta; analytics: Analytics; viewCounts: Record<ExplorerView, number>; total: number; rows: ExplorerRow[]; options: Options }
 
 export interface Filters {
   view: ExplorerView; accounts: AccountScope; days: 30 | 60 | 90; bucket: string; account: string; scope: string; review: string; confidence: string; project: string; search: string; min: string; max: string

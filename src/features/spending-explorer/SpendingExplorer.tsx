@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
+import MatchReview from './MatchReview'
 import { HierarchyProvider } from './HierarchyProvider'
 import { HierarchyManager } from './HierarchyManager'
 import { REPORT_SCOPES, ReportView, useSpendingReport } from './SpendingReports'
@@ -131,7 +132,7 @@ export default function SpendingExplorer() {
   const [relatedBusy,setRelatedBusy]=useState(false)
   const [related,setRelated]=useState<{id:string;selection?:{parent?:string;leaf?:string;direction?:string}}|null>(null)
   const [showFilters, setShowFilters] = useState(false)
-  const [mode, setMode] = useState<'explorer' | 'smart'>('explorer')
+  const [mode, setMode] = useState<'explorer' | 'smart' | 'matches'>('explorer')
   const [population,setPopulation] = useState<'review' | ReportMode>('review')
   const [reportRevision,setReportRevision] = useState(0)
   const reportScope:ReportScope = { from:new Date(Date.parse(`${data?.asOf ?? new Date().toISOString().slice(0,10)}T00:00:00Z`)-(filters.days-1)*86400000).toISOString().slice(0,10),to:data?.asOf ?? new Date().toISOString().slice(0,10),accounts:filters.accounts,account:filters.account || undefined,environment:data?.environment ?? 'sandbox' }
@@ -256,7 +257,9 @@ export default function SpendingExplorer() {
     <fieldset disabled={relatedBusy} className="min-w-0" aria-label="Explorer controls">
     <p className={`${eyebrow} mt-4`}>Workflow</p>
     <SegmentedControl className="mt-2" label="Review mode" value={mode} onChange={setMode} options={[
-      {value:'explorer',label:'Explore',testId:'spending-mode-explorer'},{value:'smart',label:'Smart Review',testId:'spending-mode-smart'}]} />
+      {value:'explorer',label:'Explore',testId:'spending-mode-explorer'},{value:'smart',label:'Smart Review',testId:'spending-mode-smart'},
+      // PLAID-3B: offered only while the server's reconciliation switch is on (the payload carries `matches` only then)
+      ...(data.matches?.enabled===true?[{value:'matches' as const,label:'Matches',testId:'spending-mode-matches'}]:[])]} />
     {mode==='explorer' && <>
       <div className="mt-4 border-t border-[var(--surface-line)] pt-3"><p className={eyebrow}>Spending scope</p>
       <SegmentedControl className="mt-2" label="Explorer scope" value={population} onChange={setPopulation} options={[
@@ -266,7 +269,7 @@ export default function SpendingExplorer() {
     </>}
     {mode==='smart' && <button className={`${btn} mt-3`} onClick={()=>setShowColors(v=>!v)} aria-expanded={showColors}>Settings</button>}
     {showColors && <ExplorerClassificationSettings />}
-    {mode==='smart'?<SmartReview onChanged={refreshAll}/>:population!=='review'?<>
+    {mode==='matches'?<MatchReview onChanged={refreshAll}/>:mode==='smart'?<SmartReview onChanged={refreshAll}/>:population!=='review'?<>
       {message && <p role="alert" className="mt-2 text-sm">{message}</p>}
       {reportError?<p role="alert" className="mt-3">{reportError}</p>:!report?<p className="mt-3">Loading complete evidence…</p>:<ReportView report={report} accountLabel={data.options.accounts.find(x=>x.ref===filters.account)?.label} renderRow={(r,selection)=><Row {...relatedProps(r,selection)} key={r.id} row={r} options={data.options} busy={busy || !!r.removed} onDecide={async body=>{await decide(body);setReportRevision(n=>n+1)}} loadHistory={loadHistory} environment={data.environment} selectable={false} selected={false} onToggle={()=>{}} reviewedView />}/>}
     </>:<>
