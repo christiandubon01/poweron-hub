@@ -12,7 +12,8 @@ type Svc = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ d
 
 export interface StagingRunView {
   runId: string
-  status: 'fetching' | 'fetched'
+  /** 'blocked' (PLAID-1E): too large, or the final apply failed repeatedly. Never applied or retried automatically; needs owner review. */
+  status: 'fetching' | 'fetched' | 'blocked'
   generation: number
   pageCursor: string | null
   pagesStaged: number
@@ -21,6 +22,7 @@ export interface StagingRunView {
   updateStatus: string | null
   stagedRows: number
   opened: 'created' | 'resumed'
+  blockedReason: 'RUN_TOO_LARGE' | 'APPLY_FAILED_REPEATEDLY' | null
 }
 /** One allowlisted change, in the exact shape financial_provider_transactions stores (removed rows carry only the transaction id). */
 export interface StagedChange {
@@ -38,15 +40,18 @@ export interface StagedChange {
   merchant_name?: string | null
   provider_category?: Record<string, unknown> | null
 }
-export interface ApplyResult { outcome: 'applied' | 'already_applied' | 'stale' | 'lease_lost'; added: number; modified: number; removed: number; pendingLinked: number }
+export interface ApplyResult { outcome: 'applied' | 'already_applied' | 'stale' | 'lease_lost' | 'blocked'; added: number; modified: number; removed: number; pendingLinked: number }
 export interface StagingProgress { status: 'fetching' | 'fetched'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string }
 
 export interface SyncStagingRepo {
   openRun(organizationId: string, itemId: string): Promise<StagingRunView>
-  stagePage(organizationId: string, input: { runId: string; generation: number; pageNo: number; nextCursor: string; hasMore: boolean; updateStatus: string | null; changes: StagedChange[] }): Promise<'staged' | 'stale'>
+  /** 'blocked': staging this page would exceed the run-size limit (at most 50,000 rows; `maxRows` can only lower it). Nothing of this page is staged. */
+  stagePage(organizationId: string, input: { runId: string; generation: number; pageNo: number; nextCursor: string; hasMore: boolean; updateStatus: string | null; changes: StagedChange[]; maxRows?: number }): Promise<'staged' | 'stale' | 'blocked'>
   restartRun(organizationId: string, runId: string, generation: number): Promise<'restarted' | 'stale'>
   abandonRun(organizationId: string, runId: string, reason: string): Promise<void>
   applyRun(organizationId: string, input: { itemId: string; runId: string; generation: number; leaseStartedAt: string; outcome: 'synced' | 'waiting' | 'unconfirmed' }): Promise<ApplyResult>
+  /** Counts a failed final apply (only while holding the lease). 'blocked' = the run now needs owner review; 'stale' = not counted. */
+  recordApplyFailure(organizationId: string, input: { itemId: string; runId: string; generation: number; leaseStartedAt: string }): Promise<'retry' | 'blocked' | 'stale'>
   getProgress(organizationId: string, itemId: string): Promise<StagingProgress | null>
 }
 
@@ -65,15 +70,17 @@ export function createSyncStagingRepo(svc: Svc): SyncStagingRepo {
       const r = one(data)
       if (!r?.run_id) failed('open_run')
       return { runId: r.run_id, status: r.status, generation: Number(r.generation), pageCursor: r.page_cursor ?? null, pagesStaged: Number(r.pages_staged),
-        restarts: Number(r.restarts), startCursor: r.start_cursor ?? null, updateStatus: r.update_status ?? null, stagedRows: Number(r.staged_rows) || 0, opened: r.opened }
+        restarts: Number(r.restarts), startCursor: r.start_cursor ?? null, updateStatus: r.update_status ?? null, stagedRows: Number(r.staged_rows) || 0, opened: r.opened,
+        blockedReason: r.blocked_reason ?? null }
     },
     async stagePage(organizationId, i) {
       const { data, error } = await svc.rpc('financial_provider_sync_stage_page', { p_organization_id: organizationId, p_run_id: i.runId, p_generation: i.generation,
-        p_page_no: i.pageNo, p_next_cursor: i.nextCursor, p_has_more: i.hasMore, p_update_status: i.updateStatus, p_changes: i.changes })
+        p_page_no: i.pageNo, p_next_cursor: i.nextCursor, p_has_more: i.hasMore, p_update_status: i.updateStatus, p_changes: i.changes,
+        ...(i.maxRows !== undefined ? { p_max_rows: i.maxRows } : {}) })
       if (error) failed('stage_page', error)
       const out = one(data)
       const v = typeof out === 'string' ? out : out?.financial_provider_sync_stage_page
-      if (v !== 'staged' && v !== 'stale') failed('stage_page')
+      if (v !== 'staged' && v !== 'stale' && v !== 'blocked') failed('stage_page')
       return v
     },
     async restartRun(organizationId, runId, generation) {
@@ -93,8 +100,17 @@ export function createSyncStagingRepo(svc: Svc): SyncStagingRepo {
         p_generation: i.generation, p_lease_started_at: i.leaseStartedAt, p_outcome: i.outcome })
       if (error) failed('apply_run', error)
       const r = one(data)
-      if (!r || !['applied', 'already_applied', 'stale', 'lease_lost'].includes(r.outcome)) failed('apply_run')
+      if (!r || !['applied', 'already_applied', 'stale', 'lease_lost', 'blocked'].includes(r.outcome)) failed('apply_run')
       return { outcome: r.outcome, added: Number(r.added_count) || 0, modified: Number(r.modified_count) || 0, removed: Number(r.removed_count) || 0, pendingLinked: Number(r.pending_linked_count) || 0 }
+    },
+    async recordApplyFailure(organizationId, i) {
+      const { data, error } = await svc.rpc('financial_provider_sync_record_apply_failure', { p_organization_id: organizationId, p_item_id: i.itemId, p_run_id: i.runId,
+        p_generation: i.generation, p_lease_started_at: i.leaseStartedAt })
+      if (error) failed('record_apply_failure', error)
+      const out = one(data)
+      const v = typeof out === 'string' ? out : out?.financial_provider_sync_record_apply_failure
+      if (v !== 'retry' && v !== 'blocked' && v !== 'stale') failed('record_apply_failure')
+      return v
     },
     async getProgress(organizationId, itemId) {
       const { data, error } = await svc.from('financial_provider_sync_staging_runs').select('status, pages_staged, restarts, created_at, updated_at')

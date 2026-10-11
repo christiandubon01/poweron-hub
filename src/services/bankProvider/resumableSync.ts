@@ -29,8 +29,11 @@ export const APPLY_MIN_REMAINING_MS = 4_000
 export const MAX_RUN_RESTARTS = 3
 /** The strictest synchronous limit any Netlify source cites (10 s); newer documentation cites 30-60 s. Timing assumes the strictest. */
 export const REQUEST_LIMIT_MS = 10_000
+/** PLAID-1E: the most rows one run may stage (the SQL enforces the same ceiling and refuses to raise it). Larger updates need owner review. */
+export const MAX_STAGED_ROWS = 50_000
 
-export interface ResumableSyncDeps extends BankSyncDeps { staging: SyncStagingRepo }
+export interface ResumableSyncDeps extends BankSyncDeps { staging: SyncStagingRepo; /** Lowers (never raises) MAX_STAGED_ROWS; tests only. */ maxStagedRows?: number }
+
 export type StepPhase = 'fetching' | 'ready_to_apply' | 'complete' | 'waiting'
 export interface StepResult {
   phase: StepPhase
@@ -46,6 +49,10 @@ const clock = (deps: BankSyncDeps) => (deps.now ? deps.now() : Date.now())
 class StepFailure extends Error {
   constructor(readonly code: string, readonly publicError: BankConnectionError, readonly keepRun = true) { super(code); this.name = 'StepFailure' }
 }
+/** A blocked run (too large, or its final apply failed repeatedly): staged rows are kept, nothing is retried automatically. */
+const blocked = (reason: string | null) => reason === 'RUN_TOO_LARGE'
+  ? new StepFailure('RUN_TOO_LARGE', new BankConnectionError('sync_failed', 409, 'This bank update is larger than Cash OS syncs automatically. Nothing was saved and the previous position is kept; this needs owner review.'))
+  : new StepFailure('APPLY_BLOCKED', new BankConnectionError('sync_failed', 409, 'Saving this bank update failed repeatedly. Nothing was saved and the previous position is kept; this needs owner review before syncing again.'))
 const superseded = () => new StepFailure('SUPERSEDED', new BankConnectionError('conflict', 409, 'Another sync request took over this connection. Nothing was lost; press Sync to continue.'))
 
 /** Allowlisted, validated staging rows for one page. Fails closed (nothing staged) on an unknown account or unstorable evidence. */
@@ -102,6 +109,8 @@ export async function resumableSyncStep(deps: ResumableSyncDeps, actor: BankActo
     const hadPriorSuccess = !!state?.lastSuccessfulAt
     let run = await deps.staging.openRun(org, item.id)
     runId = run.runId
+    if (run.status === 'blocked') throw blocked(run.blockedReason) // no Plaid call, no apply: owner review first
+    const maxRows = Math.min(MAX_STAGED_ROWS, deps.maxStagedRows ?? MAX_STAGED_ROWS)
     let hadData = run.stagedRows > 0
     const accountRefs = new Map((await deps.accounts.listProviderAccounts(org, item.id)).map(a => [a.providerAccountId, a.id]))
 
@@ -133,7 +142,8 @@ export async function resumableSyncStep(deps: ResumableSyncDeps, actor: BankActo
       if (!page.nextCursor) throw new ProviderResponseError()
       const { changes } = toStagedChanges(page, accountRefs)
       const staged = await deps.staging.stagePage(org, { runId: run.runId, generation: run.generation, pageNo: run.pagesStaged, nextCursor: page.nextCursor,
-        hasMore: page.hasMore, updateStatus: page.updateStatus, changes })
+        hasMore: page.hasMore, updateStatus: page.updateStatus, changes, maxRows })
+      if (staged === 'blocked') throw blocked('RUN_TOO_LARGE')
       if (staged !== 'staged') throw superseded()
       hadData = hadData || changes.length > 0
       run = { ...run, pagesStaged: run.pagesStaged + 1, pageCursor: page.nextCursor, updateStatus: page.updateStatus ?? run.updateStatus,
@@ -142,7 +152,17 @@ export async function resumableSyncStep(deps: ResumableSyncDeps, actor: BankActo
 
     if (run.status === 'fetched' && requestStart + REQUEST_LIMIT_MS - clock(deps) >= APPLY_MIN_REMAINING_MS) {
       const outcome = classifySyncOutcome(run.updateStatus, hadData, hadPriorSuccess)
-      const applied = await deps.staging.applyRun(org, { itemId: item.id, runId: run.runId, generation: run.generation, leaseStartedAt: startedAt, outcome })
+      let applied
+      try {
+        applied = await deps.staging.applyRun(org, { itemId: item.id, runId: run.runId, generation: run.generation, leaseStartedAt: startedAt, outcome })
+      } catch (error) {
+        // The apply rolled back (evidence, cursor and staged rows unchanged). Count it; the third failure blocks the run for owner review.
+        let verdict: 'retry' | 'blocked' | 'stale' = 'retry'
+        try { verdict = await deps.staging.recordApplyFailure(org, { itemId: item.id, runId: run.runId, generation: run.generation, leaseStartedAt: startedAt }) } catch { /* the original failure is reported */ }
+        if (verdict === 'blocked') throw blocked('APPLY_FAILED_REPEATEDLY')
+        throw error
+      }
+      if (applied.outcome === 'blocked') throw blocked(null)
       if (applied.outcome === 'lease_lost' || applied.outcome === 'stale') throw superseded()
       await deps.sync.markNudgesProcessed(org, item.id, startedAt)
       note(deps, { event: 'bank.sync.completed', organizationId: org, itemId: item.id, outcome: `a${applied.added}/m${applied.modified}/r${applied.removed}/pl${applied.pendingLinked}/pg${run.pagesStaged}/rs${run.restarts}/${outcome}/resumable` })

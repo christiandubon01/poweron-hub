@@ -13,15 +13,21 @@
 --   financial_provider_sync_stage_page       ONE page, atomically: replace that page's rows and advance the page cursor (compare-and-set)
 --   financial_provider_sync_restart_run      mutation during pagination: new generation from the START cursor; older staged rows discarded
 --   financial_provider_sync_abandon_run      give up a run (its staged rows are discarded; evidence and cursor untouched)
+--   financial_provider_sync_record_apply_failure  count a failed final apply; the third one BLOCKS the run for owner review (PLAID-1E)
 --   financial_provider_sync_apply_run        ONE transaction: apply the update to financial_provider_transactions in provider order, move the
 --                                            committed cursor, stamp success, release the Item lease. Refuses unless the caller still holds the
 --                                            lease and the committed cursor is still the run's start cursor.
+--
+-- Safeguards (PLAID-1E): a run holds at most 50,000 staged rows (callers may lower, never raise, the limit); a larger update BLOCKS the run
+-- (status 'blocked', staged rows kept) instead of growing an apply that could not finish inside the database statement timeout. A run whose
+-- final apply fails three times is blocked the same way, so a deterministic failure cannot retry forever. A blocked run is never applied,
+-- restarted, expired or replaced automatically: it needs owner review (financial_provider_sync_abandon_run is the only exit).
 --
 -- Security (conventions of migrations 153-156): both tables are SERVER-ONLY (RLS on, no policy, nothing for PUBLIC/anon/authenticated) because
 -- they hold Plaid cursors. Functions are SECURITY INVOKER with a fixed search_path, EXECUTE for service_role only, and re-check that every id
 -- belongs to the given organization. Evidence rows are never deleted; existing evidence, interpretations, mappings and the ledger are untouched.
 --
--- Rollback (nothing else depends on these objects): unset PLAID_RESUMABLE_SYNC_ENABLED, then drop the five functions and the two tables. Staged
+-- Rollback (nothing else depends on these objects): unset PLAID_RESUMABLE_SYNC_ENABLED, then drop the six functions and the two tables. Staged
 -- data is transient by design; applied changes already live in financial_provider_transactions.
 BEGIN;
 
@@ -29,13 +35,16 @@ CREATE TABLE IF NOT EXISTS public.financial_provider_sync_staging_runs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT,
   provider_item_ref UUID NOT NULL,
-  status TEXT NOT NULL DEFAULT 'fetching' CHECK (status IN ('fetching', 'fetched', 'applied', 'abandoned')),
+  status TEXT NOT NULL DEFAULT 'fetching' CHECK (status IN ('fetching', 'fetched', 'blocked', 'applied', 'abandoned')),
   start_cursor TEXT,
   page_cursor TEXT,
   final_cursor TEXT,
   generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),
   pages_staged INTEGER NOT NULL DEFAULT 0 CHECK (pages_staged >= 0),
   restarts INTEGER NOT NULL DEFAULT 0 CHECK (restarts >= 0),
+  staged_rows INTEGER NOT NULL DEFAULT 0 CHECK (staged_rows >= 0),
+  apply_failures INTEGER NOT NULL DEFAULT 0 CHECK (apply_failures >= 0),
+  blocked_reason TEXT CHECK (blocked_reason IS NULL OR blocked_reason IN ('RUN_TOO_LARGE', 'APPLY_FAILED_REPEATEDLY')),
   update_status TEXT CHECK (update_status IS NULL OR length(update_status) BETWEEN 1 AND 64),
   abandon_reason TEXT CHECK (abandon_reason IS NULL OR abandon_reason ~ '^[A-Z0-9_]{1,64}$'),
   added_count INTEGER CHECK (added_count IS NULL OR added_count >= 0),
@@ -50,11 +59,12 @@ CREATE TABLE IF NOT EXISTS public.financial_provider_sync_staging_runs (
     REFERENCES public.financial_provider_items(id, organization_id) ON DELETE RESTRICT,
   CONSTRAINT financial_provider_sync_staging_runs_final_shape CHECK (status NOT IN ('fetched', 'applied') OR final_cursor IS NOT NULL),
   CONSTRAINT financial_provider_sync_staging_runs_finished_shape CHECK ((status IN ('applied', 'abandoned')) = (finished_at IS NOT NULL)),
-  CONSTRAINT financial_provider_sync_staging_runs_abandon_shape CHECK ((status = 'abandoned') = (abandon_reason IS NOT NULL))
+  CONSTRAINT financial_provider_sync_staging_runs_abandon_shape CHECK ((status = 'abandoned') = (abandon_reason IS NOT NULL)),
+  CONSTRAINT financial_provider_sync_staging_runs_blocked_shape CHECK (status <> 'blocked' OR blocked_reason IS NOT NULL)
 );
--- At most ONE open run per Item: concurrent requests resume the same run instead of starting a second one.
+-- At most ONE open run per Item: concurrent requests resume the same run instead of starting a second one. A blocked run stays open.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_provider_sync_staging_runs_open
-  ON public.financial_provider_sync_staging_runs (provider_item_ref) WHERE status IN ('fetching', 'fetched');
+  ON public.financial_provider_sync_staging_runs (provider_item_ref) WHERE status IN ('fetching', 'fetched', 'blocked');
 CREATE INDEX IF NOT EXISTS idx_financial_provider_sync_staging_runs_org_item
   ON public.financial_provider_sync_staging_runs (organization_id, provider_item_ref, created_at DESC);
 
@@ -94,7 +104,7 @@ CREATE TABLE IF NOT EXISTS public.financial_provider_sync_staged_changes (
 -- ── Open or resume ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.financial_provider_sync_open_run(p_organization_id UUID, p_item_id UUID, p_max_age_seconds INTEGER DEFAULT 86400)
 RETURNS TABLE(run_id UUID, status TEXT, generation INTEGER, page_cursor TEXT, pages_staged INTEGER, restarts INTEGER, start_cursor TEXT,
-              update_status TEXT, staged_rows INTEGER, opened TEXT)
+              update_status TEXT, staged_rows INTEGER, opened TEXT, blocked_reason TEXT)
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = public
@@ -114,9 +124,10 @@ BEGIN
   IF v_item.status = 'disconnected' THEN RAISE EXCEPTION 'SYNC_ITEM_DISCONNECTED' USING ERRCODE = 'check_violation'; END IF;
 
   SELECT * INTO v_run FROM public.financial_provider_sync_staging_runs r
-    WHERE r.provider_item_ref = p_item_id AND r.organization_id = p_organization_id AND r.status IN ('fetching', 'fetched') FOR UPDATE;
+    WHERE r.provider_item_ref = p_item_id AND r.organization_id = p_organization_id AND r.status IN ('fetching', 'fetched', 'blocked') FOR UPDATE;
   v_have := FOUND;
-  IF v_have AND (v_run.start_cursor IS DISTINCT FROM v_item.sync_cursor OR v_run.created_at < now() - make_interval(secs => p_max_age_seconds)) THEN
+  -- A blocked run waits for owner review: it is returned as is, never expired or replaced automatically.
+  IF v_have AND v_run.status <> 'blocked' AND (v_run.start_cursor IS DISTINCT FROM v_item.sync_cursor OR v_run.created_at < now() - make_interval(secs => p_max_age_seconds)) THEN
     -- The committed cursor moved by another path, or the run is too old to resume confidently: it can never be applied. Start over.
     UPDATE public.financial_provider_sync_staging_runs SET status = 'abandoned', finished_at = now(), updated_at = now(),
       abandon_reason = CASE WHEN v_run.start_cursor IS DISTINCT FROM v_item.sync_cursor THEN 'CURSOR_MOVED' ELSE 'EXPIRED' END
@@ -130,16 +141,14 @@ BEGIN
     v_opened := 'created';
   END IF;
   RETURN QUERY SELECT v_run.id, v_run.status, v_run.generation, v_run.page_cursor, v_run.pages_staged, v_run.restarts, v_run.start_cursor,
-    v_run.update_status,
-    (SELECT count(*)::INTEGER FROM public.financial_provider_sync_staged_changes s WHERE s.run_id = v_run.id AND s.generation = v_run.generation),
-    v_opened;
+    v_run.update_status, v_run.staged_rows, v_opened, v_run.blocked_reason;
 END;
 $$;
 
 -- ── Stage one page (atomic, compare-and-set on generation + page number) ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.financial_provider_sync_stage_page(
   p_organization_id UUID, p_run_id UUID, p_generation INTEGER, p_page_no INTEGER,
-  p_next_cursor TEXT, p_has_more BOOLEAN, p_update_status TEXT, p_changes JSONB)
+  p_next_cursor TEXT, p_has_more BOOLEAN, p_update_status TEXT, p_changes JSONB, p_max_rows INTEGER DEFAULT 50000)
 RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY INVOKER
@@ -147,6 +156,8 @@ SET search_path = public
 AS $$
 DECLARE
   v_run public.financial_provider_sync_staging_runs%ROWTYPE;
+  -- Callers may lower the run-size limit (tests do), never raise it above 50,000 rows.
+  v_limit INTEGER := least(greatest(coalesce(p_max_rows, 50000), 1), 50000);
 BEGIN
   IF p_changes IS NULL OR jsonb_typeof(p_changes) <> 'array' OR jsonb_array_length(p_changes) > 2000
      OR coalesce(p_next_cursor, '') = '' OR p_has_more IS NULL OR p_page_no IS NULL OR p_page_no < 0 THEN
@@ -158,6 +169,11 @@ BEGIN
   -- A stale writer (older generation, page already staged by someone else, run finished) changes nothing.
   IF v_run.status <> 'fetching' OR v_run.generation <> p_generation OR v_run.pages_staged <> p_page_no THEN
     RETURN 'stale';
+  END IF;
+  -- Run-size limit: an update this large is blocked for owner review instead of being applied. Rows staged so far are kept.
+  IF v_run.staged_rows + jsonb_array_length(p_changes) > v_limit THEN
+    UPDATE public.financial_provider_sync_staging_runs SET status = 'blocked', blocked_reason = 'RUN_TOO_LARGE', updated_at = now() WHERE id = p_run_id;
+    RETURN 'blocked';
   END IF;
 
   DELETE FROM public.financial_provider_sync_staged_changes s
@@ -182,7 +198,7 @@ BEGIN
   END IF;
 
   UPDATE public.financial_provider_sync_staging_runs SET
-    page_cursor = p_next_cursor, pages_staged = pages_staged + 1, update_status = left(p_update_status, 64), updated_at = now(),
+    page_cursor = p_next_cursor, pages_staged = pages_staged + 1, staged_rows = staged_rows + jsonb_array_length(p_changes), update_status = left(p_update_status, 64), updated_at = now(),
     status = CASE WHEN p_has_more THEN 'fetching' ELSE 'fetched' END,
     final_cursor = CASE WHEN p_has_more THEN NULL ELSE p_next_cursor END
   WHERE id = p_run_id;
@@ -206,7 +222,7 @@ BEGIN
   IF v_run.status <> 'fetching' OR v_run.generation <> p_generation THEN RETURN 'stale'; END IF;
   DELETE FROM public.financial_provider_sync_staged_changes s WHERE s.run_id = p_run_id;
   UPDATE public.financial_provider_sync_staging_runs SET
-    generation = generation + 1, page_cursor = start_cursor, pages_staged = 0, restarts = restarts + 1,
+    generation = generation + 1, page_cursor = start_cursor, pages_staged = 0, staged_rows = 0, restarts = restarts + 1,
     final_cursor = NULL, update_status = NULL, updated_at = now()
   WHERE id = p_run_id;
   RETURN 'restarted';
@@ -222,7 +238,7 @@ AS $$
 BEGIN
   IF p_reason IS NULL OR p_reason !~ '^[A-Z0-9_]{1,64}$' THEN RAISE EXCEPTION 'SYNC_ARGUMENTS_INVALID' USING ERRCODE = 'invalid_parameter_value'; END IF;
   UPDATE public.financial_provider_sync_staging_runs SET status = 'abandoned', abandon_reason = p_reason, finished_at = now(), updated_at = now()
-    WHERE id = p_run_id AND organization_id = p_organization_id AND status IN ('fetching', 'fetched');
+    WHERE id = p_run_id AND organization_id = p_organization_id AND status IN ('fetching', 'fetched', 'blocked');
   IF NOT FOUND THEN RETURN 'unchanged'; END IF;
   DELETE FROM public.financial_provider_sync_staged_changes s WHERE s.run_id = p_run_id;
   RETURN 'abandoned';
@@ -244,6 +260,7 @@ DECLARE
   v_item RECORD;
   v_run public.financial_provider_sync_staging_runs%ROWTYPE;
   v_added INTEGER; v_modified INTEGER; v_removed INTEGER; v_linked INTEGER;
+  v_removed_ids TEXT[];
 BEGIN
   IF p_outcome IS NULL OR p_outcome NOT IN ('synced', 'waiting', 'unconfirmed') THEN
     RAISE EXCEPTION 'SYNC_ARGUMENTS_INVALID' USING ERRCODE = 'invalid_parameter_value';
@@ -257,6 +274,9 @@ BEGIN
 
   IF v_run.status = 'applied' THEN
     RETURN QUERY SELECT 'already_applied'::TEXT, v_run.added_count, v_run.modified_count, v_run.removed_count, v_run.pending_linked_count; RETURN;
+  END IF;
+  IF v_run.status = 'blocked' THEN
+    RETURN QUERY SELECT 'blocked'::TEXT, 0, 0, 0, 0; RETURN;
   END IF;
   IF v_run.status <> 'fetched' OR v_run.generation <> p_generation THEN
     RETURN QUERY SELECT 'stale'::TEXT, 0, 0, 0, 0; RETURN;
@@ -296,19 +316,19 @@ BEGIN
     transaction_date = EXCLUDED.transaction_date, authorized_date = EXCLUDED.authorized_date, name = EXCLUDED.name, merchant_name = EXCLUDED.merchant_name,
     provider_category = EXCLUDED.provider_category, removed_at = NULL;
 
-  WITH last_event AS (
+  -- Removals (PLAID-1E): the ids whose LAST event is a removal are computed ONCE, then marked through the identity index
+  -- (provider_item_ref, provider_transaction_id). A join here let the planner rescan every staged row per existing evidence row (quadratic).
+  SELECT coalesce(array_agg(x.provider_transaction_id), '{}') INTO v_removed_ids FROM (
     SELECT s.provider_transaction_id, s.change_kind,
            row_number() OVER (PARTITION BY s.provider_transaction_id
                               ORDER BY s.page_no DESC, CASE s.change_kind WHEN 'added' THEN 0 WHEN 'modified' THEN 1 ELSE 2 END DESC, s.seq DESC) AS rn
     FROM public.financial_provider_sync_staged_changes s WHERE s.run_id = p_run_id AND s.generation = p_generation
-  ), marked AS (
-    UPDATE public.financial_provider_transactions t SET removed_at = now()
-    FROM last_event e
-    WHERE e.rn = 1 AND e.change_kind = 'removed' AND t.organization_id = p_organization_id AND t.provider_item_ref = p_item_id
-      AND t.provider_transaction_id = e.provider_transaction_id AND t.removed_at IS NULL
-    RETURNING t.id
-  )
-  SELECT count(*)::INTEGER INTO v_removed FROM marked;
+  ) x
+  WHERE x.rn = 1 AND x.change_kind = 'removed';
+  UPDATE public.financial_provider_transactions t SET removed_at = now()
+    WHERE t.provider_item_ref = p_item_id AND t.provider_transaction_id = ANY (v_removed_ids)
+      AND t.organization_id = p_organization_id AND t.removed_at IS NULL;
+  GET DIAGNOSTICS v_removed = ROW_COUNT;
 
   UPDATE public.financial_provider_items SET
     sync_cursor = v_run.final_cursor, sync_status = 'idle', last_sync_completed_at = now(),
@@ -325,18 +345,55 @@ BEGIN
 END;
 $$;
 
+-- ── A failed final apply (PLAID-1E) ───────────────────────────────────────────────────────────────────────────────────────────
+-- The apply rolled back, so evidence, cursor and staged rows are unchanged. This counts the failure in its own transaction; the third failure
+-- blocks the run for owner review, so a deterministic failure (statement timeout, a constraint) cannot retry forever. Only the request that
+-- still holds the Item's lease, on the run's current generation, may count a failure.
+CREATE OR REPLACE FUNCTION public.financial_provider_sync_record_apply_failure(
+  p_organization_id UUID, p_item_id UUID, p_run_id UUID, p_generation INTEGER, p_lease_started_at TIMESTAMPTZ, p_max_failures INTEGER DEFAULT 3)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_item RECORD;
+  v_run public.financial_provider_sync_staging_runs%ROWTYPE;
+  v_limit INTEGER := least(greatest(coalesce(p_max_failures, 3), 1), 3);
+BEGIN
+  SELECT i.id, i.sync_status, i.last_sync_started_at INTO v_item FROM public.financial_provider_items i
+    WHERE i.id = p_item_id AND i.organization_id = p_organization_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'SYNC_ITEM_NOT_FOUND' USING ERRCODE = 'no_data_found'; END IF;
+  SELECT * INTO v_run FROM public.financial_provider_sync_staging_runs r
+    WHERE r.id = p_run_id AND r.organization_id = p_organization_id AND r.provider_item_ref = p_item_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'SYNC_RUN_NOT_FOUND' USING ERRCODE = 'no_data_found'; END IF;
+  IF v_run.status = 'blocked' THEN RETURN 'blocked'; END IF;
+  IF v_run.status <> 'fetched' OR v_run.generation <> p_generation
+     OR v_item.sync_status IS DISTINCT FROM 'syncing' OR v_item.last_sync_started_at IS DISTINCT FROM p_lease_started_at THEN
+    RETURN 'stale';
+  END IF;
+  UPDATE public.financial_provider_sync_staging_runs SET apply_failures = apply_failures + 1, updated_at = now(),
+    status = CASE WHEN apply_failures + 1 >= v_limit THEN 'blocked' ELSE status END,
+    blocked_reason = CASE WHEN apply_failures + 1 >= v_limit THEN 'APPLY_FAILED_REPEATEDLY' ELSE blocked_reason END
+  WHERE id = p_run_id;
+  RETURN CASE WHEN v_run.apply_failures + 1 >= v_limit THEN 'blocked' ELSE 'retry' END;
+END;
+$$;
+
 ALTER TABLE public.financial_provider_sync_staging_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.financial_provider_sync_staged_changes ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.financial_provider_sync_staging_runs, public.financial_provider_sync_staged_changes FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.financial_provider_sync_staging_runs, public.financial_provider_sync_staged_changes TO service_role;
 
 REVOKE ALL ON FUNCTION public.financial_provider_sync_open_run(UUID, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.financial_provider_sync_stage_page(UUID, UUID, INTEGER, INTEGER, TEXT, BOOLEAN, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.financial_provider_sync_stage_page(UUID, UUID, INTEGER, INTEGER, TEXT, BOOLEAN, TEXT, JSONB, INTEGER) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.financial_provider_sync_record_apply_failure(UUID, UUID, UUID, INTEGER, TIMESTAMPTZ, INTEGER) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.financial_provider_sync_restart_run(UUID, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.financial_provider_sync_abandon_run(UUID, UUID, TEXT) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.financial_provider_sync_apply_run(UUID, UUID, UUID, INTEGER, TIMESTAMPTZ, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.financial_provider_sync_open_run(UUID, UUID, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.financial_provider_sync_stage_page(UUID, UUID, INTEGER, INTEGER, TEXT, BOOLEAN, TEXT, JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION public.financial_provider_sync_stage_page(UUID, UUID, INTEGER, INTEGER, TEXT, BOOLEAN, TEXT, JSONB, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.financial_provider_sync_record_apply_failure(UUID, UUID, UUID, INTEGER, TIMESTAMPTZ, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.financial_provider_sync_restart_run(UUID, UUID, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.financial_provider_sync_abandon_run(UUID, UUID, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.financial_provider_sync_apply_run(UUID, UUID, UUID, INTEGER, TIMESTAMPTZ, TEXT) TO service_role;

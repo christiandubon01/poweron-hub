@@ -129,6 +129,7 @@ export function recoveryFor(code: string | null | undefined): SyncRecovery {
   if (!code || code === WAITING_MARKER) return 'none'
   if (code === 'ITEM_LOGIN_REQUIRED') return 'reconnect'
   if (code === 'ACCOUNT_UNKNOWN') return 'refresh_accounts'
+  if (code === 'RUN_TOO_LARGE' || code === 'APPLY_BLOCKED') return 'owner_review' // PLAID-1E: a blocked resumable run is never retried automatically
   if (code === 'CREDENTIAL_UNREADABLE' || code.startsWith('EVIDENCE_') || code === 'PROVIDER_RESPONSE_UNREADABLE' || code === 'SUPERSEDED') return code === 'SUPERSEDED' ? 'retry' : 'owner_review'
   return 'retry'
 }

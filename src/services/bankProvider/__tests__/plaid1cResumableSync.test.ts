@@ -271,6 +271,50 @@ describe.runIf(!!PGliteCtor)('PLAID-1C resumable sync on PostgreSQL (PGlite)', (
     await expect(resumableSyncStep({ ...w.deps, resumableSyncEnabled: false }, OWNER, { itemId: w.itemId })).rejects.toMatchObject({ code: 'feature_disabled' })
   })
 
+  it('PLAID-1E run-size limit: an update larger than the limit blocks the run for owner review; staged rows are kept and nothing is retried', async () => {
+    const w = await world(undefined, { pageMs: 100 }); backfill(w, 4, 5)
+    w.deps.maxStagedRows = 12 // lowers the 50,000-row ceiling for the test; the SQL never lets a caller raise it
+    await expect(w.step()).rejects.toMatchObject({ code: 'sync_failed' })
+    const run = async () => (await db.query(`SELECT status, blocked_reason, pages_staged, staged_rows, (SELECT count(*)::int FROM public.financial_provider_sync_staged_changes s WHERE s.run_id = r.id) AS staged FROM public.financial_provider_sync_staging_runs r WHERE provider_item_ref = $1`, [w.itemId])).rows
+    expect(await run()).toEqual([{ status: 'blocked', blocked_reason: 'RUN_TOO_LARGE', pages_staged: 2, staged_rows: 10, staged: 10 }])
+    expect(await w.evidence()).toHaveLength(0)
+    expect(await w.row()).toMatchObject({ sync_cursor: null, last_error_code: 'RUN_TOO_LARGE' })
+    const calls = w.plaid.syncTransactions.mock.calls.length
+    await expect(w.step()).rejects.toMatchObject({ code: 'sync_failed' }) // the next press asks for owner review without calling Plaid
+    expect(w.plaid.syncTransactions.mock.calls.length).toBe(calls)
+    const s = (await getSyncStatus(w.deps, OWNER)).syncs.find(x => x.connectionId === w.itemId)
+    expect(s).toMatchObject({ state: 'error', recovery: 'owner_review' })
+  })
+
+  it('PLAID-1E repeated final-apply failures stop after three attempts with an owner-review status; staged rows, evidence and cursor are preserved', async () => {
+    const w = await world(undefined, { pageMs: 100 })
+    w.script.set('START', page({ added: [tx('ok-1', 'wf-chk'), tx('poison-1e', 'wf-sav')], nextCursor: 'final' }))
+    await db.exec(`RESET ROLE;
+      CREATE FUNCTION public.test_poison() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.provider_transaction_id = 'poison-1e' THEN RAISE EXCEPTION 'deterministic failure'; END IF; RETURN NEW; END $$;
+      CREATE TRIGGER test_poison BEFORE INSERT ON public.financial_provider_transactions FOR EACH ROW EXECUTE FUNCTION public.test_poison();
+      SET ROLE service_role`)
+    try {
+      for (const n of [1, 2]) {
+        await expect(w.step()).rejects.toMatchObject({ code: 'persistence_failed' }) // retryable: counted, run still applicable
+        expect((await w.row()).last_error_code).toBe('APPLY_RUN_FAILED')
+        expect((await db.query(`SELECT status, apply_failures FROM public.financial_provider_sync_staging_runs WHERE provider_item_ref=$1`, [w.itemId])).rows[0]).toEqual({ status: 'fetched', apply_failures: n })
+      }
+      await expect(w.step()).rejects.toMatchObject({ code: 'sync_failed' }) // third failure: blocked
+      const calls = w.plaid.syncTransactions.mock.calls.length
+      await expect(w.step()).rejects.toMatchObject({ code: 'sync_failed' }) // no automatic retry
+      expect(w.plaid.syncTransactions.mock.calls.length).toBe(calls)
+      expect((await db.query(`SELECT status, blocked_reason, apply_failures, (SELECT count(*)::int FROM public.financial_provider_sync_staged_changes s WHERE s.run_id = r.id) AS staged FROM public.financial_provider_sync_staging_runs r WHERE provider_item_ref=$1`, [w.itemId])).rows)
+        .toEqual([{ status: 'blocked', blocked_reason: 'APPLY_FAILED_REPEATEDLY', apply_failures: 3, staged: 2 }])
+      expect(await w.evidence()).toHaveLength(0)
+      expect(await w.row()).toMatchObject({ sync_cursor: null, last_error_code: 'APPLY_BLOCKED' })
+      expect((await getSyncStatus(w.deps, OWNER)).syncs.find(x => x.connectionId === w.itemId)).toMatchObject({ state: 'error', recovery: 'owner_review' })
+    } finally { await db.exec('RESET ROLE; DROP TRIGGER test_poison ON public.financial_provider_transactions; DROP FUNCTION public.test_poison(); SET ROLE service_role') }
+    // Owner review resolved it: only an explicit abandon releases the run; the next press starts cleanly.
+    const runId = (await db.query(`SELECT id FROM public.financial_provider_sync_staging_runs WHERE provider_item_ref=$1`, [w.itemId])).rows[0].id
+    await w.deps.staging.abandonRun(ORG, runId, 'OWNER_REVIEWED')
+    expect((await w.drive()).at(-1)).toMatchObject({ phase: 'complete', added: 2 })
+  })
+
   it('browsers have no access to staging data or functions', async () => {
     await db.exec(`RESET ROLE; SET ROLE authenticated; SELECT set_config('request.jwt.claim.sub','${OWNER_ID}',false)`)
     try {
