@@ -64,6 +64,13 @@ export function createBankSyncRepo(svc: Svc, opts: { auditEnabled?: boolean } = 
       if (error) failed('fail_sync', error)
       return Array.isArray(data) ? data.length : 0
     },
+    async releaseSync(organizationId, itemId, startedAt) {
+      // PLAID-1C: end ONE bounded request without moving the cursor or stamping a success; only the holder of the lease may release it.
+      const { data, error } = await items().update({ sync_status: 'idle', last_sync_completed_at: now() })
+        .eq('organization_id', organizationId).eq('id', itemId).eq('sync_status', 'syncing').eq('last_sync_started_at', startedAt).select('id')
+      if (error) failed('release_sync', error)
+      return Array.isArray(data) ? data.length : 0
+    },
     async recordRunEvent(e: SyncRunEvent) {
       if (!opts.auditEnabled) return
       const n = (v: number | undefined) => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null)

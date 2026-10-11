@@ -78,6 +78,8 @@ export interface BankSyncRepo {
    */
   finishSync(organizationId: string, itemId: string, input: { cursor: string | null; state: SyncOutcome; startedAt?: string }): Promise<void | number>
   failSync(organizationId: string, itemId: string, code: string, startedAt?: string): Promise<void | number>
+  /** PLAID-1C: release the lease after one bounded request, without touching the cursor or success stamps. Returns rows changed (0 = superseded). */
+  releaseSync?(organizationId: string, itemId: string, startedAt: string): Promise<number>
   /** PLAID-1B append-only run audit (requires the separately approved table; a no-op until enabled). Never carries a cursor, token or transaction text. */
   recordRunEvent?(event: SyncRunEvent): Promise<void>
   markLoginRequired(organizationId: string, itemId: string): Promise<void>
@@ -97,6 +99,10 @@ export interface BankSyncDeps extends BankAccountDeps {
   syncLeaseMs?: number
   /** PLAID-1B server switch (PLAID_BACKGROUND_SYNC_ENABLED === 'true'). Off by default. */
   backgroundSyncEnabled?: boolean
+  /** PLAID-1C server switch (PLAID_RESUMABLE_SYNC_ENABLED === 'true'); requires the PLAID-1C SQL. Off by default. */
+  resumableSyncEnabled?: boolean
+  /** PLAID-1C: progress of an open resumable run (never a cursor). Only read while resumable sync is enabled. */
+  staging?: { getProgress(organizationId: string, itemId: string): Promise<{ status: 'fetching' | 'fetched'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null> }
 }
 
 /** PLAID-1B: one append-only audit event of a sync run. Cursor progress is a one-way 16-hex fingerprint, never the cursor itself. */
@@ -136,7 +142,7 @@ export const RECOVERY_TEXT: Record<SyncRecovery, string> = {
 const clock = (deps: BankSyncDeps) => (deps.now ? deps.now() : Date.now())
 
 export type SyncOutcome = 'synced' | 'waiting' | 'unconfirmed'
-export type SyncUiState = SyncOutcome | 'not_synced' | 'syncing' | 'error' | 'login_required'
+export type SyncUiState = SyncOutcome | 'not_synced' | 'syncing' | 'error' | 'login_required' | 'partial'
 /** Persisted (in last_error_code, which is otherwise empty after a non-failed sync) so Waiting survives a page reload. */
 export const WAITING_MARKER = 'WAITING_FOR_PLAID'
 const COMPLETE_STATUSES = new Set(['INITIAL_UPDATE_COMPLETE', 'HISTORICAL_UPDATE_COMPLETE'])
@@ -173,13 +179,17 @@ export async function getSyncStatus(deps: BankSyncDeps, actor: BankActor) {
     const [state, counts, updatesAvailable] = await Promise.all([
       deps.sync.getSyncState(actor.organizationId, item.id), deps.sync.countEvidence(actor.organizationId, item.id), deps.sync.hasPendingNudge(actor.organizationId, item.id),
     ])
-    const ui = deriveSyncState(item, state, deps.syncLeaseMs ?? SYNC_LEASE_MS, clock(deps))
+    const derived = deriveSyncState(item, state, deps.syncLeaseMs ?? SYNC_LEASE_MS, clock(deps))
+    // PLAID-1C: an unfinished resumable update is shown as such; nothing from it is visible in evidence or reports until it completes.
+    const progress = deps.resumableSyncEnabled === true && deps.staging ? await deps.staging.getProgress(actor.organizationId, item.id) : null
+    const ui: SyncUiState = progress && derived !== 'syncing' && derived !== 'login_required' && derived !== 'error' ? 'partial' : derived
     const lastErrorCode = ui === 'error' ? (state?.lastErrorCode ?? null) : null
     const recovery = ui === 'error' ? recoveryFor(lastErrorCode) : ui === 'login_required' ? 'reconnect' : 'none'
     out.push({ connectionId: item.id, state: ui, lastSyncedAt: state?.lastSuccessfulAt ?? null, lastAttemptAt: state?.completedAt ?? state?.startedAt ?? null, counts, updatesAvailable,
-      lastErrorCode, recovery, recoveryText: RECOVERY_TEXT[recovery] })
+      lastErrorCode, recovery, recoveryText: RECOVERY_TEXT[recovery],
+      progress: progress ? { phase: progress.status === 'fetched' ? 'ready_to_apply' : 'fetching', pagesStaged: progress.pagesStaged, restarts: progress.restarts, startedAt: progress.startedAt, updatedAt: progress.updatedAt } : null })
   }
-  return { syncs: out, backgroundSyncEnabled: deps.backgroundSyncEnabled === true }
+  return { syncs: out, backgroundSyncEnabled: deps.backgroundSyncEnabled === true, resumableSyncEnabled: deps.resumableSyncEnabled === true }
 }
 
 const unavailable = () => new BankConnectionError('plaid_unavailable', 502, 'The bank connection service is unavailable. Try again shortly.')

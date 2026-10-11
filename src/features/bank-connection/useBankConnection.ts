@@ -38,7 +38,7 @@ export interface BankAccountSummary {
 /** Sanitized sync status: state, last synced time and evidence COUNTS only (no transaction text, ids or amounts). */
 export interface BankSyncSummary {
   connectionId: string
-  state: 'not_synced' | 'syncing' | 'waiting' | 'unconfirmed' | 'synced' | 'error' | 'login_required'
+  state: 'not_synced' | 'syncing' | 'waiting' | 'unconfirmed' | 'synced' | 'error' | 'login_required' | 'partial'
   lastSyncedAt: string | null
   counts: { posted: number; pending: number; removed: number }
   updatesAvailable: boolean
@@ -47,6 +47,8 @@ export interface BankSyncSummary {
   recovery?: 'retry' | 'reconnect' | 'refresh_accounts' | 'owner_review' | 'none'
   recoveryText?: string
   lastAttemptAt?: string | null
+  /** PLAID-1C: an unfinished resumable update (pages received so far are not visible anywhere until it completes). */
+  progress?: { phase: 'fetching' | 'ready_to_apply'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null
 }
 export interface CashAccountOption { id: string; displayName: string; accountType: string; ownershipContext: string }
 /** PLAID-1A: one shared account as the bank reports it (no provider id, balance or token). */
@@ -82,6 +84,8 @@ export function useBankConnection() {
   const [accountAdditionsEnabled, setAccountAdditionsEnabled] = useState(false)
   const [addPreview, setAddPreview] = useState<AccountAdditionPreview | null>(null)
   const [backgroundSyncEnabled, setBackgroundSyncEnabled] = useState(false)
+  const [resumableSyncEnabled, setResumableSyncEnabled] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -109,6 +113,7 @@ export function useBankConnection() {
       const data = await request('plaid-sync', { method: 'GET' })
       setSyncs(Array.isArray(data.syncs) ? data.syncs : [])
       setBackgroundSyncEnabled(data.backgroundSyncEnabled === true)
+      setResumableSyncEnabled(data.resumableSyncEnabled === true)
       return Array.isArray(data.syncs) ? data.syncs as BankSyncSummary[] : []
     } catch { /* keep the last known status */ return null }
   }, [])
@@ -237,6 +242,24 @@ export function useBankConnection() {
   const syncNow = useCallback(async (itemId: string) => {
     setBusy(true); setMessage(null)
     try {
+      if (resumableSyncEnabled) {
+        // PLAID-1C: repeat short, bounded steps until the update is applied. Progress is durable on the server after every page, so closing the page
+        // or losing the network only pauses it; pressing Sync again continues where it stopped.
+        let busyRetries = 0
+        for (let step = 0; step < 300; step++) {
+          let out: { more?: boolean; phase?: string; pagesStaged?: number }
+          try { out = await request('plaid-sync', { method: 'POST', body: { action: 'sync_step', itemId } }) }
+          catch (error) {
+            const e = error as Error & { status?: number; code?: string }
+            if (e.status === 409 && e.code === 'conflict' && busyRetries < 6) { busyRetries++; await new Promise(r => setTimeout(r, 5000)); continue }
+            throw error
+          }
+          busyRetries = 0
+          setSyncProgress(out.more ? `Receiving bank history… ${out.pagesStaged ?? 0} page(s) so far. Nothing changes in Cash OS until it finishes; you can close this page and press Sync later to continue.` : null)
+          if (!out.more) break
+        }
+        return
+      }
       if (!backgroundSyncEnabled) { await request('plaid-sync', { method: 'POST', body: { action: 'sync', itemId } }); return }
       const res = await fetch(`${BASE}/plaid-sync-background`, { method: 'POST', headers: await authedJsonHeaders(), body: JSON.stringify({ itemId }) })
       if (res.status !== 202) throw new Error('Background sync is not available on this site yet. Nothing was changed.')
@@ -250,8 +273,8 @@ export function useBankConnection() {
       }
     }
     catch (error) { setMessage((error as Error).message) }
-    finally { await refreshSyncs(); await refresh(); setBusy(false) }
-  }, [refreshSyncs, refresh, backgroundSyncEnabled])
+    finally { setSyncProgress(null); await refreshSyncs(); await refresh(); setBusy(false) }
+  }, [refreshSyncs, refresh, backgroundSyncEnabled, resumableSyncEnabled])
   const mapAccount = useCallback(async (providerAccountId: string, financialAccountId: string) => {
     setBusy(true); setMessage(null)
     try { await request('plaid-accounts', { method: 'POST', body: { action: 'map', providerAccountId, financialAccountId } }); await refreshAccounts() }
@@ -264,5 +287,5 @@ export function useBankConnection() {
   }, [refreshAccounts])
 
   return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview }
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress }
 }

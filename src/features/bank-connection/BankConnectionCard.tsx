@@ -88,6 +88,7 @@ const SYNC_LABEL: Record<BankSyncSummary['state'], string> = {
   not_synced: 'Not synced yet', syncing: 'Syncing…', waiting: 'Waiting for the bank to prepare your transactions',
   unconfirmed: 'No transactions came back yet. That does not confirm there are none. Try again later.',
   synced: 'Synced', error: 'Last sync failed. You can try again.', login_required: 'Sign-in needed. Use Reconnect.',
+  partial: 'Sync paused partway. Press Sync to continue; nothing from it appears in Cash OS until it finishes.',
 }
 
 /** Compact bank-evidence status. It is NOT the ledger: nothing here changes a balance, report or Outlook number. */
@@ -100,6 +101,7 @@ function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: strin
       <div className="min-w-0 text-xs">
         <p data-testid="bank-sync-state">{SYNC_LABEL[state]}{state === 'synced' && when ? <span className="text-[var(--text-secondary)]"> · Last synced {when}</span> : null}</p>
         {sync && (sync.counts.posted > 0 || sync.counts.pending > 0) && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-counts">{sync.counts.posted} posted · {sync.counts.pending} pending</p>}
+        {state === 'partial' && sync?.progress && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-progress">{sync.progress.pagesStaged} page(s) received so far{sync.progress.phase === 'ready_to_apply' ? ' · ready to finish' : ''}.</p>}
         {sync?.updatesAvailable && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-updates">New bank updates are available.</p>}
         {state === 'error' && sync?.recoveryText && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-recovery">{sync.recoveryText}{sync.lastErrorCode ? ` (code ${sync.lastErrorCode})` : ''}</p>}
         {state !== 'synced' && sync?.lastSyncedAt && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-last-success">Last successful sync {new Date(sync.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>}
@@ -116,7 +118,7 @@ function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: strin
  */
 export default function BankConnectionCard() {
   const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview } = useBankConnection()
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress } = useBankConnection()
   if (load !== 'ready') return null
   // Only Items of THIS environment are active here. An Item of the other environment (e.g. the earlier Sandbox test) is kept, shown for clarity, and has no actions.
   const here = connections.filter(c => (c.environment ?? 'sandbox') === (environment ?? 'sandbox'))
@@ -172,6 +174,7 @@ export default function BankConnectionCard() {
         <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Remove this test mapping? Your records, balances and the test history are not changed.')) void unmapAccount(a.id) }}>Remove mapping</button>
       </p>)}
     </div>)}
+    {syncProgress && <p role="status" className="mt-2 text-sm text-[var(--text-secondary)]" data-testid="bank-sync-step-progress">{syncProgress}</p>}
     {message && <p role="alert" className="mt-2 text-sm" style={{ color: 'var(--fin-negative)' }}>{message}</p>}
   </section>
 }
