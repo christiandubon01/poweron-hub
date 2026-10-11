@@ -145,6 +145,17 @@ describe('PLAID-3A the switch is read from the server and enforced at every serv
     expect(relOf(on.rows, O1).target?.id ?? null).toBeNull()
   })
 
+  it('the Explorer payload gains NOTHING while the switch is off (no `matches` key, same keys as before); the key appears only when it is on', async () => {
+    const keys = async (on?: boolean) => Object.keys(await getExplorer(deps(on), owner, { accounts: 'all', from: '2026-08-01' })).sort()
+    const offKeys = await keys(undefined)
+    expect(offKeys).toEqual(await keys(false))
+    expect(offKeys).not.toContain('matches')
+    expect(offKeys).toEqual(['accounts', 'analytics', 'asOf', 'contract', 'coverage', 'draftScope', 'environment', 'hierarchy', 'meta', 'options', 'reviewCounts', 'rows', 'total', 'viewCounts', 'window'])
+    const onOut = await getExplorer(deps(true), owner, { accounts: 'all', from: '2026-08-01' })
+    expect(Object.keys(onOut).sort()).toEqual([...offKeys, 'matches'].sort())
+    expect(onOut.matches).toEqual({ enabled: true })
+  })
+
   it('every service entry point sees the same decision: Explorer, Smart Review, accept-suggestion, reports and the merchant explorer', async () => {
     // Smart Review: its transfer exception list mirrors the row states
     const sr = (on) => getSmartReview(deps(on), owner, { accounts: 'all', from: '2026-08-01' })
