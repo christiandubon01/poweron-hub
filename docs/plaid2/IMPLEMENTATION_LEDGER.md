@@ -13,9 +13,14 @@ Durable record for resuming this workstream in any session. Newest checkpoints a
 | Phase | Track | Status | Commit | Notes |
 |---|---|---|---|---|
 | PLAID-1A..1E | D/H | done (earlier) | 28c8efb, 6fbd085, 04d815e, 27d1950 | inactive |
-| PLAID-2-RUNBOOK | A | done | see checkpoint 1 | `PRODUCTION_RUNBOOK.md`, `scripts/plaid/proposal-evidence.mjs` |
-| PLAID-2A | B | done, inactive | see checkpoint 1 | pending→posted continuity |
-| PLAID-2C | C | done, inactive | see checkpoint 1 | hash-chained provider-fact history |
+| PLAID-2-RUNBOOK | A | done | 3dc9c55 | `PRODUCTION_RUNBOOK.md`, `scripts/plaid/proposal-evidence.mjs` (hashes, objects, preflight/validation SQL, rollback) |
+| PLAID-2A | B | done, inactive | 3dc9c55 | pending→posted link table + decision inheritance (SQL + repo + step hook + `relink_pending`) |
+| PLAID-2C | C | done, inactive | 3dc9c55 | hash-chained, trigger-only provider-fact history; 1C apply stamps run provenance |
+| PLAID-2E | E | done, switch off | 211b2aa, 24f60d8 | balances from cached `/accounts/get` into the EXISTING snapshot table (no new SQL); card/UI section |
+| PLAID-2F | F | done | af776ef | reconciliation engine (transfers, card payments, refunds), wired into the classifier; confirmed pair confirms both legs |
+| PLAID-2G | G | done (pure + tests) | af776ef | `consolidatedPosition.ts`; end-to-end no-double-count test over the BANK-6G report |
+| PLAID-2H | H | done | d53b929 | blocked-run review + confirmed discard, attention list, freshness |
+| Track D | D | no new work needed | — | 1A already covers update mode, preview, duplicate guard, explicit save; remaining steps are owner-gated (see runbook §7) |
 
 ## Prepared but UNINSTALLED SQL
 
@@ -37,6 +42,35 @@ Hashes: `node scripts/plaid/proposal-evidence.mjs`. 1B's revisions half is super
 5. Enable `PLAID_ACCOUNT_ADDITIONS_ENABLED`; launch Plaid Link update mode for the Wells Fargo Item; save previewed accounts.
 6. Never without a separate request: BANK-6H category proposal; repair of migrations 157/158; Netlify upgrade; production sync.
 
+## Tests and measured results
+
+- Baseline `27d1950`: full suite 7,567 tests, 7,517 passed, 48 failed. HEAD: 7,648 tests, 7,599 passed, 47 failed. **No test fails on HEAD that did not fail on the baseline** (same-name comparison; the failures are migration-count guards, auth-store, CASH-8 and similar, all unrelated; one load-sensitive UI test differs between the two concurrent runs).
+- `npx tsc --noEmit` clean; `npm run build` passes.
+- New suites (PGlite = real PostgreSQL SQL): `plaid2aPendingPostedContinuity` (18), `plaid2cProviderHistory` (9), `plaid2eBalances` (14), `plaid2fReconciliation` (10), `plaid2fExplorerIntegration` (4), `plaid2gConsolidated` (7), `plaid2hAttention` (3), UI `plaid2eBalancesCard` (5), plus additions to `plaid1cResumableSync` (continuity step, blocked-run review) and `bankHandlers`.
+- Measured on PGlite (WebAssembly, several times slower than native PostgreSQL): continuity 3,000 pairs in 1.4 s (3 bounded calls), settled re-run 39 ms; history trigger 5,000 changed rows in 11.7 s (≈2.3 ms/row) and chain verification of 5,000 rows 92 ms; reconciliation 6,000 transactions < 3 s (≈0.2 s measured).
+- Nothing here is a production verification.
+
 ## Checkpoints
 
-(appended per phase)
+1. **3dc9c55** — runbook + 2A + 2C. Decision inheritance is deterministic (Plaid's pending_transaction_id inside one Item), same account and direction only, ambiguity (two posted claim one pending) and mismatches inherit nothing, never overwrites a confirmed decision or a newer owner decision/undo, idempotent, bounded per call. History: tamper test proves the server role cannot insert/update/delete/truncate and that edits/deletions made by someone who disables triggers are detected by the chain verifier.
+2. **211b2aa** — balances. Bank cash / card owed / unused credit are separate fields by construction; `availableMinor` is null when the bank did not report it; freshness uses the bank's timestamp when sane; exact cents or the account reading is rejected; duplicate bank timestamps are ignored; no ledger/account/mapping write (asserted by row counts).
+3. **af776ef** — reconciliation + consolidated position. Replaces the old greedy equal-amount pairing (which could pair arbitrarily when several movements matched). Behaviour change to note: ambiguous groups are now low-confidence "pick the right ones" instead of an arbitrary pair; a refund inflow gets a *refund* suggestion (never income); confirmed transfer decisions that name a counterpart now confirm the other leg in the Explorer too.
+4. **d53b929** — operations: a blocked run is visible with counts, can be discarded only with the named run id and the typed word DISCARD; an attention list orders actions > warnings > info.
+
+## Remaining blockers and risks
+
+- **RUN_TOO_LARGE has no in-app exit that makes the update fit.** Discarding re-fetches the same update and stops at the 50,000-row cap again. Raising the cap is a separate owner-approved SQL change (the cap is the default of `financial_provider_sync_stage_page`) and must be re-measured against the 8 s statement timeout.
+- **2C trigger cost** adds ≈2 ms per *changed* row on PGlite. A pathological update that modifies tens of thousands of existing rows could now exceed the statement timeout; it would be rolled back and blocked for review (safe), never half-applied. Normal syncs change tens of rows.
+- Continuity runs after a committed apply and is re-runnable; if a request ends first, run `relink_pending` (also bounded). Late owner decisions on a pending row are picked up for 14 days after linking.
+- Pending/posted ids are only linked when Plaid supplies `pending_transaction_id`. There is deliberately no fuzzy fallback.
+- Reconciliation pairs only within the data loaded (Explorer window) and only posted-with-posted / pending-with-pending; a payment to a card that is **not connected** is a one-sided hint, not a pair.
+- Balances come from Plaid's cached `/accounts/get`; real-time `/accounts/balance/get` is billed per call and is intentionally not used. Banks may return stale cached numbers; the UI shows the bank's own timestamp and freshness.
+- `plaid-balances` is a new routed Netlify function (deployed, refuses everything unless `PLAID_BALANCES_ENABLED=true`).
+- Not verifiable here: Netlify plan/limits, production env flags, production catalog state (the preflight SQL in the runbook checks it).
+- Wells Fargo may show Account Select regardless of the update-mode flag; previously shared accounts must stay selected (PLAID-1A note).
+- Not built (out of safe scope): a UI to confirm/reject reconciliation pairs beyond the existing Smart Review/Explorer decision actions; a dated per-day balance history chart; manual-ledger comparison fed from the live ledger (the function accepts it; no caller wires it yet).
+
+## Estimated completion of the full multi-account scope
+
+Code complete and tested for tracks A–H except the owner-gated activation and the items above. Roughly **80–85%**: the remaining ~15–20% is production installation/validation (nothing proven in production), observing what Plaid actually returns for the new Wells Fargo accounts, wiring the live ledger into the consolidated position, and a pair-review UI.
+

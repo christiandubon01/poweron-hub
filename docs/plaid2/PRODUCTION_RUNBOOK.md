@@ -110,6 +110,27 @@ SELECT count(*) FROM public.financial_provider_transaction_history;   -- 0
 Re-run section 1 (identical). **Cost note:** the trigger adds roughly 2 ms per *changed* provider row on the scratch host; a normal sync changes tens of rows. A 5,000-row mass update measured 11.7 s on the slower scratch host, so very large modification batches should stay below the 50,000-row run cap and the 8 s statement timeout will block them safely (owner review) rather than half-apply. **Activation:** none needed (trigger is the capture). **Rollback:** `DROP TRIGGER trg_fpt_81_history ON public.financial_provider_transactions;` — history already written stays.
 Weekly integrity check (read-only): `SELECT * FROM public.financial_provider_verify_history('<organization id>');` must return no rows.
 
-## 6. Later phases
+## 6. Switch-only activations (no SQL to install)
 
-Sections for balances, reconciliation and economic events are appended here by those phases (see `IMPLEMENTATION_LEDGER.md`).
+These use tables that already exist in production (migration 153). Each still needs the owner's separate approval, because it makes new reads/writes against production data.
+
+| Switch | Feature | What the first use does | Read-only check afterwards | Rollback |
+|---|---|---|---|---|
+| `PLAID_BALANCES_ENABLED=true` | PLAID-2E balances | `Refresh balances` on a connection: ONE cached `/accounts/get` (no per-call fee), appends rows to `financial_provider_balance_snapshots` | `SELECT count(*), max(observed_at) FROM financial_provider_balance_snapshots;` rows grow by at most one per account per refresh; `financial_accounts`, `financial_transactions` and mappings unchanged (section 1 fingerprint) | unset the switch; snapshots stay as history |
+
+Not a switch (always on once deployed, harmless without the SQL): the reconciliation engine and the Explorer's mirrored confirmed-transfer leg (pure code over data already loaded), the attention list, the blocked-run review (needs the 1C SQL to ever see a blocked run).
+
+## 7. Recommended activation order (each step waits for approval and a green validation)
+
+1. Install **plaid1c** → validate (section 3) → `PLAID_RESUMABLE_SYNC_ENABLED=true` → one owner Sync of the existing Item → check section 1 (rows only grow; cursor moves once).
+2. Install **plaid2c** (history) *before* the first large modification batches, so revisions are captured from the start → validate (section 5).
+3. Install **plaid2a** → validate (section 4) → `PLAID_PENDING_CONTINUITY_ENABLED=true` → `relink_pending` once → review `status <> 'linked'` rows.
+4. `PLAID_BALANCES_ENABLED=true` → Refresh balances → compare against the bank's own screens before trusting them (freshness shown per account).
+5. Only then, with the owner present: `PLAID_ACCOUNT_ADDITIONS_ENABLED=true` → Add accounts at this bank (Plaid Link update mode, keep existing accounts selected) → Review shared accounts → Save new accounts → Sync (new accounts arrive through the same cursor; history depth is whatever Plaid makes available; the Item's 90-day request is fixed) → map the new accounts in Cash OS.
+6. Optional: install the **plaid1b** `financial_provider_sync_runs` half (not its revisions half) → `PLAID_SYNC_AUDIT_ENABLED=true`.
+
+Never: `PLAID_BACKGROUND_SYNC_ENABLED` on Netlify Free (background functions are Pro/Enterprise; unverified for this site).
+
+## 8. Disable / rollback summary
+
+Unset the switch → feature off, nothing else changes. History, snapshots, links and inherited decisions already written are ordinary rows the owner can read; inherited decisions can be undone individually. No step deletes provider evidence.
