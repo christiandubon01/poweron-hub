@@ -21,6 +21,11 @@ import { createPlaidSdkPort } from '../../../src/services/bankProvider/plaidPort
 import { createBankConnectionRepo } from '../../../src/services/bankProvider/bankConnectionRepo'
 import { createBankAccountRepo } from '../../../src/services/bankProvider/bankAccountRepo'
 import { createBankSyncRepo } from '../../../src/services/bankProvider/bankSyncRepo'
+import { BACKGROUND_SYNC_LEASE_MS, SYNC_LEASE_MS } from '../../../src/services/bankProvider/bankSyncService'
+
+/** PLAID-1B server switches (configuration only, never request values; off unless exactly "true"). */
+export const backgroundSyncEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_BACKGROUND_SYNC_ENABLED ?? '').trim() === 'true'
+export const syncAuditEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_SYNC_AUDIT_ENABLED ?? '').trim() === 'true'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 
 export const CORS_HEADERS = {
@@ -113,9 +118,11 @@ export async function resolveBankContext(event, overrides = {}) {
   return {
     ok: true,
     actor: { organizationId, userId: user.id, role: data.role },
-    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc), key, environment: config.environment, log: safeLog,
+    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc, { auditEnabled: syncAuditEnabled() }), key, environment: config.environment, log: safeLog,
       // PLAID-1A: server configuration only, never a request value. Off unless exactly "true".
-      accountAdditionsEnabled: (process.env.PLAID_ACCOUNT_ADDITIONS_ENABLED ?? '').trim() === 'true' },
+      accountAdditionsEnabled: (process.env.PLAID_ACCOUNT_ADDITIONS_ENABLED ?? '').trim() === 'true',
+      // PLAID-1B: while background sync is on, every reader and claimer uses the long background lease.
+      backgroundSyncEnabled: backgroundSyncEnabled(), syncLeaseMs: backgroundSyncEnabled() ? BACKGROUND_SYNC_LEASE_MS : SYNC_LEASE_MS },
   }
 }
 

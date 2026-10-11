@@ -42,6 +42,11 @@ export interface BankSyncSummary {
   lastSyncedAt: string | null
   counts: { posted: number; pending: number; removed: number }
   updatesAvailable: boolean
+  /** PLAID-1B: sanitized failure code, what to do next, and when the last attempt happened (absent from older servers). */
+  lastErrorCode?: string | null
+  recovery?: 'retry' | 'reconnect' | 'refresh_accounts' | 'owner_review' | 'none'
+  recoveryText?: string
+  lastAttemptAt?: string | null
 }
 export interface CashAccountOption { id: string; displayName: string; accountType: string; ownershipContext: string }
 /** PLAID-1A: one shared account as the bank reports it (no provider id, balance or token). */
@@ -76,6 +81,7 @@ export function useBankConnection() {
   const [syncs, setSyncs] = useState<BankSyncSummary[]>([])
   const [accountAdditionsEnabled, setAccountAdditionsEnabled] = useState(false)
   const [addPreview, setAddPreview] = useState<AccountAdditionPreview | null>(null)
+  const [backgroundSyncEnabled, setBackgroundSyncEnabled] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -102,7 +108,9 @@ export function useBankConnection() {
     try {
       const data = await request('plaid-sync', { method: 'GET' })
       setSyncs(Array.isArray(data.syncs) ? data.syncs : [])
-    } catch { /* keep the last known status */ }
+      setBackgroundSyncEnabled(data.backgroundSyncEnabled === true)
+      return Array.isArray(data.syncs) ? data.syncs as BankSyncSummary[] : []
+    } catch { /* keep the last known status */ return null }
   }, [])
   useEffect(() => { void refresh(); void refreshAccounts(); void refreshSyncs() }, [refresh, refreshAccounts, refreshSyncs])
 
@@ -222,13 +230,28 @@ export function useBankConnection() {
     try { await discoverAccounts(itemId) } catch (error) { setMessage((error as Error).message) }
     finally { await refresh(); await refreshSyncs(); setBusy(false) } // a sign-in-needed result changes the connection status: show Reconnect
   }, [discoverAccounts])
-  /** Owner-requested only: never automatic. Stores bank evidence; changes no balance, ledger or report. */
+  /**
+   * Owner-requested only: never automatic. Stores bank evidence; changes no balance, ledger or report. PLAID-1B: when the server runs syncs in the
+   * background, the request is accepted at once (202) and the card follows the status until the run ends (at most the 16-minute lease).
+   */
   const syncNow = useCallback(async (itemId: string) => {
     setBusy(true); setMessage(null)
-    try { await request('plaid-sync', { method: 'POST', body: { action: 'sync', itemId } }) }
+    try {
+      if (!backgroundSyncEnabled) { await request('plaid-sync', { method: 'POST', body: { action: 'sync', itemId } }); return }
+      const res = await fetch(`${BASE}/plaid-sync-background`, { method: 'POST', headers: await authedJsonHeaders(), body: JSON.stringify({ itemId }) })
+      if (res.status !== 202) throw new Error('Background sync is not available on this site yet. Nothing was changed.')
+      const deadline = Date.now() + 16 * 60 * 1000
+      await new Promise(r => setTimeout(r, 3000))
+      for (;;) {
+        const list = await refreshSyncs()
+        const mine = list?.find(s => s.connectionId === itemId)
+        if (!mine || mine.state !== 'syncing' || Date.now() > deadline) break
+        await new Promise(r => setTimeout(r, 5000))
+      }
+    }
     catch (error) { setMessage((error as Error).message) }
     finally { await refreshSyncs(); await refresh(); setBusy(false) }
-  }, [refreshSyncs, refresh])
+  }, [refreshSyncs, refresh, backgroundSyncEnabled])
   const mapAccount = useCallback(async (providerAccountId: string, financialAccountId: string) => {
     setBusy(true); setMessage(null)
     try { await request('plaid-accounts', { method: 'POST', body: { action: 'map', providerAccountId, financialAccountId } }); await refreshAccounts() }

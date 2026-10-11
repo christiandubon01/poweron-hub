@@ -723,7 +723,9 @@ describe('BANK-4 static guarantees', () => {
   it('the repo writes only provider evidence, Item sync state and webhook idempotency rows, and never raw JSON columns', () => {
     const repo = read('../bankSyncRepo.ts')
     const tables = [...repo.matchAll(/from\('([a-z_]+)'\)/g)].map(m => m[1])
-    expect(new Set(tables)).toEqual(new Set(['financial_provider_items', 'financial_provider_transactions', 'financial_provider_webhook_events']))
+    // PLAID-1B adds ONLY the append-only sync-run audit (insert-only, switched off until its reviewed SQL is installed).
+    expect(new Set(tables)).toEqual(new Set(['financial_provider_items', 'financial_provider_transactions', 'financial_provider_webhook_events', 'financial_provider_sync_runs']))
+    expect([...repo.matchAll(/from\('financial_provider_sync_runs'\)\.(\w+)/g)].map(m => m[1])).toEqual(['insert'])
     expect(repo).not.toMatch(/raw_payload|original_description|provider_metadata|raw_evidence|payload:/)
     expect(repo).not.toMatch(/\.select\(\s*['"`]\*['"`]/)
     expect(repo).toContain("onConflict: 'provider_item_ref,provider_transaction_id'")

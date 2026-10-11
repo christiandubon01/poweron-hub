@@ -15,6 +15,7 @@
  * is safe. TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION restarts the ENTIRE loop from the original cursor (bounded), and pages are
  * buffered in memory and applied only after a complete loop, so an aborted attempt leaves nothing behind.
  */
+import { createHash, randomUUID } from 'node:crypto'
 import { BankConnectionError, assertAuthority, decryptFor, loadCredential, note, type BankActor } from './bankConnectionService'
 import type { BankAccountDeps } from './bankAccountService'
 import { PlaidApiFailure, ProviderResponseError, type SyncPage } from './plaidPort'
@@ -32,6 +33,14 @@ export const MAX_BUFFERED_TRANSACTIONS = MAX_PAGES * SYNC_PAGE_SIZE
 export const SYNC_TIME_BUDGET_MS = 8_000
 /** A `syncing` lease older than this is considered abandoned (a killed invocation) and may be re-claimed. Far above the longest possible run. */
 export const SYNC_LEASE_MS = 2 * 60 * 1000
+/**
+ * PLAID-1B background execution (Netlify background functions run up to 15 minutes). The run stops itself cleanly at 12 minutes, and its lease
+ * (16 minutes) outlives the platform's hard limit, so a run killed by the platform can never overlap the run that later re-claims the Item.
+ */
+export const BACKGROUND_SYNC_BUDGET_MS = 12 * 60 * 1000
+export const BACKGROUND_SYNC_LEASE_MS = 16 * 60 * 1000
+export type SyncTrigger = 'owner' | 'owner_background'
+export interface SyncRunOptions { budgetMs?: number; leaseMs?: number; trigger?: SyncTrigger }
 const WEBHOOK_CODE = 'SYNC_UPDATES_AVAILABLE'
 
 /** A database failure reduced to what is safe to log: the operation, the SQLSTATE and a schema constraint name. No message, row or value. */
@@ -58,11 +67,19 @@ export interface EvidenceCounts { posted: number; pending: number; removed: numb
 
 export interface BankSyncRepo {
   getSyncState(organizationId: string, itemId: string): Promise<SyncState | null>
-  /** Atomic compare-and-set to `syncing`; false when another sync holds a fresh lease. */
-  claimSync(organizationId: string, itemId: string, staleBeforeIso: string): Promise<boolean>
-  /** Sets the cursor and releases the lease. Only `synced` stamps last_successful_sync_at; `waiting`/`unconfirmed` are remembered as a non-success reason. */
-  finishSync(organizationId: string, itemId: string, input: { cursor: string | null; state: SyncOutcome }): Promise<void>
-  failSync(organizationId: string, itemId: string, code: string): Promise<void>
+  /**
+   * Atomic compare-and-set to `syncing`; false when another sync holds a fresh lease. `startedAtIso` is stamped as the run's lease token
+   * (PLAID-1B): finishing and failing only apply while the Item still carries this exact token.
+   */
+  claimSync(organizationId: string, itemId: string, staleBeforeIso: string, startedAtIso?: string): Promise<boolean>
+  /**
+   * Sets the cursor and releases the lease. Only `synced` stamps last_successful_sync_at; `waiting`/`unconfirmed` are remembered as a non-success reason.
+   * With `startedAt` (PLAID-1B fencing) it applies only if this run still holds the lease and returns the number of rows changed (0 = superseded).
+   */
+  finishSync(organizationId: string, itemId: string, input: { cursor: string | null; state: SyncOutcome; startedAt?: string }): Promise<void | number>
+  failSync(organizationId: string, itemId: string, code: string, startedAt?: string): Promise<void | number>
+  /** PLAID-1B append-only run audit (requires the separately approved table; a no-op until enabled). Never carries a cursor, token or transaction text. */
+  recordRunEvent?(event: SyncRunEvent): Promise<void>
   markLoginRequired(organizationId: string, itemId: string): Promise<void>
   /** Idempotent on (item, provider transaction id). Re-seen/modified rows are un-removed and updated; first_seen_at/created_at never change. */
   upsertEvidence(organizationId: string, itemId: string, rows: EvidenceRow[]): Promise<void>
@@ -73,7 +90,49 @@ export interface BankSyncRepo {
   hasPendingNudge(organizationId: string, itemId: string): Promise<boolean>
   markNudgesProcessed(organizationId: string, itemId: string, receivedBeforeIso: string): Promise<void>
 }
-export interface BankSyncDeps extends BankAccountDeps { sync: BankSyncRepo; now?: () => number }
+export interface BankSyncDeps extends BankAccountDeps {
+  sync: BankSyncRepo
+  now?: () => number
+  /** PLAID-1B: the lease used to read and claim `syncing` (BACKGROUND_SYNC_LEASE_MS when background sync is enabled). Defaults to SYNC_LEASE_MS. */
+  syncLeaseMs?: number
+  /** PLAID-1B server switch (PLAID_BACKGROUND_SYNC_ENABLED === 'true'). Off by default. */
+  backgroundSyncEnabled?: boolean
+}
+
+/** PLAID-1B: one append-only audit event of a sync run. Cursor progress is a one-way 16-hex fingerprint, never the cursor itself. */
+export interface SyncRunEvent {
+  organizationId: string
+  itemId: string
+  runId: string
+  event: 'started' | 'completed' | 'failed' | 'superseded'
+  trigger: SyncTrigger
+  outcome?: SyncOutcome | null
+  added?: number; modified?: number; removed?: number; pending?: number; pendingLinked?: number; pages?: number; restarts?: number; skipped?: number
+  startCursorFingerprint?: string | null
+  endCursorFingerprint?: string | null
+  cursorAdvanced?: boolean
+  errorCode?: string | null
+  errorStage?: SyncStage | null
+  recovery?: SyncRecovery | null
+}
+export type SyncRecovery = 'retry' | 'reconnect' | 'refresh_accounts' | 'owner_review' | 'none'
+export const cursorFingerprint = (cursor: string | null): string | null => cursor ? createHash('sha256').update(cursor).digest('hex').slice(0, 16) : null
+
+/** What the owner should do after a failure, from the sanitized failure code alone. */
+export function recoveryFor(code: string | null | undefined): SyncRecovery {
+  if (!code || code === WAITING_MARKER) return 'none'
+  if (code === 'ITEM_LOGIN_REQUIRED') return 'reconnect'
+  if (code === 'ACCOUNT_UNKNOWN') return 'refresh_accounts'
+  if (code === 'CREDENTIAL_UNREADABLE' || code.startsWith('EVIDENCE_') || code === 'PROVIDER_RESPONSE_UNREADABLE' || code === 'SUPERSEDED') return code === 'SUPERSEDED' ? 'retry' : 'owner_review'
+  return 'retry'
+}
+export const RECOVERY_TEXT: Record<SyncRecovery, string> = {
+  none: '',
+  retry: 'Nothing was marked as synced and the previous position is kept. Sync again; repeating it is safe.',
+  reconnect: 'The bank needs you to sign in again. Use Reconnect, then sync.',
+  refresh_accounts: 'The bank shared an account Cash OS has not saved yet. Review or refresh the accounts for this connection, then sync again.',
+  owner_review: 'This needs owner review before syncing again. Nothing was saved and the previous position is kept.',
+}
 const clock = (deps: BankSyncDeps) => (deps.now ? deps.now() : Date.now())
 
 export type SyncOutcome = 'synced' | 'waiting' | 'unconfirmed'
@@ -114,12 +173,19 @@ export async function getSyncStatus(deps: BankSyncDeps, actor: BankActor) {
     const [state, counts, updatesAvailable] = await Promise.all([
       deps.sync.getSyncState(actor.organizationId, item.id), deps.sync.countEvidence(actor.organizationId, item.id), deps.sync.hasPendingNudge(actor.organizationId, item.id),
     ])
-    out.push({ connectionId: item.id, state: deriveSyncState(item, state, SYNC_LEASE_MS, clock(deps)), lastSyncedAt: state?.lastSuccessfulAt ?? null, counts, updatesAvailable })
+    const ui = deriveSyncState(item, state, deps.syncLeaseMs ?? SYNC_LEASE_MS, clock(deps))
+    const lastErrorCode = ui === 'error' ? (state?.lastErrorCode ?? null) : null
+    const recovery = ui === 'error' ? recoveryFor(lastErrorCode) : ui === 'login_required' ? 'reconnect' : 'none'
+    out.push({ connectionId: item.id, state: ui, lastSyncedAt: state?.lastSuccessfulAt ?? null, lastAttemptAt: state?.completedAt ?? state?.startedAt ?? null, counts, updatesAvailable,
+      lastErrorCode, recovery, recoveryText: RECOVERY_TEXT[recovery] })
   }
-  return { syncs: out }
+  return { syncs: out, backgroundSyncEnabled: deps.backgroundSyncEnabled === true }
 }
 
 const unavailable = () => new BankConnectionError('plaid_unavailable', 502, 'The bank connection service is unavailable. Try again shortly.')
+
+/** Internal: this run no longer holds the Item's lease (PLAID-1B fencing). */
+class Superseded extends Error { constructor() { super('superseded'); this.name = 'Superseded' } }
 
 /** Internal: a failure that has a sanitized code for the Item's error state and a safe message for the owner. */
 class SyncFailure extends Error {
@@ -131,27 +197,41 @@ class SyncFailure extends Error {
 /**
  * One full owner-requested sync of a connected Item. Never automatic. Safe to retry at any point.
  */
-export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, input: { itemId?: unknown }) {
+export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, input: { itemId?: unknown }, options: SyncRunOptions = {}) {
   assertAuthority(actor)
   const org = actor.organizationId
+  const budgetMs = options.budgetMs ?? SYNC_TIME_BUDGET_MS
+  const leaseMs = options.leaseMs ?? deps.syncLeaseMs ?? SYNC_LEASE_MS
+  const trigger: SyncTrigger = options.trigger ?? 'owner'
+  // The lease must outlive the run's own budget, or a still-running sync could be overlapped by a re-claim.
+  if (leaseMs <= budgetMs) throw new BankConnectionError('sync_failed', 500, 'The sync is not configured safely. Nothing was changed.')
   const { item, envelope } = await loadCredential(deps, actor, input.itemId as string)
   if (item.status === 'disconnected' || !envelope) throw new BankConnectionError('conflict', 409, 'This bank connection is disconnected. Connect it again first.')
-  const claimed = await deps.sync.claimSync(org, item.id, new Date(clock(deps) - SYNC_LEASE_MS).toISOString())
-  if (!claimed) throw new BankConnectionError('conflict', 409, 'A sync is already running. Try again in a moment.')
+  // The claim stamps THIS run's start time as its lease token. Finishing/failing below only apply while the Item still carries it, so a run whose
+  // lease expired (killed, frozen, duplicate invocation) can never overwrite the cursor or state of the run that re-claimed the Item.
   const startedAt = new Date(clock(deps)).toISOString()
-  note(deps, { event: 'bank.sync.started', organizationId: org, itemId: item.id })
+  const claimed = await deps.sync.claimSync(org, item.id, new Date(clock(deps) - leaseMs).toISOString(), startedAt)
+  if (!claimed) throw new BankConnectionError('conflict', 409, 'A sync is already running. Try again in a moment.')
+  const runId = randomUUID()
+  note(deps, { event: 'bank.sync.started', organizationId: org, itemId: item.id, outcome: trigger })
+  const audit = async (event: Omit<SyncRunEvent, 'organizationId' | 'itemId' | 'runId' | 'trigger'>) => {
+    try { await deps.sync.recordRunEvent?.({ organizationId: org, itemId: item.id, runId, trigger, ...event }) } catch { /* the audit never changes a sync outcome */ }
+  }
 
   let stage: SyncStage = 'credential'
+  let startFingerprint: string | null = null
   const run = async () => {
     const token = decryptFor(deps, actor, item, envelope)
     const state = await deps.sync.getSyncState(org, item.id)
     const startCursor = state?.cursor ? state.cursor : null // the ORIGINAL cursor of this update; replaced only after a complete success
     const hadPriorSuccess = !!state?.lastSuccessfulAt
+    startFingerprint = cursorFingerprint(startCursor)
+    await audit({ event: 'started', startCursorFingerprint: startFingerprint })
 
     stage = 'provider_request'
     // Account discovery belongs to BANK-3: this sync does NOT call /accounts/get. Every transaction must resolve to a provider account of
     // THIS Item and organization that discovery already stored; anything else fails closed (below) and asks the owner to refresh accounts.
-    const deadline = clock(deps) + SYNC_TIME_BUDGET_MS
+    const deadline = clock(deps) + budgetMs
     const withinBudget = () => {
       if (clock(deps) > deadline) throw new SyncFailure('SYNC_TIME_BUDGET', new BankConnectionError('sync_failed', 503, 'The sync took too long to finish in one request. Nothing was marked as synced and your previous position is kept. Try again.'))
     }
@@ -182,8 +262,9 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
         }
         if (error instanceof PlaidApiFailure && error.code === 'PRODUCT_NOT_READY') {
           // Plaid is still preparing the first data: a WAITING state, not a failure. The cursor stays where it was.
-          await deps.sync.finishSync(org, item.id, { cursor: startCursor, state: hadPriorSuccess ? 'synced' : 'waiting' })
+          if ((await deps.sync.finishSync(org, item.id, { cursor: startCursor, state: hadPriorSuccess ? 'synced' : 'waiting', startedAt })) === 0) throw new Superseded()
           note(deps, { event: 'bank.sync.waiting', organizationId: org, itemId: item.id, code: 'PRODUCT_NOT_READY' })
+          await audit({ event: 'completed', outcome: hadPriorSuccess ? 'synced' : 'waiting', pages: 0, restarts, startCursorFingerprint: startFingerprint, endCursorFingerprint: startFingerprint, cursorAdvanced: false })
           return { state: hadPriorSuccess ? 'synced' as const : 'waiting' as const, added: 0, modified: 0, removed: 0, pending: 0, pages: 0, restarts, skipped: 0 }
         }
         throw error
@@ -217,6 +298,8 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
     // Persist in the provider's own order (idempotent upserts), THEN advance the cursor.
     stage = 'evidence_persistence'
     let added = 0, modified = 0, removedMarked = 0, pendingCount = 0
+    // Pending-to-posted continuity that Plaid itself reported: posted rows in this update that name the pending row they replace.
+    const pendingLinked = plan.reduce((n, step) => n + [...step.added, ...step.modified].filter(r => r.evidence.pendingProviderTransactionId !== null).length, 0)
     for (const step of plan) {
       withinBudget() // stopping here leaves valid, idempotent evidence behind but NEVER moves the cursor or stamps a success
       if (step.added.length) { await deps.sync.upsertEvidence(org, item.id, step.added); added += step.added.length; pendingCount += step.added.filter(r => r.evidence.pending).length }
@@ -227,10 +310,13 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
     // Synced/Waiting/Unconfirmed come ONLY from Plaid's documented transactions_update_status (see classifySyncOutcome).
     stage = 'cursor_finalize'
     const outcome = classifySyncOutcome(finalPage.updateStatus, hadData, hadPriorSuccess)
-    await deps.sync.finishSync(org, item.id, { cursor: finalCursor, state: outcome })
+    // The committed cursor moves ONLY here, after every page was durably applied, and only while this run still holds its lease.
+    if ((await deps.sync.finishSync(org, item.id, { cursor: finalCursor, state: outcome, startedAt })) === 0) throw new Superseded()
     await deps.sync.markNudgesProcessed(org, item.id, startedAt)
-    note(deps, { event: 'bank.sync.completed', organizationId: org, itemId: item.id, outcome: `a${added}/m${modified}/r${removedMarked}/p${pendingCount}/pg${pages.length}/rs${restarts}/sk${skipped}/rd${redacted}/${outcome}` })
-    return { state: outcome, added, modified, removed: removedMarked, pending: pendingCount, pages: pages.length, restarts, skipped }
+    note(deps, { event: 'bank.sync.completed', organizationId: org, itemId: item.id, outcome: `a${added}/m${modified}/r${removedMarked}/p${pendingCount}/pl${pendingLinked}/pg${pages.length}/rs${restarts}/sk${skipped}/rd${redacted}/${outcome}` })
+    await audit({ event: 'completed', outcome, added, modified, removed: removedMarked, pending: pendingCount, pendingLinked, pages: pages.length, restarts, skipped,
+      startCursorFingerprint: startFingerprint, endCursorFingerprint: cursorFingerprint(finalCursor), cursorAdvanced: finalCursor !== startCursor })
+    return { state: outcome, added, modified, removed: removedMarked, pending: pendingCount, pendingLinked, pages: pages.length, restarts, skipped }
   }
 
   try {
@@ -242,6 +328,12 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
     let errorClass = 'none'
     let detail: string | undefined
     const at = stage
+    if (error instanceof Superseded) {
+      // Another run re-claimed this Item after our lease expired. Its state stands; ours changes nothing (evidence writes are idempotent upserts).
+      note(deps, { event: 'bank.sync.superseded', organizationId: org, itemId: item.id, code: 'SUPERSEDED', stage: at })
+      await audit({ event: 'superseded', errorCode: 'SUPERSEDED', errorStage: at, recovery: 'retry', startCursorFingerprint: startFingerprint, cursorAdvanced: false })
+      throw new BankConnectionError('conflict', 409, 'A newer sync took over this connection. Nothing from this run changed the saved position. Check the status, then sync again if needed.')
+    }
     if (error instanceof SyncFailure) { failure = error; errorClass = 'SyncFailure' }
     else if (error instanceof EvidenceRejected) {
       errorClass = 'EvidenceRejected'
@@ -270,8 +362,9 @@ export async function syncTransactions(deps: BankSyncDeps, actor: BankActor, inp
       errorClass = error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(error.name) ? error.name : 'UnknownThrown'
       failure = new SyncFailure(`${at.toUpperCase()}_FAILED`, new BankConnectionError('persistence_failed', 503, 'The sync could not be saved. Nothing was changed; please try again.'), at)
     }
-    try { await deps.sync.failSync(org, item.id, failure.code) } catch { /* the lease expires on its own */ }
+    try { await deps.sync.failSync(org, item.id, failure.code, startedAt) } catch { /* the lease expires on its own */ }
     note(deps, { event: 'bank.sync.failed', organizationId: org, itemId: item.id, code: failure.code, stage: failure.stage ?? at, errorClass, detail })
+    await audit({ event: 'failed', errorCode: failure.code.slice(0, 64), errorStage: failure.stage ?? at, recovery: recoveryFor(failure.code), startCursorFingerprint: startFingerprint, cursorAdvanced: false })
     throw failure.publicError
   }
 }

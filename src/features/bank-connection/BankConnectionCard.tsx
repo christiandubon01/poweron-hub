@@ -101,6 +101,8 @@ function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: strin
         <p data-testid="bank-sync-state">{SYNC_LABEL[state]}{state === 'synced' && when ? <span className="text-[var(--text-secondary)]"> · Last synced {when}</span> : null}</p>
         {sync && (sync.counts.posted > 0 || sync.counts.pending > 0) && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-counts">{sync.counts.posted} posted · {sync.counts.pending} pending</p>}
         {sync?.updatesAvailable && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-updates">New bank updates are available.</p>}
+        {state === 'error' && sync?.recoveryText && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-recovery">{sync.recoveryText}{sync.lastErrorCode ? ` (code ${sync.lastErrorCode})` : ''}</p>}
+        {state !== 'synced' && sync?.lastSyncedAt && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-last-success">Last successful sync {new Date(sync.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>}
         <p className="text-[var(--text-secondary)]">Bank evidence only. It does not change your balances, ledger or reports.</p>
       </div>
       <button type="button" className={btn} disabled={busy || state === 'syncing' || state === 'login_required'} onClick={() => void onSync(connectionId)}>{state === 'not_synced' ? 'Sync transactions' : 'Sync again'}</button>

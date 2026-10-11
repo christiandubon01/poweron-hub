@@ -6,7 +6,7 @@
  * It never touches financial_transactions, financial_accounts, mappings or any balance, and it never writes raw_payload,
  * original_description or any raw provider JSON (those columns keep their empty/null defaults).
  */
-import { PersistenceFailure, WAITING_MARKER, type BankSyncRepo, type EvidenceCounts, type EvidenceRow, type SyncState } from './bankSyncService'
+import { PersistenceFailure, WAITING_MARKER, type BankSyncRepo, type EvidenceCounts, type EvidenceRow, type SyncRunEvent, type SyncState } from './bankSyncService'
 
 type Svc = { from: (table: string) => any }
 const STATE_COLUMNS = 'sync_status, sync_cursor, last_sync_started_at, last_sync_completed_at, last_successful_sync_at, last_error_code'
@@ -24,7 +24,11 @@ function failed(operation: string, error?: any): never {
 const now = () => new Date().toISOString()
 const chunks = <T,>(list: T[]): T[][] => { const out: T[][] = []; for (let i = 0; i < list.length; i += CHUNK) out.push(list.slice(i, i + CHUNK)); return out }
 
-export function createBankSyncRepo(svc: Svc): BankSyncRepo {
+/**
+ * `auditEnabled` (PLAID-1B, env PLAID_SYNC_AUDIT_ENABLED === 'true') turns on writes to financial_provider_sync_runs. That table exists only after
+ * the separately approved SQL (docs/plaid1b/sync-audit-proposal.sql) is installed, so it stays off until then.
+ */
+export function createBankSyncRepo(svc: Svc, opts: { auditEnabled?: boolean } = {}): BankSyncRepo {
   const items = () => svc.from('financial_provider_items')
   return {
     async getSyncState(organizationId, itemId) {
@@ -34,8 +38,8 @@ export function createBankSyncRepo(svc: Svc): BankSyncRepo {
       const s: SyncState = { status: data.sync_status, cursor: data.sync_cursor ?? null, startedAt: data.last_sync_started_at ?? null, completedAt: data.last_sync_completed_at ?? null, lastSuccessfulAt: data.last_successful_sync_at ?? null, lastErrorCode: data.last_error_code ?? null }
       return s
     },
-    async claimSync(organizationId, itemId, staleBeforeIso) {
-      const { data, error } = await items().update({ sync_status: 'syncing', last_sync_started_at: now() })
+    async claimSync(organizationId, itemId, staleBeforeIso, startedAtIso) {
+      const { data, error } = await items().update({ sync_status: 'syncing', last_sync_started_at: startedAtIso ?? now() })
         .eq('organization_id', organizationId).eq('id', itemId).neq('status', 'disconnected')
         .or(`sync_status.neq.syncing,last_sync_started_at.lt.${staleBeforeIso}`).select('id')
       if (error) failed('claim_sync', error)
@@ -46,12 +50,31 @@ export function createBankSyncRepo(svc: Svc): BankSyncRepo {
       // Only `synced` stamps a success. `waiting` is remembered with a marker (so it survives a reload); `unconfirmed` has no marker.
       const patch: Record<string, unknown> = { sync_status: 'idle', sync_cursor: input.cursor, last_sync_completed_at: t, last_error_code: input.state === 'waiting' ? WAITING_MARKER : null, last_error_message: null, last_error_at: null }
       if (input.state === 'synced') patch.last_successful_sync_at = t
-      const { error } = await items().update(patch).eq('organization_id', organizationId).eq('id', itemId)
+      // PLAID-1B fencing: with a lease token, only the run that still holds the lease may move the cursor.
+      let q = items().update(patch).eq('organization_id', organizationId).eq('id', itemId)
+      if (input.startedAt) q = q.eq('sync_status', 'syncing').eq('last_sync_started_at', input.startedAt)
+      const { data, error } = await q.select('id')
       if (error) failed('finish_sync', error)
+      return Array.isArray(data) ? data.length : 0
     },
-    async failSync(organizationId, itemId, code) {
-      const { error } = await items().update({ sync_status: 'failed', last_error_code: code.slice(0, 64), last_error_message: 'Sync failed', last_error_at: now() }).eq('organization_id', organizationId).eq('id', itemId)
+    async failSync(organizationId, itemId, code, startedAt) {
+      let q = items().update({ sync_status: 'failed', last_error_code: code.slice(0, 64), last_error_message: 'Sync failed', last_error_at: now() }).eq('organization_id', organizationId).eq('id', itemId)
+      if (startedAt) q = q.eq('sync_status', 'syncing').eq('last_sync_started_at', startedAt)
+      const { data, error } = await q.select('id')
       if (error) failed('fail_sync', error)
+      return Array.isArray(data) ? data.length : 0
+    },
+    async recordRunEvent(e: SyncRunEvent) {
+      if (!opts.auditEnabled) return
+      const n = (v: number | undefined) => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null)
+      const { error } = await svc.from('financial_provider_sync_runs').insert({
+        organization_id: e.organizationId, provider_item_ref: e.itemId, run_id: e.runId, event: e.event, run_trigger: e.trigger, outcome: e.outcome ?? null,
+        added_count: n(e.added), modified_count: n(e.modified), removed_count: n(e.removed), pending_count: n(e.pending), pending_linked_count: n(e.pendingLinked),
+        page_count: n(e.pages), restart_count: n(e.restarts), skipped_count: n(e.skipped),
+        start_cursor_fingerprint: e.startCursorFingerprint ?? null, end_cursor_fingerprint: e.endCursorFingerprint ?? null, cursor_advanced: e.cursorAdvanced ?? null,
+        error_code: e.errorCode ?? null, error_stage: e.errorStage ?? null, recovery: e.recovery ?? null,
+      })
+      if (error) failed('record_run_event', error)
     },
     async markLoginRequired(organizationId, itemId) {
       const { error } = await items().update({ status: 'login_required', status_changed_at: now() }).eq('organization_id', organizationId).eq('id', itemId).in('status', ['healthy', 'connecting'])
