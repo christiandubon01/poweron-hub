@@ -30,6 +30,8 @@ export interface AccountContext {
   /** PLAID-2F: the provider's account type/subtype (depository/credit/loan ...). Lets reconciliation tell a card payment from a bank-to-bank transfer. */
   providerType?: string | null
   providerSubtype?: string | null
+  /** PLAID-3B: the bank (institution) the account belongs to, for the owner's match review. Display only. */
+  institution?: string | null
 }
 
 /** A thing Cash OS already knows is coming (a recurring bill occurrence or a one-off commitment) that a transaction might belong to. */

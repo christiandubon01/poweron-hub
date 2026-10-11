@@ -290,7 +290,7 @@ function transferSuggestions(txs: EvidenceTx[], accounts: Map<string, AccountCon
 
 // PLAID-3A (switch ON only): pairing is done by the reconciliation engine (account-class aware, unambiguous-only, owner decisions respected).
 // These two functions turn its answer into explainable suggestions and keep the one-sided "looks like a transfer" hints.
-function reconciliationFor(txs: EvidenceTx[], accounts: Map<string, AccountContext>, decisions: Decision[]): ReconResult {
+export function reconciliationFor(txs: EvidenceTx[], accounts: Map<string, AccountContext>, decisions: Decision[]): ReconResult {
   const confirmedPairs: Array<[string, string]> = [], rejectedPairs: Array<[string, string]> = []
   const amount = new Map(txs.map(t => [t.id, t.amountMinor]))
   const excluded = new Map<string, string>()

@@ -10,6 +10,8 @@ import { readReportContext } from './reportingRepo'
 import { BankConnectionError } from '../bankConnectionService'
 import type { Decision, DebtOption, EvidenceTx, ProjectOption } from './types'
 import type { MerchantRule, NewDecision, SpendingContext, SpendingRepo } from './spendingService'
+import type { PairDecisionRow } from './matchReview'
+import type { AccountContext } from './types'
 import { loadSpendingHierarchy } from './hierarchy'
 
 type Svc = { from: (table: string) => any; rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: any; error: any }> }
@@ -85,7 +87,7 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
         const f = finById.get(mapOf.get(a.id) ?? '')
         return { providerAccountRef: a.id, label: [itemName.get(a.provider_item_ref), a.name].filter(Boolean).join(' · ') || 'Bank account', mask: a.mask ?? null,
           ownership: f && (f.ownership_context === 'business' || f.ownership_context === 'personal') ? f.ownership_context : null, financialAccountId: f?.id ?? null, financialAccountName: f?.display_name ?? null, environment: itemEnv.get(a.provider_item_ref) ?? 'sandbox',
-          providerType: a.provider_account_type ?? null, providerSubtype: a.provider_account_subtype ?? null }
+          providerType: a.provider_account_type ?? null, providerSubtype: a.provider_account_subtype ?? null, institution: itemName.get(a.provider_item_ref) ?? null }
       })
       const debts: DebtOption[] = (fin.data ?? []).filter((f: any) => f.account_class === 'liability' && f.status === 'active').map((f: any) => ({ id: f.id, label: f.display_name, accountType: f.account_type }))
 
@@ -207,6 +209,67 @@ export function createSpendingRepo(svc: Svc): SpendingRepo {
         .eq('organization_id', organizationId).eq('merchant_key', merchantKey).eq('status', 'active').select('id')
       if (error) failed()
       return (data ?? []).length > 0
+    },
+    /** PLAID-3B: every transfer-kind interpretation (any status), organization-scoped, with the fingerprint recorded at decision time. No user ids are selected. */
+    async loadPairDecisions(organizationId): Promise<PairDecisionRow[]> {
+      const rows = await pageAll<any>(() => svc.from('financial_provider_interpretations')
+        .select('id, provider_transaction_ref, counterpart_provider_transaction_ref, status, source, suggestion_basis, decided_at, undone_at, undo_reason, created_at')
+        .eq('organization_id', organizationId).eq('kind', 'transfer').order('created_at', { ascending: true }).order('id', { ascending: true }), 20000)
+      return rows.filter(r => r.counterpart_provider_transaction_ref).map(r => ({
+        id: r.id, txId: r.provider_transaction_ref, counterpartTxId: r.counterpart_provider_transaction_ref, status: r.status, source: r.source,
+        fingerprint: typeof r.suggestion_basis?.fingerprint === 'string' ? r.suggestion_basis.fingerprint : null,
+        pairId: typeof r.suggestion_basis?.pair_id === 'string' ? r.suggestion_basis.pair_id : null,
+        pairKind: typeof r.suggestion_basis?.pair_kind === 'string' ? r.suggestion_basis.pair_kind : null,
+        decidedAt: r.decided_at ?? null, undoneAt: r.undone_at ?? null, undoReason: r.undo_reason ?? null, createdAt: r.created_at,
+      }))
+    },
+    /** PLAID-3B: just the transactions of ONE pair and their accounts (no history load), organization-scoped. Ids of another organization are simply absent. */
+    async getPairEvidence(organizationId, ids): Promise<{ txs: EvidenceTx[]; accounts: AccountContext[] }> {
+      const t = await svc.from('financial_provider_transactions')
+        .select('id, provider_account_ref, transaction_date, name, merchant_name, provider_amount_minor, pending, removed_at, provider_category').eq('organization_id', organizationId).in('id', ids)
+      if (t.error) failed()
+      const txs: EvidenceTx[] = (t.data ?? []).map((r: any) => ({
+        id: r.id, providerAccountRef: r.provider_account_ref, date: String(r.transaction_date).slice(0, 10), name: r.name ?? null, merchantName: r.merchant_name ?? null,
+        amountMinor: Number(r.provider_amount_minor), pending: r.pending === true, removed: !!r.removed_at,
+        category: r.provider_category && typeof r.provider_category.primary === 'string' ? { primary: r.provider_category.primary, detailed: r.provider_category.detailed ?? null, confidence: r.provider_category.confidence ?? null } : null,
+      }))
+      const refs = [...new Set(txs.map(x => x.providerAccountRef))]
+      if (!refs.length) return { txs, accounts: [] }
+      const [accts, items, maps] = await Promise.all([
+        svc.from('financial_provider_accounts').select('id, name, mask, provider_item_ref, provider_account_type, provider_account_subtype').eq('organization_id', organizationId).in('id', refs),
+        svc.from('financial_provider_items').select('id, institution_name, environment').eq('organization_id', organizationId),
+        svc.from('financial_provider_account_mappings').select('provider_account_ref, financial_account_id').eq('organization_id', organizationId).eq('status', 'active').in('provider_account_ref', refs),
+      ])
+      for (const r of [accts, items, maps]) if (r.error) failed()
+      const finIds = (maps.data ?? []).map((m: any) => m.financial_account_id)
+      const fin = finIds.length ? await svc.from('financial_accounts').select('id, display_name, ownership_context').eq('organization_id', organizationId).in('id', finIds) : { data: [], error: null }
+      if (fin.error) failed()
+      const itemById = new Map<string, any>((items.data ?? []).map((i: any) => [i.id, i]))
+      const mapOf = new Map<string, string>((maps.data ?? []).map((m: any) => [m.provider_account_ref, m.financial_account_id]))
+      const finById = new Map<string, any>((fin.data ?? []).map((f: any) => [f.id, f]))
+      const accounts: AccountContext[] = (accts.data ?? []).map((a: any) => {
+        const f = finById.get(mapOf.get(a.id) ?? ''), item = itemById.get(a.provider_item_ref)
+        return { providerAccountRef: a.id, label: [item?.institution_name, a.name].filter(Boolean).join(' · ') || 'Bank account', mask: a.mask ?? null,
+          ownership: f && (f.ownership_context === 'business' || f.ownership_context === 'personal') ? f.ownership_context : null, financialAccountId: f?.id ?? null, financialAccountName: f?.display_name ?? null,
+          environment: item?.environment === 'production' ? 'production' : 'sandbox', providerType: a.provider_account_type ?? null, providerSubtype: a.provider_account_subtype ?? null, institution: item?.institution_name ?? null }
+      })
+      return { txs, accounts }
+    },
+    /** PLAID-3B: the one atomic pair function. Not installed => 'persistence_failed' (503) with an owner-readable reason; never a partial write. */
+    async decideMatch(input) {
+      const { data, error } = await svc.rpc('financial_provider_decide_match', {
+        p_organization_id: input.organizationId, p_actor: input.actorUserId, p_action: input.action,
+        ...(input.outflowId ? { p_outflow_ref: input.outflowId } : {}), ...(input.inflowId ? { p_inflow_ref: input.inflowId } : {}),
+        ...(input.pairKind ? { p_pair_kind: input.pairKind } : {}), ...(input.fingerprint ? { p_fingerprint: input.fingerprint } : {}), ...(input.basis ? { p_basis: input.basis } : {}),
+      })
+      if (error) {
+        if (['42883', 'PGRST202'].includes(error.code)) throw new BankConnectionError('persistence_failed', 503, 'Match decisions need a database update that has not been installed yet. Nothing was changed.')
+        if (/MATCH_ARGUMENTS_INVALID/.test(String(error.message ?? ''))) throw new BankConnectionError('invalid_request', 400, 'That match could not be understood. Refresh and try again.')
+        failed()
+      }
+      const out = Array.isArray(data) ? data[0] : data
+      if (!out || typeof out.outcome !== 'string') failed()
+      return { outcome: out.outcome, pairId: out.pair_id ?? null, detail: out.detail ?? null }
     },
     async markUndone(organizationId, decisionId, actorUserId, reason) {
       const { error } = await svc.from('financial_provider_interpretations').update({ status: 'undone', undone_by: actorUserId, undone_at: new Date().toISOString(), undo_reason: reason })

@@ -36,6 +36,9 @@ export const MIGRATIONS = ['139_cash_accounts_manual_ledger', '140_cash_linked_p
 export async function loadPglite() {
   try { return (await import('@electric-sql/pglite')).PGlite } catch { return null }
 }
+export async function loadPgliteTypes() {
+  try { return (await import('@electric-sql/pglite')).types } catch { return null }
+}
 
 /** A fresh database with the application migrations and the given proposal drafts (repo-relative paths) installed, running as service_role. */
 export async function createDb(PGlite, drafts = []) {

@@ -106,14 +106,64 @@ const cardSignal = (t: EvidenceTx) => {
   return CARD_WORDS.test(searchText(t.name, t.merchantName)) || c.detailed.includes('CREDIT_CARD_PAYMENT') || c.detailed.includes('LOAN_PAYMENTS_CREDIT_CARD')
 }
 
+/** Account lookups shared by the engine and by explicit owner review (evaluatePair). */
+const LOOKUPS = new WeakMap<ReconAccount[], ReturnType<typeof makeLookups>>()
+function makeLookups(accounts: ReconAccount[]) {
+  const acct = new Map(accounts.map(a => [a.ref, a]))
+  return {
+    label: (t: EvidenceTx) => acct.get(t.providerAccountRef)?.label ?? 'another account',
+    klass: (t: EvidenceTx): AccountClass | null => acct.get(t.providerAccountRef)?.accountClass ?? null,
+    owner: (t: EvidenceTx) => acct.get(t.providerAccountRef)?.ownership ?? null,
+  }
+}
+/** Memoized per accounts array: the engine asks for these millions of times on a large history. */
+function accountLookups(accounts: ReconAccount[]) {
+  let l = LOOKUPS.get(accounts)
+  if (!l) { l = makeLookups(accounts); LOOKUPS.set(accounts, l) }
+  return l
+}
+
+/**
+ * Structural validity of ONE candidate pair (no graph logic): opposite signs and equal amounts, different accounts, the same pending state, a receiver that
+ * is not a loan or investment, a sender that is not a credit card, and dates inside the window. Used by the engine and by the review service to decide whether
+ * the owner may be asked about a pair at all. It says nothing about ambiguity or about decisions the owner already made.
+ */
+export function pairIsValid(o: EvidenceTx, i: EvidenceTx, accounts: ReconAccount[]): boolean {
+  const { klass } = accountLookups(accounts)
+  if (o.removed || i.removed || o.amountMinor <= 0 || i.amountMinor >= 0 || -i.amountMinor !== o.amountMinor) return false
+  if (o.providerAccountRef === i.providerAccountRef || o.pending !== i.pending) return false
+  if (klass(o) === 'credit_card' || klass(i) === 'loan' || klass(i) === 'investment') return false
+  return days(i.date, o.date) <= (klass(i) === 'credit_card' ? CARD_WINDOW_DAYS : BANK_WINDOW_DAYS)
+}
+
+/** One suggested pair with its confidence, caps, reasons and evidence fingerprint. `identicalGroup` marks several identical movements paired in date order. */
+export function buildPair(o: EvidenceTx, i: EvidenceTx, accounts: ReconAccount[], identicalGroup = false, extra: string[] = []): ReconPair {
+  const { label, klass, owner } = accountLookups(accounts)
+  const card = klass(i) === 'credit_card'
+  const signal = card ? (cardSignal(o) || cardSignal(i) || transferSignal(o) || transferSignal(i)) : (transferSignal(o) || transferSignal(i))
+  const classUnknown = klass(o) === null || klass(i) === null
+  const crossScope = !!owner(o) && !!owner(i) && owner(o) !== owner(i)
+  const caps: PairCap[] = []
+  if (!signal) caps.push('no_signal')
+  if (classUnknown) caps.push('class_unknown')
+  if (crossScope) caps.push('cross_scope')
+  if (identicalGroup) caps.push('identical_group')
+  const gap = days(o.date, i.date)
+  return { kind: card ? 'card_payment' : 'internal_transfer', outflowId: o.id, inflowId: i.id, confidence: caps.length ? 'possible' : 'high', daysApart: gap, state: 'suggested',
+    fingerprint: pairFingerprint(o, i), crossScope, provisional: o.pending && i.pending, caps,
+    reasons: [`An equal ${money(o.amountMinor)} movement left ${label(o)} and arrived in ${label(i)} within ${gap} day(s).`,
+      card ? 'The arrival is a payment on a credit card: the card purchases are the expenses, not this payment.' : 'Money between your own accounts is not income or an expense.',
+      signal ? 'The description or bank category supports it.' : 'Only the equal opposite amounts suggest it; please confirm.',
+      ...(classUnknown ? ['The type of one account is not known, so this cannot be called a card payment or a transfer with certainty.'] : []),
+      ...(crossScope ? [`This moves money between a ${owner(o)} account and a ${owner(i)} account. That may be an owner draw or a contribution rather than a plain transfer: you decide.`] : []),
+      ...extra] }
+}
+
 export function reconcile(input: ReconInput): ReconResult {
-  const acct = new Map(input.accounts.map(a => [a.ref, a]))
   const excluded = input.excluded ?? new Map<string, string>()
   const live = input.txs.filter(t => !t.removed && t.amountMinor !== 0).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
   const byId = new Map(live.map(t => [t.id, t]))
-  const label = (t: EvidenceTx) => acct.get(t.providerAccountRef)?.label ?? 'another account'
-  const klass = (t: EvidenceTx): AccountClass | null => acct.get(t.providerAccountRef)?.accountClass ?? null
-  const owner = (t: EvidenceTx) => acct.get(t.providerAccountRef)?.ownership ?? null
+  const { klass, owner } = accountLookups(input.accounts)
   const rejected = new Set((input.rejectedPairs ?? []).map(([a, b]) => pairKey(a, b)))
   const pairs: ReconPair[] = []
   const used = new Set<string>()
@@ -133,35 +183,14 @@ export function reconcile(input: ReconInput): ReconResult {
   const eligible = (t: EvidenceTx) => !used.has(t.id) && !excluded.has(t.id)
   const outs = live.filter(t => t.amountMinor > 0 && eligible(t) && klass(t) !== 'credit_card')
   const ins = live.filter(t => t.amountMinor < 0 && eligible(t))
-  const window = (i: EvidenceTx) => (klass(i) === 'credit_card' ? CARD_WINDOW_DAYS : BANK_WINDOW_DAYS)
-  const candidatesOf = (o: EvidenceTx) => ins.filter(i => i.providerAccountRef !== o.providerAccountRef && i.pending === o.pending && -i.amountMinor === o.amountMinor
-    && klass(i) !== 'loan' && klass(i) !== 'investment' && days(i.date, o.date) <= window(i) && !rejected.has(pairKey(o.id, i.id)))
+  const candidatesOf = (o: EvidenceTx) => ins.filter(i => pairIsValid(o, i, input.accounts) && !rejected.has(pairKey(o.id, i.id)))
   const cand = new Map(outs.map(o => [o.id, candidatesOf(o)]))
   const back = new Map<string, EvidenceTx[]>()
   for (const o of outs) for (const i of cand.get(o.id)!) back.set(i.id, [...(back.get(i.id) ?? []), o])
 
   const ambiguous: ReconAmbiguity[] = []
   const grouped = new Set<string>()
-  const emit = (o: EvidenceTx, i: EvidenceTx, identicalGroup = false, extra: string[] = []) => {
-    const card = klass(i) === 'credit_card'
-    const signal = card ? (cardSignal(o) || cardSignal(i) || transferSignal(o) || transferSignal(i)) : (transferSignal(o) || transferSignal(i))
-    const classUnknown = klass(o) === null || klass(i) === null
-    const crossScope = !!owner(o) && !!owner(i) && owner(o) !== owner(i)
-    const caps: PairCap[] = []
-    if (!signal) caps.push('no_signal')
-    if (classUnknown) caps.push('class_unknown')
-    if (crossScope) caps.push('cross_scope')
-    if (identicalGroup) caps.push('identical_group')
-    const gap = days(o.date, i.date)
-    pairs.push({ kind: card ? 'card_payment' : 'internal_transfer', outflowId: o.id, inflowId: i.id, confidence: caps.length ? 'possible' : 'high', daysApart: gap, state: 'suggested',
-      fingerprint: pairFingerprint(o, i), crossScope, provisional: o.pending && i.pending, caps,
-      reasons: [`An equal ${money(o.amountMinor)} movement left ${label(o)} and arrived in ${label(i)} within ${gap} day(s).`,
-        card ? 'The arrival is a payment on a credit card: the card purchases are the expenses, not this payment.' : 'Money between your own accounts is not income or an expense.',
-        signal ? 'The description or bank category supports it.' : 'Only the equal opposite amounts suggest it; please confirm.',
-        ...(classUnknown ? ['The type of one account is not known, so this cannot be called a card payment or a transfer with certainty.'] : []),
-        ...(crossScope ? [`This moves money between a ${owner(o)} account and a ${owner(i)} account. That may be an owner draw or a contribution rather than a plain transfer: you decide.`] : []),
-        ...extra] })
-  }
+  const emit = (o: EvidenceTx, i: EvidenceTx, identicalGroup = false, extra: string[] = []) => { pairs.push(buildPair(o, i, input.accounts, identicalGroup, extra)) }
 
   for (const o of outs) {
     if (grouped.has(o.id) || used.has(o.id)) continue

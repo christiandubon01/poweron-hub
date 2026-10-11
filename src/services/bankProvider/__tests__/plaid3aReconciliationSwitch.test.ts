@@ -218,15 +218,15 @@ describe('PLAID-3A report-path enrichment (the BANK-6G source does not return ac
   const svc = (accountRows: any, fail = false) => {
     const calls: string[] = []
     return { calls, rpc: async () => ({ data: [{ bank_spending_report_source: raw([{ providerAccountRef: 'r1', label: 'Chk', mask: '1' }, { providerAccountRef: 'r2', label: 'Card', mask: '2' }]) }], error: null }),
-      from: (t: string) => { calls.push(t); return { select: () => ({ eq: () => ({ limit: async () => (fail ? { data: null, error: { code: 'X' } } : { data: accountRows, error: null }) }) }) } } }
+      from: (t: string) => { calls.push(t); return { select: () => ({ eq: () => ({ limit: async () => (fail ? { data: null, error: { code: 'X' } } : { data: t === 'financial_provider_items' ? [{ id: 'item-1', institution_name: 'Wells Fargo' }] : accountRows, error: null }) }) }) } } }
   }
-  it('adds provider account types only when asked; unknown accounts stay unknown; a failed read never fails the report', async () => {
+  it('adds provider account types and the bank name only when asked; unknown accounts stay unknown; a failed read never fails the report', async () => {
     const plain = svc([]); const ctx0 = await readReportContext(plain as any, 'org', '2026-01-01')
     expect(plain.calls).toEqual([]); expect(ctx0.accounts[0].providerType).toBeUndefined()
-    const s = svc([{ id: 'r1', provider_account_type: 'depository', provider_account_subtype: 'checking' }, { id: 'zz', provider_account_type: 'credit', provider_account_subtype: 'credit card' }])
+    const s = svc([{ id: 'r1', provider_item_ref: 'item-1', provider_account_type: 'depository', provider_account_subtype: 'checking' }, { id: 'zz', provider_item_ref: 'item-1', provider_account_type: 'credit', provider_account_subtype: 'credit card' }])
     const ctx = await readReportContext(s as any, 'org', '2026-01-01', { accountTypes: true })
-    expect(s.calls).toEqual(['financial_provider_accounts'])
-    expect(ctx.accounts.map(a => [a.providerAccountRef, a.providerType ?? null])).toEqual([['r1', 'depository'], ['r2', null]])
+    expect(s.calls.sort()).toEqual(['financial_provider_accounts', 'financial_provider_items'])
+    expect(ctx.accounts.map(a => [a.providerAccountRef, a.providerType ?? null, a.institution ?? null])).toEqual([['r1', 'depository', 'Wells Fargo'], ['r2', null, null]])
     const bad = await readReportContext(svc([], true) as any, 'org', '2026-01-01', { accountTypes: true })
     expect(bad.reportCoverage.complete).toBe(true); expect(bad.accounts.every(a => a.providerType === undefined)).toBe(true)
   })

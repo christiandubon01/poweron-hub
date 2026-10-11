@@ -32,9 +32,13 @@ export async function readReportContext(svc:Svc,org:string,sinceDate:string,opts
  */
 async function withAccountTypes(svc: Svc, org: string, accounts: SpendingContext['accounts']): Promise<SpendingContext['accounts']> {
   try {
-    const { data, error } = await svc.from!('financial_provider_accounts').select('id, provider_account_type, provider_account_subtype').eq('organization_id', org).limit(1000)
-    if (error || !Array.isArray(data)) return accounts
-    const byId = new Map<string, { type: string | null; subtype: string | null }>(data.map((r: any) => [r.id, { type: r.provider_account_type ?? null, subtype: r.provider_account_subtype ?? null }]))
-    return accounts.map(a => { const t = byId.get(a.providerAccountRef); return t ? { ...a, providerType: t.type, providerSubtype: t.subtype } : a })
+    const [a, i] = await Promise.all([
+      svc.from!('financial_provider_accounts').select('id, provider_item_ref, provider_account_type, provider_account_subtype').eq('organization_id', org).limit(1000),
+      svc.from!('financial_provider_items').select('id, institution_name').eq('organization_id', org).limit(200),
+    ])
+    if (a.error || !Array.isArray(a.data)) return accounts
+    const institution = new Map<string, string | null>(Array.isArray(i.data) ? i.data.map((r: any) => [r.id, r.institution_name ?? null]) : [])
+    const byId = new Map<string, { type: string | null; subtype: string | null; institution: string | null }>(a.data.map((r: any) => [r.id, { type: r.provider_account_type ?? null, subtype: r.provider_account_subtype ?? null, institution: institution.get(r.provider_item_ref) ?? null }]))
+    return accounts.map(x => { const t = byId.get(x.providerAccountRef); return t ? { ...x, providerType: t.type, providerSubtype: t.subtype, institution: t.institution } : x })
   } catch { return accounts }
 }

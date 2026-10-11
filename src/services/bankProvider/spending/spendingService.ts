@@ -98,6 +98,13 @@ export interface SpendingRepo {
   upsertMerchantRule(organizationId: string, actorUserId: string, rule: { merchantKey: string; merchantLabel: string; category: string }): Promise<void>
   revokeMerchantRule(organizationId: string, actorUserId: string, merchantKey: string): Promise<boolean>
   markUndone(organizationId: string, decisionId: string, actorUserId: string, reason: string): Promise<void>
+  /** PLAID-3B (match review). All optional: absent until the reviewed SQL is installed / in older fakes. */
+  /** Every transfer-kind interpretation of the organization, any status, with the evidence fingerprint recorded at decision time. No user ids. */
+  loadPairDecisions?(organizationId: string): Promise<import('./matchReview').PairDecisionRow[]>
+  /** The two transactions of a pair and their accounts, organization-scoped, without loading the whole history. Unknown ids are simply absent. */
+  getPairEvidence?(organizationId: string, ids: string[]): Promise<{ txs: EvidenceTx[]; accounts: AccountContext[] }>
+  /** ONE atomic database function (financial_provider_decide_match). 'probe' reports availability. Throws BankConnectionError('persistence_failed') when it is not installed. */
+  decideMatch?(input: { organizationId: string; actorUserId: string; action: 'probe' | 'confirm' | 'reject' | 'reverse'; outflowId?: string; inflowId?: string; pairKind?: string; fingerprint?: string; basis?: Record<string, unknown> }): Promise<{ outcome: string; pairId: string | null; detail: string | null }>
 }
 export interface HistoryEntry { kind: string; status: string; category: string | null; source: string; confidence: string | null; decidedAt: string | null; undoneAt: string | null; undoReason: string | null; createdAt: string }
 export interface SpendingDeps {
