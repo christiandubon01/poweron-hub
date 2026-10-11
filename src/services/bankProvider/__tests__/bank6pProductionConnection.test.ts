@@ -76,6 +76,7 @@ class Repo implements BankConnectionRepo {
   async connectItem(input: Parameters<BankConnectionRepo['connectItem']>[0]) { this.connectInputs.push(input); return { itemId: PROD_ITEM, outcome: 'created' as const } }
   async getItem(_o: string, id: string) { const it = this.items.get(id); return it ? { id: it.id, provider: it.provider, providerItemId: it.providerItemId, status: it.status, environment: it.environment } : null }
   async listItems() { return [...this.items.values()].map(({ providerItemId: _x, ...v }) => v) }
+  async listLiveInstitutions() { return [...this.items.values()].filter(i => i.status !== 'disconnected').map(i => ({ id: i.id, institutionId: i.providerItemId === 'item-prod' ? 'ins_127991' : 'ins_109508', environment: i.environment, status: i.status })) }
   async getActiveCredential(_o: string, id: string) { const it = this.items.get(id); return it ? encryptProviderToken('access-sandbox-VERYSECRET', this.key, { organizationId: ORG, provider: 'plaid', providerItemId: it.providerItemId }) : null }
   async disconnectItem() { this.disconnects++; return 'disconnected' as const }
   async markHealthy() { return true }

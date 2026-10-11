@@ -28,6 +28,7 @@
  *   - a mapping whose provider account is no longer live (disconnected Item or account no longer returned) does NOT block a new
  *     mapping of that Cash OS account: it is superseded (kept, marked inactive), which is what makes a bank migration possible.
  */
+import { createHash } from 'node:crypto'
 import { BankConnectionError, UUID, assertAuthority, decryptFor, loadCredential, note, type BankActor, type BankConnectionDeps } from './bankConnectionService'
 import { PlaidApiFailure, type ProviderAccountSummary } from './plaidPort'
 
@@ -230,4 +231,92 @@ export async function unmapAccount(deps: BankAccountDeps, actor: BankActor, inpu
   }
   note(deps, { event: 'bank.account.unmapped', organizationId: actor.organizationId, itemId: provider.providerItemRef, outcome: 'removed' })
   return { outcome: 'removed' as const }
+}
+
+/**
+ * PLAID-1A: what the bank shares RIGHT NOW for one existing Item, compared with what Cash OS already stores. READ-ONLY: nothing is saved, retired or
+ * mapped. It also proves the connection is still the SAME Item (Plaid's item id equals the stored one) before anything else is shown.
+ *   connected       stored, active accounts the bank still shares (their ids and mappings are untouched)
+ *   available       shared by the bank but not stored yet (or stored earlier and retired): saved only by an explicit owner action
+ *   noLongerShared  stored, active accounts the bank no longer returns (e.g. left unselected at the bank). Nothing is retired automatically here.
+ * `previewToken` is an opaque fingerprint of `available`; saving requires the same fingerprint so the owner saves exactly what was previewed.
+ * No provider account id, balance, token or raw provider data is returned.
+ */
+export async function previewAccounts(deps: BankAccountDeps, actor: BankActor, input: { itemId?: unknown }) {
+  assertAuthority(actor)
+  const { item, envelope } = await loadCredential(deps, actor, input.itemId as string)
+  if (item.status === 'disconnected' || !envelope) throw new BankConnectionError('conflict', 409, 'This bank connection is disconnected. Nothing can be added to it.')
+  const token = decryptFor(deps, actor, item, envelope)
+  let summaries: ProviderAccountSummary[]
+  try {
+    const summary = await deps.plaid.getItem(token)
+    if (summary.itemId !== item.providerItemId) {
+      note(deps, { event: 'bank.accounts.preview_identity_mismatch', organizationId: actor.organizationId, itemId: item.id, code: 'item_mismatch' })
+      throw new BankConnectionError('conflict', 409, 'The bank connection could not be confirmed as the same connection. Nothing was changed. This needs owner review.')
+    }
+    summaries = await deps.plaid.getAccounts(token)
+  } catch (error) {
+    if (error instanceof BankConnectionError) throw error
+    if (error instanceof PlaidApiFailure && error.code === 'ITEM_LOGIN_REQUIRED') {
+      try { await deps.accounts.markItemLoginRequired(actor.organizationId, item.id) } catch { /* the owner message below is still correct */ }
+      throw new BankConnectionError('login_required', 409, 'The bank needs you to sign in again. Use Reconnect.')
+    }
+    note(deps, { event: 'bank.accounts.preview_failed', organizationId: actor.organizationId, itemId: item.id, code: error instanceof PlaidApiFailure ? error.code : 'ERROR' })
+    throw unavailable()
+  }
+  const records: ProviderAccountRecord[] = []
+  const seen = new Set<string>()
+  for (const sum of summaries.slice(0, MAX_ACCOUNTS)) {
+    const r = toProviderAccountRecord(sum)
+    if (r && !seen.has(r.providerAccountId)) { seen.add(r.providerAccountId); records.push(r) }
+  }
+  let existing: ProviderAccountRow[], mappings: MappingRow[]
+  try {
+    [existing, mappings] = await Promise.all([deps.accounts.listProviderAccounts(actor.organizationId, item.id), deps.accounts.listActiveMappings(actor.organizationId)])
+  } catch {
+    throw new BankConnectionError('persistence_failed', 503, 'The stored bank accounts could not be read. Nothing was changed; please try again.')
+  }
+  const byProviderId = new Map(existing.map(e => [e.providerAccountId, e]))
+  const mapped = new Set(mappings.map(m => m.providerAccountRef))
+  const view = (r: ProviderAccountRecord) => ({ name: r.name, officialName: r.officialName, mask: r.mask, type: r.providerAccountType, subtype: r.providerAccountSubtype })
+  const connected = existing.filter(e => e.status === 'active' && seen.has(e.providerAccountId)).map(e => ({ id: e.id, ...view(e), mapped: mapped.has(e.id) }))
+  const availableRecords = records.filter(r => byProviderId.get(r.providerAccountId)?.status !== 'active')
+  const available = availableRecords.map(r => ({ ...view(r), previouslyConnected: byProviderId.has(r.providerAccountId) }))
+  const noLongerShared = existing.filter(e => e.status === 'active' && !seen.has(e.providerAccountId)).map(e => ({ id: e.id, ...view(e), mapped: mapped.has(e.id) }))
+  note(deps, { event: 'bank.accounts.previewed', organizationId: actor.organizationId, itemId: item.id, outcome: `${connected.length}/${available.length}/${noLongerShared.length}` })
+  return {
+    itemPreserved: true as const, connected, available, noLongerShared, skipped: summaries.length - records.length,
+    previewToken: fingerprint(actor.organizationId, item.id, availableRecords), availableRecords,
+  }
+}
+
+const fingerprint = (org: string, itemId: string, records: ProviderAccountRecord[]) =>
+  createHash('sha256').update(['plaid-1a-preview', org, itemId, ...records.map(r => r.providerAccountId).sort()].join('\u001f')).digest('hex').slice(0, 32)
+
+/** Browser-safe preview: the records used for saving stay on the server. */
+export async function previewAccountsForOwner(deps: BankAccountDeps, actor: BankActor, input: { itemId?: unknown }) {
+  const { availableRecords: _server, ...visible } = await previewAccounts(deps, actor, input)
+  return visible
+}
+
+/**
+ * PLAID-1A: save ONLY the newly shared accounts the owner just previewed, as bank-evidence accounts of the SAME Item. Existing account rows are never
+ * changed, retired or re-identified, nothing is mapped (so nothing enters Cash OS reports, which cover mapped accounts only), and no transaction is
+ * fetched or classified here. Server-switched off by default. A changed bank answer since the preview is refused (preview again).
+ */
+export async function saveNewAccounts(deps: BankAccountDeps, actor: BankActor, input: { itemId?: unknown; previewToken?: unknown }) {
+  assertAuthority(actor)
+  if (deps.accountAdditionsEnabled !== true) throw new BankConnectionError('feature_disabled', 403, 'Adding accounts to an existing bank connection is not enabled yet.')
+  if (typeof input.previewToken !== 'string' || !/^[0-9a-f]{32}$/.test(input.previewToken)) throw new BankConnectionError('invalid_request', 400, 'Preview the accounts first.')
+  const preview = await previewAccounts(deps, actor, input)
+  if (preview.previewToken !== input.previewToken) throw new BankConnectionError('conflict', 409, 'The accounts shared by the bank changed since your preview. Review them again before saving.')
+  if (preview.availableRecords.length === 0) return { saved: 0, mapped: 0 }
+  try {
+    await deps.accounts.upsertProviderAccounts(actor.organizationId, input.itemId as string, preview.availableRecords)
+  } catch {
+    note(deps, { event: 'bank.accounts.persist_failed', organizationId: actor.organizationId, itemId: input.itemId as string, code: 'persistence_failed' })
+    throw new BankConnectionError('persistence_failed', 503, 'The new bank accounts could not be saved. Nothing was changed; please try again.')
+  }
+  note(deps, { event: 'bank.accounts.added', organizationId: actor.organizationId, itemId: input.itemId as string, outcome: String(preview.availableRecords.length) })
+  return { saved: preview.availableRecords.length, mapped: 0 }
 }

@@ -39,7 +39,7 @@ export function loadPlaidLink(): Promise<PlaidGlobal> {
  */
 const OAUTH_KEY = 'poweron.plaid.oauth.link'
 const OAUTH_MAX_AGE_MS = 30 * 60 * 1000
-export interface PendingOauth { linkToken: string; mode: 'new' | 'update'; itemId: string | null }
+export interface PendingOauth { linkToken: string; mode: 'new' | 'update' | 'add_accounts'; itemId: string | null }
 
 export function rememberLinkToken(pending: PendingOauth, now = Date.now()): void {
   try { window.sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ ...pending, at: now })) } catch { /* storage may be blocked: non-OAuth banks do not need it */ }
@@ -55,17 +55,24 @@ export function readPendingOauth(search: string = typeof window === 'undefined' 
     if (!raw) return null
     const v = JSON.parse(raw) as Partial<PendingOauth> & { at?: number }
     if (typeof v.linkToken !== 'string' || !v.linkToken || typeof v.at !== 'number' || now - v.at > OAUTH_MAX_AGE_MS || now < v.at) { clearPendingOauth(); return null }
-    return { linkToken: v.linkToken, mode: v.mode === 'update' ? 'update' : 'new', itemId: typeof v.itemId === 'string' ? v.itemId : null }
+    return { linkToken: v.linkToken, mode: v.mode === 'update' || v.mode === 'add_accounts' ? v.mode : 'new', itemId: typeof v.itemId === 'string' ? v.itemId : null }
   } catch { clearPendingOauth(); return null }
 }
 
-/** Opens Link. `onSuccess` receives the one-time public token and must forward it immediately; nothing here retains it. */
-export async function openPlaidLink(options: { linkToken: string; receivedRedirectUri?: string; onSuccess: (publicToken: string) => void | Promise<void>; onExit: () => void }): Promise<void> {
+/**
+ * Opens Link. `onSuccess` receives the one-time public token and must forward it immediately; nothing here retains it. It also receives the Plaid
+ * institution id Link reports (e.g. "ins_127991"), only so the server can refuse a second connection to a bank that is already connected
+ * (PLAID-1A). No other Link metadata (account names, masks) leaves this function.
+ */
+export async function openPlaidLink(options: { linkToken: string; receivedRedirectUri?: string; onSuccess: (publicToken: string, institutionId: string | null) => void | Promise<void>; onExit: () => void }): Promise<void> {
   const Plaid = await loadPlaidLink()
   const handler = Plaid.create({
     token: options.linkToken,
     ...(options.receivedRedirectUri ? { receivedRedirectUri: options.receivedRedirectUri } : {}),
-    onSuccess: (publicToken: string) => { void options.onSuccess(publicToken); handler.destroy() },
+    onSuccess: (publicToken: string, metadata?: { institution?: { institution_id?: unknown } | null }) => {
+      const institutionId = typeof metadata?.institution?.institution_id === 'string' && /^ins_[A-Za-z0-9]{1,40}$/.test(metadata.institution.institution_id) ? metadata.institution.institution_id : null
+      void options.onSuccess(publicToken, institutionId); handler.destroy()
+    },
     onExit: () => { options.onExit(); handler.destroy() },
   })
   handler.open()

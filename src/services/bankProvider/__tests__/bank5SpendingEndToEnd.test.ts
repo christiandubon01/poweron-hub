@@ -434,7 +434,9 @@ describe('BANK-5 static guarantees', () => {
     const writes = [...repo.matchAll(/from\('([a-z_]+)'\)\s*\.(insert|update|upsert|delete)/g)].map(m => `${m[1]}:${m[2]}`)
     expect([...new Set(writes)].sort()).toEqual(['financial_provider_interpretations:insert', 'financial_provider_interpretations:update', 'financial_provider_merchant_rules:insert', 'financial_provider_merchant_rules:update']) // BANK-6B adds only the owner's remembered-merchant preference table
     expect(repo).not.toMatch(/\.delete\(|\.upsert\(/)
-    expect([...repo.matchAll(/\.rpc\('([a-z_]+)'/g)].map(m => m[1])).toEqual(['financial_provider_replace_interpretation']) // the ONE atomic function, nothing else
+    // The atomic replacement function, plus BANK-6H's reviewed checked wrapper (docs/bank6h/checked-category-proposal.sql): service_role only,
+    // SECURITY INVOKER, compares the previewed revision and then delegates ONLY a category replacement to financial_provider_replace_interpretation.
+    expect([...new Set([...repo.matchAll(/\.rpc\('([a-z_]+)'/g)].map(m => m[1]))].sort()).toEqual(['bank_spending_replace_category_checked', 'financial_provider_replace_interpretation'])
     for (const f of ['../spending/spendingService.ts', '../spending/classifier.ts', '../spending/analytics.ts', '../spending/explorer.ts', '../../../../netlify/functions/bank/plaid-spending.ts']) {
       expect(read(f), f).not.toMatch(/financial_transactions|include_in_cash|materializeObligation|reconcilePlannedOutflow|financial_obligation_occurrences|outlook|payroll_runs|from\('financial_accounts'\)\.(insert|update)/i)
     }

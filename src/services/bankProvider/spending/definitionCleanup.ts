@@ -2,11 +2,8 @@ import { assertAuthority, BankConnectionError, type BankActor } from '../bankCon
 import { DEFINITION_KEY } from '../../../finance/bankSpendingHierarchy'
 import { loadSpendingHierarchy } from './hierarchy'
 
-export interface CleanupPreview {
-  definition: { key: string; name: string; builtin: boolean }; children: Array<{ key:string; name:string }>
-  references: Array<{ table:string; id:string; category:string; status:string; provider_transaction_ref?:string }>
-  counts: Record<string,number>; complete: boolean; executionAllowed: false; reason: string
-}
+import type { CleanupPreview } from '../../../finance/bankProviderTypes'
+export type { CleanupPreview }
 /** Read-only inventory, never a deletion authorization. Includes historical/undone decisions and inactive rules. */
 export async function previewDefinitionCleanup(svc: any, actor: BankActor, type: unknown, key: unknown): Promise<CleanupPreview> {
   assertAuthority(actor)

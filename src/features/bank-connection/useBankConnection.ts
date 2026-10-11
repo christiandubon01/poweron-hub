@@ -44,6 +44,18 @@ export interface BankSyncSummary {
   updatesAvailable: boolean
 }
 export interface CashAccountOption { id: string; displayName: string; accountType: string; ownershipContext: string }
+/** PLAID-1A: one shared account as the bank reports it (no provider id, balance or token). */
+export interface SharedAccountView { name: string | null; officialName: string | null; mask: string | null; type: string | null; subtype: string | null; mapped?: boolean; previouslyConnected?: boolean }
+/** PLAID-1A read-only comparison of what the bank shares now versus what Cash OS stores for ONE existing connection. */
+export interface AccountAdditionPreview {
+  itemId: string
+  itemPreserved: boolean
+  connected: SharedAccountView[]
+  available: SharedAccountView[]
+  noLongerShared: SharedAccountView[]
+  skipped: number
+  previewToken: string
+}
 
 /** `unavailable` = the caller may not manage bank connections (or it is not configured); the card renders nothing. */
 export type BankConnectionLoad = 'loading' | 'ready' | 'unavailable'
@@ -62,6 +74,8 @@ export function useBankConnection() {
   const [accounts, setAccounts] = useState<BankAccountSummary[]>([])
   const [cashAccounts, setCashAccounts] = useState<CashAccountOption[]>([])
   const [syncs, setSyncs] = useState<BankSyncSummary[]>([])
+  const [accountAdditionsEnabled, setAccountAdditionsEnabled] = useState(false)
+  const [addPreview, setAddPreview] = useState<AccountAdditionPreview | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -70,6 +84,7 @@ export function useBankConnection() {
       const data = await request('plaid-connection-status', { method: 'GET' })
       setConnections(Array.isArray(data.connections) ? data.connections : [])
       setEnvironment(typeof data.environment === 'string' ? data.environment : null)
+      setAccountAdditionsEnabled(data.accountAdditionsEnabled === true)
       setLoad('ready')
     } catch {
       setLoad('unavailable')
@@ -97,28 +112,48 @@ export function useBankConnection() {
     await refreshAccounts()
   }, [refreshAccounts])
 
+  /**
+   * PLAID-1A: read-only comparison for one existing connection (connected / newly shared / no longer shared). Saves nothing. Used after an
+   * "Add accounts" Link and on demand.
+   */
+  const previewAccounts = useCallback(async (itemId: string) => {
+    const data = await request('plaid-accounts', { method: 'POST', body: { action: 'preview', itemId } })
+    setAddPreview({ itemId, itemPreserved: data.itemPreserved === true, connected: data.connected ?? [], available: data.available ?? [], noLongerShared: data.noLongerShared ?? [], skipped: Number(data.skipped) || 0, previewToken: String(data.previewToken ?? '') })
+  }, [])
+
   /** What happens after Link succeeds: the public token goes straight to the server (never kept), then the list and accounts reload. */
-  const handleLinkSuccess = useCallback(async (onDone: (publicToken: string) => Promise<void>, publicToken: string) => {
+  const handleLinkSuccess = useCallback(async (onDone: (publicToken: string, institutionId: string | null) => Promise<unknown>, publicToken: string, institutionId: string | null = null, addAccountsItemId: string | null = null) => {
     clearPendingOauth()
     try {
-      await onDone(publicToken)
+      const done = await onDone(publicToken, institutionId) as { connection?: { id?: unknown } } | undefined
+      if (addAccountsItemId) {
+        // Adding accounts to an EXISTING connection: nothing is saved automatically. The owner reviews the preview and saves explicitly.
+        await refresh()
+        await previewAccounts(addAccountsItemId)
+        return
+      }
       const status = await request('plaid-connection-status', { method: 'GET' })
       setConnections(Array.isArray(status.connections) ? status.connections : [])
-      const live = (status.connections as BankConnectionSummary[] | undefined)?.filter(c => c.status !== 'disconnected') ?? []
+      // Discover accounts only for the connection this Link just created (when known). Other connections are never touched as a side effect, so
+      // accounts newly shared on an existing connection are only ever saved through its own reviewed preview (PLAID-1A).
+      const createdId = typeof done?.connection?.id === 'string' ? done.connection.id : null
+      const live = (status.connections as BankConnectionSummary[] | undefined)?.filter(c => c.status !== 'disconnected' && (!createdId || c.id === createdId)) ?? []
       for (const c of live) {
         try { await discoverAccounts(c.id) } catch (error) { setMessage(`Connected, but the bank accounts could not be loaded yet: ${(error as Error).message}`); await refresh(); await refreshSyncs() }
       }
     } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
-  }, [discoverAccounts, refresh, refreshSyncs])
+  }, [discoverAccounts, refresh, refreshSyncs, previewAccounts])
 
-  const runLink = useCallback(async (body: Record<string, unknown>, onDone: (publicToken: string) => Promise<void>) => {
+  const runLink = useCallback(async (body: Record<string, unknown>, onDone: (publicToken: string, institutionId: string | null) => Promise<unknown>) => {
     setBusy(true); setMessage(null)
     try {
       const { linkToken } = await request('plaid-link-token', { method: 'POST', body })
-      rememberLinkToken({ linkToken, mode: body.mode === 'update' ? 'update' : 'new', itemId: typeof body.itemId === 'string' ? body.itemId : null })
+      const mode = body.mode === 'update' || body.mode === 'add_accounts' ? body.mode : 'new'
+      const itemId = typeof body.itemId === 'string' ? body.itemId : null
+      rememberLinkToken({ linkToken, mode, itemId })
       await openPlaidLink({
         linkToken,
-        onSuccess: publicToken => handleLinkSuccess(onDone, publicToken),
+        onSuccess: (publicToken, institutionId) => handleLinkSuccess(onDone, publicToken, institutionId, mode === 'add_accounts' ? itemId : null),
         onExit: () => { clearPendingOauth(); setBusy(false) },
       })
     } catch (error) {
@@ -136,19 +171,43 @@ export function useBankConnection() {
     resumed.current = true
     const returnedUri = window.location.href
     try { window.history.replaceState(null, '', window.location.pathname) } catch { /* ignore */ }
-    const onDone = pending.mode === 'update' && pending.itemId
+    const onDone = pending.mode === 'add_accounts' && pending.itemId
+      ? (async () => { /* update mode keeps the same Item and access token: there is nothing to exchange */ })
+      : pending.mode === 'update' && pending.itemId
       ? (async () => { await request('plaid-exchange', { method: 'POST', body: { mode: 'update_complete', itemId: pending.itemId } }) })
-      : (async (publicToken: string) => { await request('plaid-exchange', { method: 'POST', body: { publicToken } }) })
+      : (async (publicToken: string, institutionId: string | null) => { await request('plaid-exchange', { method: 'POST', body: { publicToken, ...(institutionId ? { institutionId } : {}) } }) })
     setBusy(true)
     void Promise.resolve(openPlaidLink({
       linkToken: pending.linkToken, receivedRedirectUri: returnedUri,
-      onSuccess: publicToken => handleLinkSuccess(onDone, publicToken),
+      onSuccess: (publicToken, institutionId) => handleLinkSuccess(onDone, publicToken, institutionId, pending.mode === 'add_accounts' ? pending.itemId : null),
       onExit: () => { clearPendingOauth(); setBusy(false) },
     })).catch(error => { setMessage((error as Error).message || 'Could not resume the bank connection.'); setBusy(false) })
   }, [handleLinkSuccess])
 
-  /** New connection. The public token goes straight to the server and is not kept. */
-  const connect = useCallback(() => runLink({}, publicToken => request('plaid-exchange', { method: 'POST', body: { publicToken } })), [runLink])
+  /**
+   * New connection. The public token goes straight to the server and is not kept. `differentInstitution` is the owner's statement, asked by the card
+   * when a connection already exists, that this is a DIFFERENT bank; the server still refuses a bank that is already connected (PLAID-1A).
+   */
+  const connect = useCallback((differentInstitution = false) => runLink(differentInstitution ? { differentInstitution: true } : {},
+    (publicToken, institutionId) => request('plaid-exchange', { method: 'POST', body: { publicToken, ...(institutionId ? { institutionId } : {}) } })), [runLink])
+  /** PLAID-1A: update mode with Account Select on the EXISTING connection. No exchange, no new Item; the owner then reviews a preview. */
+  const addAccounts = useCallback((itemId: string) => runLink({ mode: 'add_accounts', itemId }, async () => { /* same Item, same access token */ }), [runLink])
+  const reviewSharedAccounts = useCallback(async (itemId: string) => {
+    setBusy(true); setMessage(null)
+    try { await previewAccounts(itemId) } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [previewAccounts])
+  /** Saves ONLY the previewed newly shared accounts, unmapped: they stay out of reports until the owner maps them. */
+  const saveNewAccounts = useCallback(async () => {
+    if (!addPreview) return
+    setBusy(true); setMessage(null)
+    try {
+      const out = await request('plaid-accounts', { method: 'POST', body: { action: 'save_new', itemId: addPreview.itemId, previewToken: addPreview.previewToken } })
+      setAddPreview(null)
+      await refreshAccounts()
+      setMessage(`${Number(out.saved) || 0} new account(s) saved as bank evidence. They are not included in reports until you map them.`)
+    } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [addPreview, refreshAccounts])
+  const dismissPreview = useCallback(() => setAddPreview(null), [])
   /** Re-authentication of an existing connection (no new Item). */
   const reconnect = useCallback((itemId: string) => runLink({ mode: 'update', itemId }, () => request('plaid-exchange', { method: 'POST', body: { mode: 'update_complete', itemId } })), [runLink])
   const disconnect = useCallback(async (itemId: string) => {
@@ -181,5 +240,6 @@ export function useBankConnection() {
     catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
   }, [refreshAccounts])
 
-  return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh }
+  return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh,
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview }
 }

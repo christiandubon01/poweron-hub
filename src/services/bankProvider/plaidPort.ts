@@ -79,8 +79,11 @@ export interface ProviderAccountSummary {
 }
 
 export interface BankPlaidPort {
-  /** New connection (no accessToken) or update mode (accessToken of the existing Item, no products). */
-  createLinkToken(input: { clientUserId: string; accessToken?: string }): Promise<LinkTokenResult>
+  /**
+   * New connection (no accessToken) or update mode (accessToken of the existing Item, no products). `accountSelection` (update mode only) asks
+   * Plaid to show Account Select so more accounts from the SAME login join the EXISTING Item (PLAID-1A). It never creates a new Item.
+   */
+  createLinkToken(input: { clientUserId: string; accessToken?: string; accountSelection?: boolean }): Promise<LinkTokenResult>
   exchangePublicToken(publicToken: string): Promise<ExchangeResult>
   getItem(accessToken: string): Promise<ItemSummary>
   getInstitutionName(institutionId: string): Promise<string | null>
@@ -113,11 +116,12 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
   const call = async <T>(fn: () => Promise<T>): Promise<T> => { try { return await fn() } catch (error) { throw sanitize(error) } }
 
   return {
-    async createLinkToken({ clientUserId, accessToken }) {
+    async createLinkToken({ clientUserId, accessToken, accountSelection }) {
       const base = { user: { client_user_id: clientUserId }, client_name: config.clientName, country_codes: [CountryCode.Us], language: config.language, ...(config.redirectUri ? { redirect_uri: config.redirectUri } : {}) }
-      // Update mode is triggered by the Item's access token and carries NO products (per Plaid docs).
+      // Update mode is triggered by the Item's access token and carries NO products and NO history request (per Plaid docs: days_requested
+      // cannot be changed once Transactions is on an Item). Account Select is only ever requested together with an existing access token.
       const request = accessToken
-        ? { ...base, access_token: accessToken }
+        ? { ...base, access_token: accessToken, ...(accountSelection ? { update: { account_selection_enabled: true } } : {}) }
         : { ...base, products: [Products.Transactions], transactions: { days_requested: config.transactionsDaysRequested }, ...(config.webhookUrl ? { webhook: config.webhookUrl } : {}) } // Transactions is initialized at Link; the optional webhook URL is only a nudge (BANK-4)
       const { data } = await call(() => api.linkTokenCreate(request))
       return { linkToken: data.link_token, expiration: data.expiration }

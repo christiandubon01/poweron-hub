@@ -1,7 +1,8 @@
 // @ts-nocheck
 /**
  * POST /.netlify/functions/plaid-exchange
- *   body: { publicToken }                                  -> exchange a Link public token (new connection)
+ *   body: { publicToken, institutionId? }                  -> exchange a Link public token (new connection). institutionId is Link's
+ *                                                             advisory hint; a bank that is already connected is refused (PLAID-1A)
  *   body: { mode: 'update_complete', itemId }              -> confirm a finished update-mode (re-authentication) Link
  * The access token is encrypted server-side and is NEVER returned. The browser only receives a sanitized connection summary.
  */
@@ -17,7 +18,7 @@ export function buildHandler(overrides = {}) {
     try {
       const body = parseJsonBody(event)
       if (body.mode === 'update_complete') return jsonResponse(200, await completeUpdateMode(auth.deps, auth.actor, { itemId: body.itemId }))
-      return jsonResponse(200, await exchangePublicToken(auth.deps, auth.actor, { publicToken: body.publicToken }))
+      return jsonResponse(200, await exchangePublicToken(auth.deps, auth.actor, { publicToken: body.publicToken, institutionId: body.institutionId }))
     } catch (error) {
       return errorResponse(error)
     }

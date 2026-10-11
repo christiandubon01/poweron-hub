@@ -136,3 +136,10 @@ export interface FinancialProviderInterpretationRow {
   undone_at: string | null
   undo_reason: string | null
 }
+
+/** Browser-safe shape of the read-only classification cleanup inventory over interpretation rows (built server-side by spending/definitionCleanup). */
+export interface CleanupPreview {
+  definition: { key: string; name: string; builtin: boolean }; children: Array<{ key:string; name:string }>
+  references: Array<{ table:string; id:string; category:string; status:string; provider_transaction_ref?:string }>
+  counts: Record<string,number>; complete: boolean; executionAllowed: false; reason: string
+}

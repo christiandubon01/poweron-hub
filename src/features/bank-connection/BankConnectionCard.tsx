@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { BankAccountSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption } from './useBankConnection'
+import type { AccountAdditionPreview, BankAccountSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption, SharedAccountView } from './useBankConnection'
 import { useBankConnection } from './useBankConnection'
 
 const STATUS: Record<BankConnectionSummary['status'], { label: string; color: string; glyph: string }> = {
@@ -52,6 +52,38 @@ function AccountRow({ account, cashAccounts, mappedElsewhere, busy, onMap, onUnm
   </li>
 }
 
+const sharedLabel = (a: SharedAccountView) => `${a.name ?? a.officialName ?? 'Bank account'}${a.mask ? ` ••••${a.mask}` : ''} · ${titleCase(a.subtype ?? a.type ?? 'Account')}`
+
+/**
+ * PLAID-1A: what the bank shares now for ONE existing connection versus what Cash OS stores. Read-only until the owner presses Save, which stores
+ * only the newly shared accounts as bank evidence, unmapped (so they stay out of every report until the owner maps them).
+ */
+function AddAccountsPreview({ preview, busy, onSave, onClose }: { preview: AccountAdditionPreview; busy: boolean; onSave: () => Promise<void>; onClose: () => void }) {
+  const list = (items: SharedAccountView[], testid: string, extra?: (a: SharedAccountView) => string) => <ul className="mt-1 space-y-1 text-xs" data-testid={testid}>
+    {items.map((a, i) => <li key={`${testid}-${i}`}>{sharedLabel(a)}{extra ? extra(a) : ''}</li>)}
+  </ul>
+  return <div className="mt-2 w-full rounded-lg p-3 ring-1 ring-[var(--border-primary)]" data-testid="bank-add-preview">
+    <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Shared accounts at this bank</p>
+    <p className="mt-1 text-xs text-[var(--text-secondary)]">{preview.itemPreserved ? 'Same connection confirmed. Existing accounts, history and decisions are unchanged.' : 'The connection could not be confirmed.'}</p>
+    <p className="mt-2 text-sm font-semibold">Already connected ({preview.connected.length})</p>
+    {preview.connected.length ? list(preview.connected, 'bank-add-connected', a => a.mapped ? ' · Mapped' : ' · Not mapped') : <p className="text-xs text-[var(--text-secondary)]">None.</p>}
+    <p className="mt-2 text-sm font-semibold">Newly shared ({preview.available.length})</p>
+    {preview.available.length
+      ? <>{list(preview.available, 'bank-add-available', a => a.previouslyConnected ? ' · Connected before' : '')}<p className="mt-1 text-xs text-[var(--text-secondary)]">Saving adds them as bank evidence only. They are not mapped and are not included in any report until you map them. No transactions are imported or categorized by saving.</p></>
+      : <p className="text-xs text-[var(--text-secondary)]">No new accounts are shared yet.</p>}
+    {preview.noLongerShared.length > 0 && <div className="mt-2" role="alert" style={{ color: 'var(--fin-warning)' }} data-testid="bank-add-no-longer-shared">
+      <p className="text-sm font-semibold">No longer shared ({preview.noLongerShared.length})</p>
+      {list(preview.noLongerShared, 'bank-add-no-longer-shared-list', a => a.mapped ? ' · Mapped' : '')}
+      <p className="mt-1 text-xs">These were not removed. Add accounts again and keep them selected at the bank, so they keep updating.</p>
+    </div>}
+    {preview.skipped > 0 && <p className="mt-2 text-xs text-[var(--text-secondary)]">{preview.skipped} account(s) in another currency are not supported and were left out.</p>}
+    <div className="mt-3 flex flex-wrap gap-2">
+      {preview.available.length > 0 && <button type="button" className={btn} disabled={busy || !preview.itemPreserved} onClick={() => void onSave()} data-testid="bank-add-save">Save {preview.available.length} new account{preview.available.length === 1 ? '' : 's'}</button>}
+      <button type="button" className={btn} disabled={busy} onClick={onClose}>Close</button>
+    </div>
+  </div>
+}
+
 const SYNC_LABEL: Record<BankSyncSummary['state'], string> = {
   not_synced: 'Not synced yet', syncing: 'Syncing…', waiting: 'Waiting for the bank to prepare your transactions',
   unconfirmed: 'No transactions came back yet. That does not confirm there are none. Try again later.',
@@ -81,7 +113,8 @@ function SyncSection({ connectionId, sync, busy, onSync }: { connectionId: strin
  * not configured. Connecting a bank does not change any balance, project, obligation, debt or Outlook number.
  */
 export default function BankConnectionCard() {
-  const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect } = useBankConnection()
+  const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect,
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview } = useBankConnection()
   if (load !== 'ready') return null
   // Only Items of THIS environment are active here. An Item of the other environment (e.g. the earlier Sandbox test) is kept, shown for clarity, and has no actions.
   const here = connections.filter(c => (c.environment ?? 'sandbox') === (environment ?? 'sandbox'))
@@ -91,7 +124,11 @@ export default function BankConnectionCard() {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">Bank connection{environment ? ` · ${environment}` : ''}</h3>
       {active.length === 0 && <button type="button" className={btn} disabled={busy} onClick={() => void connect()} data-testid="bank-connect">{busy ? 'Connecting…' : 'Connect bank'}</button>}
-      {active.length > 0 && <button type="button" className={btn} disabled={busy} onClick={() => void connect()} data-testid="bank-connect-another">{busy ? 'Connecting…' : 'Connect another bank'}</button>}
+      {active.length > 0 && <button type="button" className={btn} disabled={busy} data-testid="bank-connect-another" onClick={() => {
+        // PLAID-1A: a second connection to a bank that is already connected would duplicate it. The server refuses that too.
+        const names = active.map(c => c.institutionName ?? 'a bank').join(', ')
+        if (window.confirm(`You are already connected to ${names}. To add more accounts from the same bank login, use “Add accounts” on that connection instead. Continue only to connect a DIFFERENT bank.`)) void connect(true)
+      }}>{busy ? 'Connecting…' : 'Connect another bank'}</button>}
     </div>
     {active.length > 0 && environment === 'production' && <p className="mt-1 text-xs text-[var(--text-secondary)]" data-testid="bank-connect-another-note">Each connection is billed by Plaid. Connect a bank only once.</p>}
     {active.length === 0 && <p className="mt-2 text-sm text-[var(--text-secondary)]" data-testid="bank-not-connected">Not connected. Connecting a bank does not change any balance or report.</p>}
@@ -104,8 +141,11 @@ export default function BankConnectionCard() {
         </div>
         <div className="flex gap-2">
           {(c.status === 'login_required' || c.status === 'error') && <button type="button" className={btn} disabled={busy} onClick={() => void reconnect(c.id)}>Reconnect</button>}
+          {accountAdditionsEnabled && c.status === 'healthy' && <button type="button" className={btn} disabled={busy} onClick={() => void addAccounts(c.id)} data-testid="bank-add-accounts">Add accounts at this bank</button>}
+          {accountAdditionsEnabled && c.status === 'healthy' && <button type="button" className={btn} disabled={busy} onClick={() => void reviewSharedAccounts(c.id)} data-testid="bank-review-shared">Review shared accounts</button>}
           <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Disconnect this bank? Your history and records are kept.')) void disconnect(c.id) }}>Disconnect</button>
         </div>
+        {addPreview?.itemId === c.id && <AddAccountsPreview preview={addPreview} busy={busy} onSave={saveNewAccounts} onClose={dismissPreview} />}
         <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} />
         <div className="w-full">
           <div className="flex flex-wrap items-center justify-between gap-2">

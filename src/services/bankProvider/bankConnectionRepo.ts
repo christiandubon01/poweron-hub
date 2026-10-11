@@ -69,6 +69,13 @@ export function createBankConnectionRepo(svc: Svc): BankConnectionRepo {
       if (error) failed()
       return data?.encrypted_access_token ?? null
     },
+    async listLiveInstitutions(organizationId) {
+      const read = (columns: string) => svc.from('financial_provider_items').select(columns).eq('organization_id', organizationId).order('created_at', { ascending: true })
+      let { data, error } = await read('id, institution_id, status, environment')
+      if (missingEnvironment(error)) ({ data, error } = await read('id, institution_id, status'))
+      if (error) failed()
+      return (data ?? []).filter((r: any) => r.status !== 'disconnected').map((r: any) => ({ id: r.id, institutionId: r.institution_id ?? null, status: r.status, environment: r.environment === 'production' ? 'production' as const : 'sandbox' as const }))
+    },
     async disconnectItem(organizationId, itemId) {
       const { data, error } = await svc.rpc('financial_provider_disconnect_item', { p_organization_id: organizationId, p_item_id: itemId })
       if (error) failed()

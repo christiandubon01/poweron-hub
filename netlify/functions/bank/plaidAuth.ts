@@ -113,7 +113,9 @@ export async function resolveBankContext(event, overrides = {}) {
   return {
     ok: true,
     actor: { organizationId, userId: user.id, role: data.role },
-    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc), key, environment: config.environment, log: safeLog },
+    deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc), key, environment: config.environment, log: safeLog,
+      // PLAID-1A: server configuration only, never a request value. Off unless exactly "true".
+      accountAdditionsEnabled: (process.env.PLAID_ACCOUNT_ADDITIONS_ENABLED ?? '').trim() === 'true' },
   }
 }
 

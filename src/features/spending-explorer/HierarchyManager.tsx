@@ -3,7 +3,7 @@ import { ColorSwatchPicker, useDisplayColors } from '@/features/display-colors/D
 import { parentColorKey, parentDisplayColor } from '@/features/display-colors/hierarchyColors'
 import { useHierarchy, type DefinitionEdit } from './HierarchyProvider'
 import { btn, btnPrimary } from './ui'
-import type { CleanupPreview } from '@/services/bankProvider/spending/definitionCleanup'
+import type { CleanupPreview } from '@/finance/bankProviderTypes'
 import { authedJsonHeaders } from '@/services/authedFetch'
 import { defaultHierarchy } from '@/finance/bankSpendingHierarchy'
 

@@ -25,6 +25,7 @@ const PUBLIC_TOKEN = /^public-[A-Za-z0-9_-]{8,190}$/
 export type BankErrorCode = 'forbidden' | 'invalid_request' | 'not_found' | 'conflict' | 'item_owned_elsewhere'
   | 'invalid_public_token' | 'plaid_unavailable' | 'persistence_failed' | 'disconnect_incomplete' | 'credential_unreadable'
   | 'login_required' | 'sync_failed' | 'invalid_webhook'
+  | 'duplicate_institution' | 'duplicate_unverifiable' | 'update_mode_unsupported' | 'feature_disabled'
 
 /** Carries only a safe, owner-readable message; never a token, key, response body or stack. */
 export class BankConnectionError extends Error {
@@ -61,6 +62,11 @@ export interface BankConnectionRepo {
   getItem(organizationId: string, itemId: string): Promise<{ id: string; provider: string; providerItemId: string; status: BankConnectionView['status']; environment?: PlaidEnvironmentName } | null>
   listItems(organizationId: string): Promise<BankConnectionView[]>
   getActiveCredential(organizationId: string, itemId: string): Promise<string | null>
+  /**
+   * PLAID-1A: every NOT-disconnected Item of the organization with its provider institution id (e.g. "ins_127991"). Used only to stop a second
+   * Item being created for an institution that is already connected. Never returned to the browser.
+   */
+  listLiveInstitutions(organizationId: string): Promise<Array<{ id: string; institutionId: string | null; environment: PlaidEnvironmentName; status: BankConnectionView['status'] }>>
   disconnectItem(organizationId: string, itemId: string): Promise<'disconnected' | 'already_disconnected'>
   markHealthy(organizationId: string, itemId: string): Promise<boolean>
 }
@@ -77,8 +83,19 @@ export interface BankConnectionDeps {
   key: Buffer
   /** The environment this server is configured for. Items of any other environment are never read, synced, re-linked or disconnected here. */
   environment: PlaidEnvironmentName
+  /**
+   * PLAID-1A server switch (env PLAID_ACCOUNT_ADDITIONS_ENABLED === 'true'). Off by default: adding accounts to an existing Item through update
+   * mode with Account Select, and saving newly shared accounts, are refused until the owner enables it after validation.
+   */
+  accountAdditionsEnabled?: boolean
   /** Receives only the safe fields above. */
   log?: (event: SafeLogEvent) => void
+}
+
+/** Internal: the Link just created a second Item for an institution that already has a live connection. */
+class DuplicateItem extends Error {
+  readonly code: 'duplicate_institution' | 'duplicate_unverifiable'
+  constructor(code: 'duplicate_institution' | 'duplicate_unverifiable') { super(code); this.name = 'DuplicateItem'; this.code = code }
 }
 
 export function assertAuthority(actor: BankActor): void {
@@ -108,29 +125,60 @@ export function decryptFor(deps: BankConnectionDeps, actor: BankActor, item: { p
   }
 }
 
-/** Link token for a NEW connection, or an update-mode (re-authentication) token for an existing one. */
-export async function createLinkToken(deps: BankConnectionDeps, actor: BankActor, input: { mode?: unknown; itemId?: unknown } = {}) {
+/** Plaid failures that mean "this request shape is not supported for this Item/institution" rather than "Plaid is unavailable". */
+const UNSUPPORTED_TYPES = new Set(['INVALID_REQUEST', 'INVALID_INPUT'])
+const UNSUPPORTED_CODES = new Set(['INVALID_FIELD', 'INVALID_CONFIGURATION', 'INSTITUTION_NOT_SUPPORTED', 'PRODUCTS_NOT_SUPPORTED', 'INVALID_PRODUCT'])
+
+/** PLAID-1A: the organization's live Items in THIS server environment (another environment's Items are never compared or touched). */
+async function liveInstitutions(deps: BankConnectionDeps, actor: BankActor) {
+  return (await deps.repo.listLiveInstitutions(actor.organizationId)).filter(i => i.status !== 'disconnected' && i.environment === deps.environment)
+}
+
+/**
+ * Link token for:
+ *   - 'new'          a NEW connection. When the organization already has a live connection in this environment, the caller must state that the
+ *                    owner is connecting a DIFFERENT bank (`differentInstitution: true`); same-bank accounts belong in 'add_accounts'.
+ *   - 'update'       re-authentication of an existing Item (unchanged behaviour).
+ *   - 'add_accounts' PLAID-1A: update mode with Account Select on the EXISTING Item, so more accounts from the same login join that Item. The Item,
+ *                    its access token, its account ids and its transaction history are untouched. Server-switched off by default.
+ */
+export async function createLinkToken(deps: BankConnectionDeps, actor: BankActor, input: { mode?: unknown; itemId?: unknown; differentInstitution?: unknown } = {}) {
   assertAuthority(actor)
   const clientUserId = `${actor.organizationId}.${actor.userId}` // opaque UUIDs only: no email, name or phone
   let accessToken: string | undefined
-  let mode: 'new' | 'update' = 'new'
-  if (input.mode === 'update') {
-    mode = 'update'
+  let mode: 'new' | 'update' | 'add_accounts' = 'new'
+  if (input.mode === 'update' || input.mode === 'add_accounts') {
+    mode = input.mode
+    if (mode === 'add_accounts' && deps.accountAdditionsEnabled !== true) {
+      throw new BankConnectionError('feature_disabled', 403, 'Adding accounts to an existing bank connection is not enabled yet.')
+    }
     const { item, envelope } = await loadCredential(deps, actor, input.itemId as string)
     if (item.status === 'disconnected' || !envelope) throw new BankConnectionError('conflict', 409, 'This bank connection is disconnected. Connect it again instead.')
+    // Account additions start only from a healthy Item: a connection that needs sign-in is repaired first with Reconnect (plain update mode).
+    if (mode === 'add_accounts' && item.status !== 'healthy') throw new BankConnectionError('login_required', 409, 'This bank connection needs attention first. Use Reconnect, then add accounts.')
     accessToken = decryptFor(deps, actor, item, envelope)
   } else if (input.mode !== undefined && input.mode !== 'new') {
     throw new BankConnectionError('invalid_request', 400, 'Unsupported request.')
+  } else if (input.differentInstitution !== true && (await liveInstitutions(deps, actor)).length > 0) {
+    // A new Item for a bank that is already connected would duplicate it (a second subscription, new ids for the same accounts).
+    throw new BankConnectionError('duplicate_institution', 409, 'A bank is already connected. To add more accounts from the same bank login, use "Add accounts" on that connection. Connect a new bank only for a different bank.')
   }
   try {
-    const result = await deps.plaid.createLinkToken({ clientUserId, accessToken })
+    const result = await deps.plaid.createLinkToken({ clientUserId, accessToken, ...(mode === 'add_accounts' ? { accountSelection: true } : {}) })
     note(deps, { event: 'bank.link_token.created', organizationId: actor.organizationId, outcome: mode })
     return { linkToken: result.linkToken, expiration: result.expiration, mode }
   } catch (error) {
-    note(deps, { event: 'bank.link_token.failed', organizationId: actor.organizationId, code: error instanceof PlaidApiFailure ? error.code : 'ERROR' })
+    const code = error instanceof PlaidApiFailure ? error.code : 'ERROR'
+    note(deps, { event: 'bank.link_token.failed', organizationId: actor.organizationId, outcome: mode, code })
+    if (mode === 'add_accounts' && error instanceof PlaidApiFailure && (UNSUPPORTED_TYPES.has(error.type) || UNSUPPORTED_CODES.has(error.code))) {
+      // Never fall back to a new Item: that is exactly the duplicate this path exists to avoid. The owner reviews the situation instead.
+      throw new BankConnectionError('update_mode_unsupported', 409, 'The bank connection service could not open account selection for this connection. Nothing was changed and no new connection was created. This needs owner review.')
+    }
     throw new BankConnectionError('plaid_unavailable', 502, 'The bank connection service is unavailable. Try again shortly.')
   }
 }
+
+const INSTITUTION_ID = /^ins_[A-Za-z0-9]{1,40}$/
 
 /**
  * Exchange a Link public token for an encrypted server-held credential.
@@ -138,10 +186,19 @@ export async function createLinkToken(deps: BankConnectionDeps, actor: BankActor
  * that belongs to another organization fails closed (and is never removed, since it is someone else's live connection); an
  * Item this call just created at Plaid is removed again if it could not be saved, so no orphan is left behind.
  */
-export async function exchangePublicToken(deps: BankConnectionDeps, actor: BankActor, input: { publicToken?: unknown }) {
+export async function exchangePublicToken(deps: BankConnectionDeps, actor: BankActor, input: { publicToken?: unknown; institutionId?: unknown }) {
   assertAuthority(actor)
   const publicToken = typeof input.publicToken === 'string' ? input.publicToken.trim() : ''
   if (!PUBLIC_TOKEN.test(publicToken)) throw new BankConnectionError('invalid_request', 400, 'A valid link session is required.')
+
+  // PLAID-1A duplicate guard, stage 1 (before any access token exists, so no Plaid subscription starts). Link reports the institution the owner
+  // chose; it is advisory browser input, so stage 2 below re-checks it from Plaid itself. Institution NAMES are never compared, only ids.
+  const live = await liveInstitutions(deps, actor)
+  const hinted = typeof input.institutionId === 'string' && INSTITUTION_ID.test(input.institutionId) ? input.institutionId : null
+  if (hinted && live.some(i => i.institutionId === hinted)) {
+    note(deps, { event: 'bank.exchange.duplicate_refused', organizationId: actor.organizationId, stage: 'pre_exchange', code: 'duplicate_institution' })
+    throw new BankConnectionError('duplicate_institution', 409, 'This bank is already connected. To add more accounts from the same login, use "Add accounts" on the existing connection. Nothing new was connected.')
+  }
 
   let exchanged: { accessToken: string; itemId: string }
   try {
@@ -173,9 +230,26 @@ export async function exchangePublicToken(deps: BankConnectionDeps, actor: BankA
     const summary = await deps.plaid.getItem(accessToken)
     if (summary.itemId !== providerItemId) throw new Error('item mismatch')
     institutionId = summary.institutionId
+    // PLAID-1A duplicate guard, stage 2 (authoritative, from Plaid): another live Item of this organization at the same institution means this
+    // Link created a second Item for a bank that is already connected. A re-exchange of the SAME Item (credential rotation) is not a duplicate.
+    const others = live.filter(i => !existing || i.id !== existing.id)
+    if (others.length > 0 && (!institutionId || others.some(i => !i.institutionId))) throw new DuplicateItem('duplicate_unverifiable')
+    if (institutionId && others.some(i => i.institutionId === institutionId)) throw new DuplicateItem('duplicate_institution')
     if (institutionId) institutionName = await deps.plaid.getInstitutionName(institutionId)
     encrypted = encryptProviderToken(accessToken, deps.key, contextFor(actor, BANK_PROVIDER, providerItemId))
-  } catch {
+  } catch (error) {
+    if (error instanceof DuplicateItem) {
+      // The extra Item was never saved here. Remove it at Plaid so it is not billed; the existing connection is not touched.
+      let removed = preExisting
+      if (!preExisting) { try { await deps.plaid.removeItem(accessToken); removed = true } catch { removed = false } }
+      note(deps, { event: 'bank.exchange.duplicate_refused', organizationId: actor.organizationId, stage: 'post_exchange', code: error.code, outcome: removed ? 'extra_item_removed' : 'extra_item_cleanup_failed' })
+      if (error.code === 'duplicate_unverifiable') {
+        throw new BankConnectionError('duplicate_unverifiable', 409, 'Cash OS could not confirm this is a different bank from your existing connection, so nothing was connected. This needs owner review.')
+      }
+      throw new BankConnectionError('duplicate_institution', 409, removed
+        ? 'This bank is already connected. To add more accounts from the same login, use "Add accounts" on the existing connection. The extra connection was removed and your existing connection was not changed.'
+        : 'This bank is already connected. The extra connection could not be removed automatically and needs owner review. Your existing connection was not changed.')
+    }
     await compensate()
     note(deps, { event: 'bank.exchange.prepare_failed', organizationId: actor.organizationId, code: 'persistence_failed' })
     throw new BankConnectionError('persistence_failed', 503, 'The bank connection could not be saved. Nothing was connected; please try again.')
@@ -198,7 +272,7 @@ export async function exchangePublicToken(deps: BankConnectionDeps, actor: BankA
 export async function getConnectionStatus(deps: BankConnectionDeps, actor: BankActor) {
   assertAuthority(actor)
   const items = await deps.repo.listItems(actor.organizationId)
-  return { environment: deps.environment, connected: items.some(i => i.status === 'healthy' && i.environment === deps.environment), connections: items }
+  return { environment: deps.environment, connected: items.some(i => i.status === 'healthy' && i.environment === deps.environment), connections: items, accountAdditionsEnabled: deps.accountAdditionsEnabled === true }
 }
 
 /** Remove at Plaid, then revoke locally. Deletes no financial history. Retry-safe in both directions. */
