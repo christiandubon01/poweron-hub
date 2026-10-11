@@ -21,12 +21,14 @@ import { createPlaidSdkPort } from '../../../src/services/bankProvider/plaidPort
 import { createBankConnectionRepo } from '../../../src/services/bankProvider/bankConnectionRepo'
 import { createBankAccountRepo } from '../../../src/services/bankProvider/bankAccountRepo'
 import { createBankSyncRepo } from '../../../src/services/bankProvider/bankSyncRepo'
+import { createPendingContinuityRepo } from '../../../src/services/bankProvider/pendingContinuityRepo'
 import { createSyncStagingRepo } from '../../../src/services/bankProvider/syncStagingRepo'
 import { BACKGROUND_SYNC_LEASE_MS, SYNC_LEASE_MS } from '../../../src/services/bankProvider/bankSyncService'
 
 /** PLAID-1B server switches (configuration only, never request values; off unless exactly "true"). */
 export const backgroundSyncEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_BACKGROUND_SYNC_ENABLED ?? '').trim() === 'true'
 export const resumableSyncEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_RESUMABLE_SYNC_ENABLED ?? '').trim() === 'true'
+export const pendingContinuityEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_PENDING_CONTINUITY_ENABLED ?? '').trim() === 'true'
 export const syncAuditEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_SYNC_AUDIT_ENABLED ?? '').trim() === 'true'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 
@@ -126,7 +128,9 @@ export async function resolveBankContext(event, overrides = {}) {
       // PLAID-1B: while background sync is on, every reader and claimer uses the long background lease.
       backgroundSyncEnabled: backgroundSyncEnabled(), syncLeaseMs: backgroundSyncEnabled() ? BACKGROUND_SYNC_LEASE_MS : SYNC_LEASE_MS,
       // PLAID-1C: resumable (Netlify Free) sync; its tables exist only after the reviewed SQL, so it stays unused until switched on.
-      resumableSyncEnabled: resumableSyncEnabled(), staging: (overrides.stagingRepo ?? createSyncStagingRepo)(svc) },
+      resumableSyncEnabled: resumableSyncEnabled(), staging: (overrides.stagingRepo ?? createSyncStagingRepo)(svc),
+      // PLAID-2A: pending-to-posted decision continuity; its SQL is uninstalled, so it stays unused until the owner switches it on.
+      pendingContinuityEnabled: pendingContinuityEnabled(), continuity: (overrides.continuityRepo ?? createPendingContinuityRepo)(svc) },
   }
 }
 

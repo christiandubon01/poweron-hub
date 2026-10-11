@@ -6,8 +6,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { resumableSyncStep, MAX_RUN_RESTARTS, STEP_BUDGET_MS } from '../resumableSync'
+import { resumableSyncStep, relinkPendingPosted, MAX_RUN_RESTARTS, STEP_BUDGET_MS } from '../resumableSync'
 import { createSyncStagingRepo } from '../syncStagingRepo'
+import { createPendingContinuityRepo } from '../pendingContinuityRepo'
 import { getSyncStatus } from '../bankSyncService'
 import { contextFor } from '../bankConnectionService'
 import { encryptProviderToken, loadBankTokenEncryptionKey } from '../providerTokenCrypto'
@@ -52,6 +53,7 @@ describe.runIf(!!PGliteCtor)('PLAID-1C resumable sync on PostgreSQL (PGlite)', (
     for (const m of MIGRATIONS) await db.exec(readFileSync(`supabase/migrations/${m}.sql`, 'utf8'))
     await db.exec(readFileSync('docs/plaid1c/resumable-sync-proposal.sql', 'utf8'))
     await db.exec(readFileSync('docs/plaid1c/resumable-sync-proposal.sql', 'utf8')) // re-runnable
+    await db.exec(readFileSync('docs/plaid2/pending-posted-continuity-proposal.sql', 'utf8')) // PLAID-2A (independent draft)
     await db.exec('SET ROLE service_role')
   }, 120_000)
   afterAll(async () => { await db?.close?.() })
@@ -331,6 +333,29 @@ describe.runIf(!!PGliteCtor)('PLAID-1C resumable sync on PostgreSQL (PGlite)', (
     await expect(w.deps.staging.stagePage(ORG, { runId: r.runId, generation: 1, pageNo: 0, nextCursor: 'x', hasMore: false, updateStatus: null, changes: [bad] })).rejects.toThrow()
     expect((await w.runs())[0]).toMatchObject({ pages_staged: 0, staged: 0 }) // atomic: nothing staged, page not advanced
     expect(STEP_BUDGET_MS).toBeLessThan(10_000)
+  })
+  it('PLAID-2A: after the final apply, a posted row inherits the owner decision made on its pending row; off by default; a failure never undoes the sync', async () => {
+    const w = await world()
+    // Sync 1: a pending purchase arrives and the owner categorizes it.
+    w.script.set('START', page({ added: [tx('P-1', 'wf-card', { pending: true, amount: 40 })], nextCursor: 'c1', hasMore: false }))
+    expect((await w.drive()).at(-1)).toMatchObject({ phase: 'complete', state: 'synced' })
+    const pendId = (await db.query(`SELECT id FROM public.financial_provider_transactions WHERE provider_item_ref = $1 AND provider_transaction_id = 'P-1'`, [w.itemId])).rows[0].id
+    await db.query(`INSERT INTO public.financial_provider_interpretations (organization_id, provider_transaction_ref, kind, status, source, confidence, category, decided_by, decided_at) VALUES ($1,$2,'category','confirmed','owner','high','materials',$3,now())`, [ORG, pendId, OWNER_ID])
+    // Sync 2: Plaid removes the pending row and adds its posted replacement.
+    w.script.set('c1', page({ added: [tx('Q-1', 'wf-card', { amount: 41.25, pendingTransactionId: 'P-1' })], removed: [{ transactionId: 'P-1' }], nextCursor: 'c2', hasMore: false }))
+    const off = await w.drive() // continuity switched off: nothing inherited, sync unaffected
+    expect(off.at(-1)).toMatchObject({ phase: 'complete', state: 'synced' }); expect(off.at(-1).continuity).toBeUndefined()
+    const count = async () => (await db.query(`SELECT count(*)::int AS n FROM public.financial_provider_interpretations i JOIN public.financial_provider_transactions t ON t.id = i.provider_transaction_ref WHERE t.provider_transaction_id = 'Q-1'`)).rows[0].n
+    expect(await count()).toBe(0)
+    // Switched on: the owner re-runs it (safe to repeat), and the decision follows the posted row.
+    const on = { ...w.deps, pendingContinuityEnabled: true, continuity: createPendingContinuityRepo(svc) }
+    expect(await relinkPendingPosted(on, w.owner, { itemId: w.itemId })).toMatchObject({ ok: true, linked: 1, inherited: 1 })
+    expect(await count()).toBe(1)
+    expect(await relinkPendingPosted(on, w.owner, { itemId: w.itemId })).toMatchObject({ ok: true, inherited: 0 })
+    await expect(relinkPendingPosted(w.deps, w.owner, { itemId: w.itemId })).rejects.toMatchObject({ code: 'feature_disabled' })
+    // A failing continuity repo is reported as unfinished and throws nothing.
+    const broken = { ...w.deps, pendingContinuityEnabled: true, continuity: { linkPendingPosted: async () => { throw new Error('down') } } }
+    expect(await relinkPendingPosted(broken, w.owner, { itemId: w.itemId })).toMatchObject({ ok: false, linked: 0 })
   })
 })
 

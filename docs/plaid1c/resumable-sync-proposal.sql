@@ -293,6 +293,9 @@ BEGIN
     RETURN QUERY SELECT 'stale'::TEXT, 0, 0, 0, 0; RETURN;
   END IF;
 
+  -- Provenance (PLAID-2C): any provider-fact history row written by this transaction names this run. Transaction-local; harmless without the 2C SQL.
+  PERFORM set_config('poweron.sync_run_id', p_run_id::text, true);
+
   SELECT count(*) FILTER (WHERE s.change_kind = 'added'), count(*) FILTER (WHERE s.change_kind = 'modified'),
          count(*) FILTER (WHERE s.change_kind <> 'removed' AND s.pending_provider_transaction_id IS NOT NULL)
     INTO v_added, v_modified, v_linked

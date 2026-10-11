@@ -21,6 +21,7 @@ import { PlaidApiFailure, ProviderResponseError, type SyncPage } from './plaidPo
 import { EvidenceRejected, toTransactionEvidence } from './transactionEvidence'
 import { PersistenceFailure, SYNC_LEASE_MS, SYNC_PAGE_SIZE, classifySyncOutcome, recoveryFor, type BankSyncDeps } from './bankSyncService'
 import type { StagedChange, SyncStagingRepo } from './syncStagingRepo'
+import { runPendingContinuity, type ContinuityResult, type PendingContinuityRepo } from './pendingContinuityRepo'
 
 /** A request starts a new page fetch only before this point, leaving room for one slow Plaid page plus staging inside a 10-second limit. */
 export const STEP_BUDGET_MS = 5_000
@@ -32,7 +33,14 @@ export const REQUEST_LIMIT_MS = 10_000
 /** PLAID-1E: the most rows one run may stage (the SQL enforces the same ceiling and refuses to raise it). Larger updates need owner review. */
 export const MAX_STAGED_ROWS = 50_000
 
-export interface ResumableSyncDeps extends BankSyncDeps { staging: SyncStagingRepo; /** Lowers (never raises) MAX_STAGED_ROWS; tests only. */ maxStagedRows?: number }
+export interface ResumableSyncDeps extends BankSyncDeps {
+  staging: SyncStagingRepo
+  /** Lowers (never raises) MAX_STAGED_ROWS; tests only. */
+  maxStagedRows?: number
+  /** PLAID-2A: after a committed apply, link pending rows to their posted replacements and carry confirmed decisions across. Requires the 2A SQL; off by default. */
+  pendingContinuityEnabled?: boolean
+  continuity?: PendingContinuityRepo
+}
 
 export type StepPhase = 'fetching' | 'ready_to_apply' | 'complete' | 'waiting'
 export interface StepResult {
@@ -43,6 +51,8 @@ export interface StepResult {
   restarts: number
   state?: 'synced' | 'waiting' | 'unconfirmed'
   added?: number; modified?: number; removed?: number; pendingLinked?: number
+  /** PLAID-2A: what pending-to-posted continuity did after this apply (absent when it is off). `ok: false` = unfinished, safe to repeat. */
+  continuity?: ContinuityResult & { ok: boolean }
 }
 
 const clock = (deps: BankSyncDeps) => (deps.now ? deps.now() : Date.now())
@@ -166,8 +176,12 @@ export async function resumableSyncStep(deps: ResumableSyncDeps, actor: BankActo
       if (applied.outcome === 'lease_lost' || applied.outcome === 'stale') throw superseded()
       await deps.sync.markNudgesProcessed(org, item.id, startedAt)
       note(deps, { event: 'bank.sync.completed', organizationId: org, itemId: item.id, outcome: `a${applied.added}/m${applied.modified}/r${applied.removed}/pl${applied.pendingLinked}/pg${run.pagesStaged}/rs${run.restarts}/${outcome}/resumable` })
+      // The apply has committed, so continuity can only add owner-decision copies; it can never undo or delay the sync (it never throws).
+      const continuity = deps.pendingContinuityEnabled === true && deps.continuity && applied.outcome === 'applied'
+        ? await runPendingContinuity(deps.continuity, org, item.id, { now: () => clock(deps), deadlineMs: requestStart + REQUEST_LIMIT_MS - 1_500 })
+        : undefined
       return { phase: 'complete', more: false, pagesStaged: run.pagesStaged, restarts: run.restarts, state: outcome,
-        added: applied.added, modified: applied.modified, removed: applied.removed, pendingLinked: applied.pendingLinked }
+        added: applied.added, modified: applied.modified, removed: applied.removed, pendingLinked: applied.pendingLinked, ...(continuity ? { continuity } : {}) }
     }
 
     // Out of time for this request: progress is durable. Release the lease WITHOUT moving the committed cursor.
@@ -197,4 +211,13 @@ export async function resumableSyncStep(deps: ResumableSyncDeps, actor: BankActo
     note(deps, { event: 'bank.sync.step_failed', organizationId: org, itemId: item.id, code: failure.code, outcome: `${recoveryFor(failure.code)}${runId ? '/run' : ''}` })
     throw failure.publicError
   }
+}
+
+/** Owner-triggered re-run of pending-to-posted continuity for one connection (safe to repeat; used when a sync ran out of time before it finished). */
+export async function relinkPendingPosted(deps: ResumableSyncDeps, actor: BankActor, input: { itemId?: unknown }): Promise<ContinuityResult & { ok: boolean }> {
+  assertAuthority(actor)
+  if (deps.pendingContinuityEnabled !== true || !deps.continuity) throw new BankConnectionError('feature_disabled', 403, 'Pending-to-posted matching is not enabled yet.')
+  const { item } = await loadCredential(deps, actor, input.itemId as string)
+  const start = clock(deps)
+  return runPendingContinuity(deps.continuity, actor.organizationId, item.id, { now: () => clock(deps), deadlineMs: start + REQUEST_LIMIT_MS - 1_500, maxCalls: 6 })
 }
