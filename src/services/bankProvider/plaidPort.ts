@@ -68,6 +68,19 @@ export interface SyncPage {
 export interface WebhookVerificationKey { kid: string; alg: string; kty: string; crv: string; x: string; y: string; expiredAt: number | null }
 
 /** The ONLY account fields that leave this adapter. Balances are deliberately absent: only the ISO currency code is read from them. */
+/** One account's balances exactly as the provider reported them (decimals, provider sign convention). Null = the provider did not report it. */
+export interface ProviderBalanceReading {
+  accountId: string
+  type: string | null
+  subtype: string | null
+  current: number | null
+  available: number | null
+  limit: number | null
+  currency: string | null
+  /** The bank's own timestamp for the balance (Plaid balances.last_updated_datetime), when given. */
+  lastUpdatedAt: string | null
+}
+
 export interface ProviderAccountSummary {
   accountId: string
   name: string | null
@@ -89,6 +102,8 @@ export interface BankPlaidPort {
   getInstitutionName(institutionId: string): Promise<string | null>
   /** /accounts/get: the accounts at the Item (free; not tied to any product). Returns an allowlisted shape, never the raw response or any balance. */
   getAccounts(accessToken: string): Promise<ProviderAccountSummary[]>
+  /** /accounts/get balances (PLAID-2E): the bank's cached balances, free of per-call charges (the real-time /accounts/balance/get is billed per call and is NOT used). */
+  getAccountBalances?(accessToken: string): Promise<ProviderBalanceReading[]>
   /** /transactions/sync, ONE page. `cursor` null = first call for the Item. Returns an allowlisted page, never the raw response. */
   syncTransactions(input: { accessToken: string; cursor: string | null; count: number }): Promise<SyncPage>
   /** /webhook_verification_key/get: the public key used to verify a webhook's signed JWT. */
@@ -149,6 +164,16 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
       return (data.accounts ?? []).map(a => ({
         accountId: String(a.account_id), name: text(a.name), officialName: text(a.official_name), mask: text(a.mask),
         type: text(a.type), subtype: text(a.subtype), currency: text(a.balances?.iso_currency_code),
+      }))
+    },
+    async getAccountBalances(accessToken) {
+      const { data } = await call(() => api.accountsGet({ access_token: accessToken }))
+      const text = (v: unknown) => (typeof v === 'string' ? v : null)
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+      return (data.accounts ?? []).map((a: any) => ({
+        accountId: String(a.account_id), type: text(a.type), subtype: text(a.subtype),
+        current: num(a.balances?.current), available: num(a.balances?.available), limit: num(a.balances?.limit),
+        currency: text(a.balances?.iso_currency_code), lastUpdatedAt: text(a.balances?.last_updated_datetime),
       }))
     },
     async syncTransactions({ accessToken, cursor, count }) {

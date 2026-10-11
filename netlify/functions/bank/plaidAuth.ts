@@ -29,6 +29,7 @@ import { BACKGROUND_SYNC_LEASE_MS, SYNC_LEASE_MS } from '../../../src/services/b
 export const backgroundSyncEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_BACKGROUND_SYNC_ENABLED ?? '').trim() === 'true'
 export const resumableSyncEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_RESUMABLE_SYNC_ENABLED ?? '').trim() === 'true'
 export const pendingContinuityEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_PENDING_CONTINUITY_ENABLED ?? '').trim() === 'true'
+export const balancesEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_BALANCES_ENABLED ?? '').trim() === 'true'
 export const syncAuditEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_SYNC_AUDIT_ENABLED ?? '').trim() === 'true'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 
@@ -121,6 +122,7 @@ export async function resolveBankContext(event, overrides = {}) {
 
   return {
     ok: true,
+    svc,
     actor: { organizationId, userId: user.id, role: data.role },
     deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc, { auditEnabled: syncAuditEnabled() }), key, environment: config.environment, log: safeLog,
       // PLAID-1A: server configuration only, never a request value. Off unless exactly "true".

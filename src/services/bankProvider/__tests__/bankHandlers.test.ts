@@ -6,6 +6,7 @@ import { buildHandler as linkToken } from '../../../../netlify/functions/bank/pl
 import { buildHandler as exchange } from '../../../../netlify/functions/bank/plaid-exchange'
 import { buildHandler as status } from '../../../../netlify/functions/bank/plaid-connection-status'
 import { buildHandler as disconnect } from '../../../../netlify/functions/bank/plaid-disconnect'
+import { buildHandler as balances } from '../../../../netlify/functions/bank/plaid-balances'
 
 const ORG_A = '10000000-0000-4000-8000-00000000000a'
 const ORG_B = '10000000-0000-4000-8000-00000000000b'
@@ -42,6 +43,7 @@ const handlers: Array<[string, (o?: any) => (e: any) => Promise<any>, string, un
   ['plaid-exchange', exchange, 'POST', { publicToken: 'public-sandbox-abcdefgh' }],
   ['plaid-connection-status', status, 'GET', undefined],
   ['plaid-disconnect', disconnect, 'POST', { itemId: ITEM }],
+  ['plaid-balances', balances, 'GET', undefined],
 ]
 
 describe('bank connection endpoints (BANK-2 authorization)', () => {
