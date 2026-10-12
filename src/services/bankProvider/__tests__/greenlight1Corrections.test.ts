@@ -5,10 +5,11 @@
  *       (a PayPal refund worded "TRANSFER" is suggested as 'transfers'; it used to be saved as 'transfers' while the screen said "Confirmed as a refund").
  *  D-3  undo only reports "undone" when something was undone.
  *  B-2  reversing a pair is limited to this server's Plaid environment, like confirm and reject.
+ *  A-4  while reconciliation is on, a pair is recorded only by the Matches review (both legs together), never as a one-leg Explorer row.
  *  All of it is reconciliation-only: with the switch off nothing is reachable and nothing is written.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { decideRefund, getExplorer } from '../spending/spendingService'
+import { applyDecision, decideRefund, getExplorer } from '../spending/spendingService'
 import { createSpendingRepo } from '../spending/spendingRepo'
 import { decideMatch, getMatchReview } from '../spending/matchReviewService'
 import { NOW, ORG, OWNER_ID, buildWorld } from './helpers/spendingWorld'
@@ -33,6 +34,7 @@ describe.runIf(!!PG)('GREENLIGHT-1 corrections (real SQL)', () => {
     T.p3 = await w.tx('chk', 75, '2026-09-03', 'PAYPAL INST XFER SPARKY SUPPLY', { merchant: 'PayPal' }); T.r3 = await w.tx('chk', -75, '2026-09-12', 'PAYPAL TRANSFER', { merchant: 'PayPal' })
     // a checking -> savings move for the environment check
     T.o = await w.tx('chk', 500, '2026-09-15', 'ONLINE TRANSFER TO SAVINGS'); T.i = await w.tx('sav', -500, '2026-09-15', 'ONLINE TRANSFER FROM CHECKING')
+    T.o2 = await w.tx('chk', 345.67, '2026-09-20', 'ONLINE TRANSFER TO SAVINGS'); T.i2 = await w.tx('sav', -345.67, '2026-09-20', 'ONLINE TRANSFER FROM CHECKING')
   }, 180_000)
   afterAll(async () => { await w?.db?.close?.() })
 
@@ -78,6 +80,18 @@ describe.runIf(!!PG)('GREENLIGHT-1 corrections (real SQL)', () => {
     const before = await w.q(`SELECT count(*)::int AS n FROM public.financial_provider_interpretations`)
     for (const decision of ['confirm', 'reject', 'undo']) expect(await err(decideRefund(deps({ reconciliationEnabled: false }), owner, { decision, transactionId: T.p3 }))).toMatchObject({ status: 403, code: 'feature_disabled' })
     expect(await w.q(`SELECT count(*)::int AS n FROM public.financial_provider_interpretations`)).toEqual(before)
+  })
+
+  it('A-4: with reconciliation ON the Explorer cannot record a one-leg pair (accept or set); OFF keeps the existing one-leg behavior', async () => {
+    const rel = (await getExplorer(deps(), owner, { accounts: 'all', from: WINDOW.from, limit: 200, view: 'all' })).rows.find(r => r.id === T.o2)?.relationship
+    expect(rel).toMatchObject({ kind: 'transfer', state: 'suggested', target: { type: 'counterpart_tx', id: T.i2 } })
+    const count = async () => (await w.q(`SELECT count(*)::int AS n FROM public.financial_provider_interpretations WHERE provider_transaction_ref = ANY($1)`, [[T.o2, T.i2]]))[0].n
+    expect(await err(applyDecision(deps(), owner, { action: 'accept_suggestion', transactionId: T.o2, dimension: 'relationship' }))).toMatchObject({ status: 409, message: expect.stringContaining('Matches review') })
+    expect(await err(applyDecision(deps(), owner, { action: 'set_relationship', transactionId: T.o2, kind: 'transfer', counterpartTransactionId: T.i2 }))).toMatchObject({ status: 409 })
+    expect(await count()).toBe(0)
+    // rejecting the suggestion is still allowed (it never claims a pair), and with the switch OFF the legacy one-leg confirmation is unchanged
+    expect(await applyDecision(deps({ reconciliationEnabled: false }), owner, { action: 'accept_suggestion', transactionId: T.o2, dimension: 'relationship' })).toEqual({ outcome: 'created' })
+    expect(await count()).toBe(1)
   })
 
   it('B-2: a server configured for another Plaid environment cannot reverse this environment\'s pair', async () => {

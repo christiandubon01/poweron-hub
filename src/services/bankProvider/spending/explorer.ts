@@ -85,7 +85,8 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
     for (const d of input.decisions) {
       if (d.status !== 'confirmed' || d.kind !== 'transfer' || !d.counterpartTxId || !liveIds.has(d.counterpartTxId) || !liveIds.has(d.txId)) continue
       const slot = confirmedBy.get(d.counterpartTxId) ?? {}
-      if (slot.rel) continue
+      // never over a decision the other leg has itself, including a category (GREENLIGHT-1 A-4: e.g. a deposit the owner confirmed as a customer payment)
+      if (slot.rel || (slot.bucket && slot.bucket.category !== 'transfers')) continue
       slot.rel = { ...d, id: `pair:${d.id}`, txId: d.counterpartTxId, counterpartTxId: d.txId }
       confirmedBy.set(d.counterpartTxId, slot)
     }
@@ -113,7 +114,9 @@ export function buildRows(input: ExplorerInput): { rows: ExplorerRow[]; analytic
       : { key: direction === 'money_out' ? 'other_needs_review' : null, label: direction === 'money_out' ? bucketLabel('other_needs_review') : null, state: 'none', confidence: null, reasons: direction === 'money_out' ? ['Nothing recognised this transaction yet.'] : [] }
     const relationship: ExplorerRow['relationship'] = dec.rel
       ? { kind: dec.rel.kind as RelationshipKind, label: RELATIONSHIP_LABELS[dec.rel.kind as RelationshipKind], target: targetOf(dec.rel), state: 'confirmed', confidence: dec.rel.confidence ?? 'high', reasons: [input.reconciliation === true && dec.rel.id.startsWith('pair:') ? 'Paired with the transfer you confirmed on the other account.' : 'You confirmed this.'] }
-      : sug.relationship ? { kind: sug.relationship.kind, label: RELATIONSHIP_LABELS[sug.relationship.kind], target: sug.relationship.target, state: 'suggested', confidence: sug.relationship.confidence, reasons: sug.relationship.reasons }
+      // GREENLIGHT-1 A-1 (switch ON only): a category the owner confirmed outranks an unconfirmed transfer/debt suggestion, so the row is reported under the owner's category
+      : sug.relationship && !(input.reconciliation === true && bucketConfirmed && bucketConfirmed !== 'transfers' && (sug.relationship.kind === 'transfer' || sug.relationship.kind === 'debt'))
+        ? { kind: sug.relationship.kind, label: RELATIONSHIP_LABELS[sug.relationship.kind], target: sug.relationship.target, state: 'suggested', confidence: sug.relationship.confidence, reasons: sug.relationship.reasons }
       : { kind: 'unknown', label: RELATIONSHIP_LABELS.unknown, target: null, state: 'none', confidence: null, reasons: [] }
     const ignored = !!dec.ignored
     const review: ReviewState = ignored ? 'ignored'

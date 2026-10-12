@@ -342,6 +342,23 @@ function reconciledTransferSuggestions(txs: EvidenceTx[], accounts: Map<string, 
       if (byId.has(id) && !out.has(id)) out.set(id, { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'low', reasons: amb.reasons })
     }
   }
+  // GREENLIGHT-1 A-2: the engine never PAIRS a payment into a loan/investment account or money taken out of a credit card (a cash advance), because those
+  // are not plain transfers. They are still not spending or income: an equal opposite movement between two connected accounts is held back as
+  // "unresolved" for the owner to decide, as the pre-engine implementation did, instead of falling through to Business spending / Money in.
+  const classOf = new Map([...accounts.values()].map(a => [a.providerAccountRef, reconAccountOf(a.providerAccountRef, '', a.providerType, a.providerSubtype, a.ownership).accountClass]))
+  // Money arriving IN a loan/investment account is itself the signal. Money out of a card equal to a bank deposit is usually just a purchase and an unrelated
+  // deposit, so a cash advance needs its wording ("ADVANCE", "TRANSFER", ...) on one of the two legs.
+  const advanceWords = (t: EvidenceTx) => /\bADVANCE\b/.test(searchText(t.name, t.merchantName)) || TRANSFER_KEYWORD.test(searchText(t.name, t.merchantName))
+  const restricted = (o: EvidenceTx, i: EvidenceTx) => classOf.get(i.providerAccountRef) === 'loan' || classOf.get(i.providerAccountRef) === 'investment'
+    || (classOf.get(o.providerAccountRef) === 'credit_card' && (advanceWords(o) || advanceWords(i)))
+  const open = txs.filter(t => !t.removed && t.amountMinor !== 0 && !out.has(t.id) && !paired.has(t.id))
+  const openByAmount = new Map<number, EvidenceTx[]>()
+  for (const t of open) { const k = Math.abs(t.amountMinor); const l = openByAmount.get(k); if (l) l.push(t); else openByAmount.set(k, [t]) }
+  for (const t of open) {
+    const other = (openByAmount.get(Math.abs(t.amountMinor)) ?? []).find(u => u.amountMinor === -t.amountMinor && u.providerAccountRef !== t.providerAccountRef && u.pending === t.pending && daysBetween(u.date, t.date) <= 5
+      && restricted(t.amountMinor > 0 ? t : u, t.amountMinor > 0 ? u : t))
+    if (other) out.set(t.id, { kind: 'transfer', target: { type: null, id: null, label: null }, confidence: 'low', reasons: [`An equal opposite movement in ${labelOf(other)} looks like a loan payment or a credit-card cash advance. It is not counted as spending or income until you decide what it is.`] })
+  }
   for (const t of txs) {
     if (out.has(t.id) || paired.has(t.id)) continue // a confirmed pair needs no hint; a suggested pair already has its own
     const s = strongOf(t)

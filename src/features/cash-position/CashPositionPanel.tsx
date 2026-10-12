@@ -119,7 +119,7 @@ function Accounts({ accounts }: { accounts: PositionAccount[] }) {
       <div className="flex flex-wrap items-baseline justify-between gap-x-3"><span className="min-w-0 truncate font-semibold" title={a.label}>{a.label}</span><span className="tabular-nums">{a.balanceMinor === null ? '—' : signedUsd2(a.balanceMinor)}</span></div>
       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-secondary)]">
         <Chip tone="muted">{CLASS_LABEL[a.accountClass]}{a.restricted ? ' · restricted' : ''}</Chip><Chip tone="neutral">{SCOPE_LABEL[a.scope].replace(' accounts', '')}</Chip>
-        <Chip tone={a.freshness === 'fresh' ? 'done' : a.freshness === 'unknown' ? 'muted' : 'warn'}>{a.freshness === 'fresh' ? 'Current' : a.freshness === 'unknown' ? 'No balance' : a.freshness === 'aging' ? 'Over 24 h old' : 'Stale'}</Chip>
+        <Chip tone={a.freshness === 'fresh' ? 'done' : a.freshness === 'unknown' ? 'muted' : 'warn'}>{a.freshness === 'fresh' ? 'Current' : a.freshness === 'unknown' ? 'No balance' : a.freshness === 'aging' ? (a.bankTimeKnown === false ? 'Bank time unknown' : 'Over 24 h old') : 'Stale'}</Chip>
         {a.observedAt && <span>as of {when(a.observedAt)}</span>}
         {a.accountClass === 'bank_cash' && a.balanceMinor !== null && <span>{a.availableMinor === null ? 'available: not reported' : `available ${signedUsd2(a.availableMinor)}`}</span>}
         {a.accountClass === 'credit_card' && a.unusedCreditMinor !== null && <span>unused credit {signedUsd2(a.unusedCreditMinor)} (not cash){a.unusedCreditBasis === 'limit_minus_owed' ? ', derived' : ''}</span>}

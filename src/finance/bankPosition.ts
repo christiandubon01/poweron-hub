@@ -53,6 +53,8 @@ export interface PositionAccount {
   scope: PositionScope
   mappedFinancialAccountId: string | null
   freshness: Freshness
+  /** false: the bank gave no time for this balance; `observedAt` is when Cash OS fetched it, and the reading is never shown as current (GREENLIGHT-1 A-3). */
+  bankTimeKnown?: boolean
   observedAt: string | null
   /** Bank cash: the bank's current balance. Card / loan: the amount owed. null = no reading. */
   balanceMinor: number | null

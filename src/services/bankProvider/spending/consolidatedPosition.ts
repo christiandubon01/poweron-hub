@@ -39,10 +39,15 @@ const usd = (minor: number) => `$${(Math.abs(minor) / 100).toLocaleString('en-US
 
 // ── balances ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * GREENLIGHT-1 A-3: a reading without the bank's own timestamp (Plaid's cached balance usually has none) has an unknown age; the time Cash OS fetched it
+ * says nothing about when the bank last updated it. Such a reading is never "current": at best it is usable with a warning.
+ */
+const effectiveFreshness = (a: Pick<AccountBalanceView, 'freshness' | 'observedIsProvider'>): Freshness => (a.freshness === 'fresh' && !a.observedIsProvider ? 'aging' : a.freshness)
 function censusOf(list: AccountBalanceView[], has: (a: AccountBalanceView) => boolean): Census {
   const contributors = list.filter(has)
   // an unreadable timestamp is never "fresh": it counts as stale
-  const f = (x: Freshness) => contributors.filter(a => (a.freshness === 'unknown' ? 'stale' : a.freshness) === x).length
+  const f = (x: Freshness) => contributors.filter(a => (a.freshness === 'unknown' ? 'stale' : effectiveFreshness(a)) === x).length
   return { accounts: list.length, withReading: contributors.length, fresh: f('fresh'), aging: f('aging'), stale: f('stale'), missing: list.length - contributors.length }
 }
 export function completenessOf(c: Census): Completeness {
@@ -96,7 +101,7 @@ function accountView(a: AccountBalanceView): PositionAccount | null {
   const label = `${a.institutionName ? `${a.institutionName} · ` : ''}${a.name ?? 'Account'}${a.mask ? ` ••••${a.mask}` : ''}`
   return {
     ref: a.accountRef, label, institution: a.institutionName, name: a.name, mask: a.mask, accountClass: a.accountClass, restricted: a.restricted, scope: scopeOf(a),
-    mappedFinancialAccountId: a.mappedFinancialAccountId, freshness: a.freshness, observedAt: a.observedAt,
+    mappedFinancialAccountId: a.mappedFinancialAccountId, freshness: effectiveFreshness(a), bankTimeKnown: a.observedIsProvider, observedAt: a.observedAt,
     balanceMinor: a.accountClass === 'bank_cash' ? a.bankBalanceMinor : a.owedMinor,
     availableMinor: a.accountClass === 'bank_cash' ? a.availableMinor : null,
     creditLimitMinor: a.accountClass === 'credit_card' ? a.creditLimitMinor : null,

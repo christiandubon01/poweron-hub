@@ -513,6 +513,9 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
   const ev = await deps.repo.getEvidence(org, txId) // organization-scoped: another organization's id is simply "not found"
   if (!ev || ev.removed) throw new BankConnectionError('not_found', 404, 'Transaction not found.')
   const pendingBlock = () => { if (ev.pending) throw new BankConnectionError('conflict', 409, 'A pending transaction can only be categorized or ignored until it posts.') }
+  // GREENLIGHT-1 A-4 (switch ON only): a pair is ONE statement about BOTH legs. While reconciliation is on it is recorded only by the Matches review (the pair
+  // function writes both legs together), never as a one-leg row here: a one-leg row is read differently once the switch is turned off again (rollback).
+  const pairOnlyInMatches = () => { if (deps.reconciliationEnabled === true) throw new BankConnectionError('conflict', 409, 'Confirm matched pairs in the Matches review, so both transactions are recorded together. Nothing was changed.') }
   const done = (outcome: string) => { logNote(deps, { event: 'spending.decision', organizationId: org, outcome: `${input.action}/${outcome}` }); return { outcome } }
   const confirmedNow = async () => {
     const confirmed = await deps.repo.confirmedFor(org, txId)
@@ -528,6 +531,7 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
     }
     case 'set_relationship': {
       if (!isRelationshipKind(input.kind)) throw bad('Choose what this belongs to.')
+      if (input.kind === 'transfer' && input.counterpartTransactionId !== undefined && input.counterpartTransactionId !== null && input.counterpartTransactionId !== '') pairOnlyInMatches()
       pendingBlock()
       const row = await relationshipRow(deps, actor, txId, input.kind, input, {})
       return done((await deps.repo.replaceDecision(row)).outcome)
@@ -555,6 +559,7 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
         await deps.repo.insertDecision({ ...(await relationshipRow(deps, actor, txId, kind, targetArgs, { status: 'rejected' })), ...base })
         return done('rejected')
       }
+      if (kind === 'transfer' && t?.type === 'counterpart_tx') pairOnlyInMatches()
       pendingBlock()
       return done((await deps.repo.replaceDecision({ ...(await relationshipRow(deps, actor, txId, kind, targetArgs, {})), ...base })).outcome)
     }
