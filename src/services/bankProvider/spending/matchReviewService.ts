@@ -129,17 +129,20 @@ export async function decideMatch(deps: SpendingDeps, actor: BankActor, input: {
     }
   }
 
-  if (decision === 'reverse') return settle(await deps.repo.decideMatch({ organizationId: org, actorUserId: actor.userId, action: 'reverse', outflowId, inflowId }))
-
-  // confirm / reject: recompute the pair from this organization's own evidence. Nothing about the pair is taken from the request except the two ids and the
-  // fingerprint of what the owner was shown.
-  if (typeof input.fingerprint !== 'string' || input.fingerprint.length < 20 || input.fingerprint.length > 400 || !input.fingerprint.startsWith('v1|')) throw bad('Refresh the review and try again.')
+  // Every decision, reverse included, only acts on legs whose accounts belong to THIS server's Plaid environment (GREENLIGHT-1 B-2: a Sandbox-configured
+  // deploy must never reverse a Production pair of the same organization, or the other way round).
   if (!deps.repo.getPairEvidence) throw new BankConnectionError('persistence_failed', 503, 'The match could not be checked. Nothing was changed.')
   const evidence = await deps.repo.getPairEvidence(org, [outflowId, inflowId])
   const o = evidence.txs.find(t => t.id === outflowId), i = evidence.txs.find(t => t.id === inflowId)
   const environment = deps.environment ?? 'sandbox'
   const accountOk = (t?: EvidenceTx) => !!t && evidence.accounts.some(a => a.providerAccountRef === t.providerAccountRef && (a.environment ?? 'sandbox') === environment)
   if (!o || !i || !accountOk(o) || !accountOk(i)) throw new BankConnectionError('not_found', 404, 'Transaction not found.')
+
+  if (decision === 'reverse') return settle(await deps.repo.decideMatch({ organizationId: org, actorUserId: actor.userId, action: 'reverse', outflowId, inflowId }))
+
+  // confirm / reject: recompute the pair from this organization's own evidence. Nothing about the pair is taken from the request except the two ids and the
+  // fingerprint of what the owner was shown.
+  if (typeof input.fingerprint !== 'string' || input.fingerprint.length < 20 || input.fingerprint.length > 400 || !input.fingerprint.startsWith('v1|')) throw bad('Refresh the review and try again.')
   const recon: ReconAccount[] = evidence.accounts.map(a => { const info = infoOf(a); return { ref: info.ref, label: info.label, accountClass: info.accountClass, ownership: info.ownership } })
   if (o.removed || i.removed) throw new BankConnectionError('conflict', 409, 'This match changed since you opened it. Refresh and review it again; nothing was saved.')
   if (o.pending || i.pending) throw new BankConnectionError('conflict', 409, 'A pending transaction cannot be matched until it posts. Nothing was changed.')

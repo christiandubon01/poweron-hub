@@ -8,7 +8,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authedJsonHeaders } from '@/services/authedFetch'
-import type { DecisionBody } from './useSpendingExplorer'
 import type { AmbiguousGroup, MatchCounts, MatchItem, RefundMatch } from '@/finance/bankMatchReview'
 
 export type { AmbiguousGroup, MatchCounts, MatchItem, RefundMatch }
@@ -49,6 +48,13 @@ const OUTCOME_TEXT: Record<MatchOutcome, string> = {
   reversed: 'Match reversed. The two transactions are undecided again.',
   unchanged: 'Nothing changed: you had already decided this.',
   nothing_to_reverse: 'There was nothing to reverse: this match is not confirmed.',
+}
+
+export type RefundDecision = 'confirm' | 'reject' | 'undo'
+const REFUND_TEXT: Record<RefundDecision, Record<string, string>> = {
+  confirm: { created: 'Confirmed as a refund. It is not counted as income.', replaced: 'Confirmed as a refund. It is not counted as income.', unchanged: 'Nothing changed: this is already confirmed as a refund.' },
+  reject: { rejected: 'Marked as not a refund. Choose its category in the Explorer.', unchanged: 'Nothing changed: you had already marked this as not a refund.' },
+  undo: { undone: 'Decision undone. The refund is undecided again.', nothing_to_undo: 'There was nothing to undo: this refund is not confirmed.' },
 }
 
 export function useMatchReview(enabled: boolean) {
@@ -102,8 +108,14 @@ export function useMatchReview(enabled: boolean) {
     return OUTCOME_TEXT[out?.outcome as MatchOutcome] ?? 'Saved.'
   }), [run])
 
-  /** A refund is decided through the existing category decisions (the same endpoint and rules as the Explorer). */
-  const decideRefund = useCallback((key: string, body: DecisionBody, done: string) => run(key, async () => { await call(URL_BASE, { method: 'POST', body }); return done }), [run])
+  /**
+   * A refund decision is always about the category 'refund' itself (GREENLIGHT-1 D-1: never "accept whatever the Explorer suggests", which is
+   * 'transfers' for a refund worded like a transfer). The message comes from what the server actually did (D-3).
+   */
+  const decideRefund = useCallback((key: string, decision: RefundDecision, transactionId: string) => run(key, async () => {
+    const out = await call(URL_BASE, { method: 'POST', body: { action: `refund_${decision}`, transactionId } })
+    return REFUND_TEXT[decision][String(out?.outcome)] ?? 'Saved.'
+  }), [run])
 
   return { data, items, load, tab, setTab, busy, message, dismissMessage: () => setMessage(null), decide, decideRefund, refresh, loadMore }
 }

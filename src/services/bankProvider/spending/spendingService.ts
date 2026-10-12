@@ -288,6 +288,8 @@ export type DecisionInput =
   | { action: 'ignore' | 'unignore'; transactionId?: unknown }
   | { action: 'confirm_batch'; transactionIds?: unknown; categoryOverrides?: unknown; rememberTransactionIds?: unknown }
   | { action: 'forget_rule'; merchantKey?: unknown }
+  /** Internal only (never accepted from a request body; the handler's action list does not contain them): reached through decideRefund. */
+  | { action: 'refund_reject' | 'refund_undo'; transactionId?: unknown }
 
 const bad = (m: string) => new BankConnectionError('invalid_request', 400, m)
 const requireId = (v: unknown, what: string): string => { if (typeof v !== 'string' || !UUID.test(v)) throw bad(`A valid ${what} is required.`); return v }
@@ -564,6 +566,21 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
       await deps.repo.markUndone(org, target.id, actor.userId, 'owner_undo')
       return done('undone')
     }
+    case 'refund_reject': {
+      // "Not a refund" is a statement about the category 'refund' itself, whatever the Explorer suggests for the row right now.
+      const cur = await confirmedNow()
+      if (cur.bucket) throw new BankConnectionError('conflict', 409, cur.bucket.category === 'refund' ? 'You confirmed this as a refund. Undo that first.' : 'You already chose a category for this transaction. Change it in the Explorer.')
+      if ((await deps.repo.historyFor(org, txId)).some(h => h.kind === 'category' && h.category === 'refund' && h.status === 'rejected')) return done('unchanged')
+      await deps.repo.insertDecision(fresh(actor, txId, 'category', { category: 'refund', status: 'rejected' }))
+      return done('rejected')
+    }
+    case 'refund_undo': {
+      // Only a CONFIRMED refund can be undone (a rejection is permanent history; the owner can still confirm the refund later).
+      const cur = await confirmedNow()
+      if (!cur.bucket || cur.bucket.category !== 'refund') return done('nothing_to_undo')
+      await deps.repo.markUndone(org, cur.bucket.id, actor.userId, 'owner_undo')
+      return done('undone')
+    }
     case 'ignore': {
       const out = await deps.repo.replaceDecision(fresh(actor, txId, 'ignored', {}))
       return done(out.outcome === 'created' ? 'ignored' : out.outcome)
@@ -577,6 +594,20 @@ async function applyDecisionUnsafe(deps: SpendingDeps, actor: BankActor, input: 
     default:
       throw bad('Unsupported request.')
   }
+}
+
+/**
+ * PLAID-3B / GREENLIGHT-1 (D-1): the owner's answer to a proposed REFUND in the Matches review. It is always about the category 'refund' itself:
+ * confirm saves 'refund' (the same individual set_bucket the Explorer uses, with its direction check); "not a refund" rejects 'refund'. It never
+ * acts on whatever the Explorer happens to suggest for the row (a refund worded like a transfer is suggested as 'transfers'). Reconciliation only.
+ */
+export async function decideRefund(deps: SpendingDeps, actor: BankActor, input: { decision?: unknown; transactionId?: unknown }) {
+  assertAuthority(actor)
+  if (deps.reconciliationEnabled !== true) throw new BankConnectionError('feature_disabled', 403, 'Match review is not enabled yet.')
+  if (input.decision === 'confirm') return applyDecision(deps, actor, { action: 'set_bucket', transactionId: input.transactionId, bucket: 'refund' })
+  if (input.decision === 'reject') return applyDecision(deps, actor, { action: 'refund_reject', transactionId: input.transactionId })
+  if (input.decision === 'undo') return applyDecision(deps, actor, { action: 'refund_undo', transactionId: input.transactionId })
+  throw bad('Choose confirm, reject or undo.')
 }
 export { BUCKETS }
 export type { BucketKey }

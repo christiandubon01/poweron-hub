@@ -268,7 +268,7 @@ export default function SpendingExplorer() {
       <div className="mt-3"><FilterBar filters={filters} data={data} update={update} reset={reset} showFilters={showFilters} setShowFilters={setShowFilters} showColors={showColors} setShowColors={setShowColors} colorsEnabled={colorsEnabled} /></div>
     </>}
     {mode==='smart' && <button className={`${btn} mt-3`} onClick={()=>setShowColors(v=>!v)} aria-expanded={showColors}>Settings</button>}
-    {showColors && <ExplorerClassificationSettings />}
+    {showColors && mode!=='matches' && <ExplorerClassificationSettings />}
     {mode==='matches'?<MatchReview onChanged={refreshAll}/>:mode==='smart'?<SmartReview onChanged={refreshAll}/>:population!=='review'?<>
       {message && <p role="alert" className="mt-2 text-sm">{message}</p>}
       {reportError?<p role="alert" className="mt-3">{reportError}</p>:!report?<p className="mt-3">Loading complete evidence…</p>:<ReportView report={report} accountLabel={data.options.accounts.find(x=>x.ref===filters.account)?.label} renderRow={(r,selection)=><Row {...relatedProps(r,selection)} key={r.id} row={r} options={data.options} busy={busy || !!r.removed} onDecide={async body=>{await decide(body);setReportRevision(n=>n+1)}} loadHistory={loadHistory} environment={data.environment} selectable={false} selected={false} onToggle={()=>{}} reviewedView />}/>}

@@ -131,7 +131,7 @@ describe.runIf(!!PGlite)('PLAID-5 security review (real SQL)', () => {
     // org B tries to decide / reverse org A's pair, with a perfectly valid fingerprint
     await expect(decideMatch(sdA, ownerB, { decision: 'confirm', outflowId: T.aO, inflowId: T.aI, fingerprint: aProposal.fingerprint })).rejects.toMatchObject({ httpStatus: 404 })
     await expect(decideMatch(sdA, ownerB, { decision: 'reject', outflowId: T.aO, inflowId: T.aI, fingerprint: aProposal.fingerprint })).rejects.toMatchObject({ httpStatus: 404 })
-    expect((await decideMatch(sdA, ownerB, { decision: 'reverse', outflowId: T.aO, inflowId: T.aI })).outcome).toBe('nothing_to_reverse')
+    await expect(decideMatch(sdA, ownerB, { decision: 'reverse', outflowId: T.aO, inflowId: T.aI })).rejects.toMatchObject({ httpStatus: 404 })   // GREENLIGHT-1 B-2
     // a mixed pair (one id from each organization) is refused, not half-applied
     await expect(decideMatch(sdA, ownerA, { decision: 'confirm', outflowId: T.aO, inflowId: T.bI, fingerprint: aProposal.fingerprint })).rejects.toBeTruthy()
     // org B reading org A's proposals sees only its own
@@ -150,7 +150,7 @@ describe.runIf(!!PGlite)('PLAID-5 security review (real SQL)', () => {
       expect(pos.statusCode).toBe(200); expect(JSON.parse(pos.body).accounts.map(a => a.name).sort()).toEqual(['B Checking', 'B Savings']); expect(pos.body).not.toContain('Business Checking')
       // POST a decision with a spoofed organization/actor in the body: org B's profile cannot touch org A's transactions
       const post = await mk(spendingHandler, prof(ORG_B))({ httpMethod: 'POST', headers: { authorization: 'Bearer t' }, body: JSON.stringify({ action: 'match_reverse', outflowId: T.aO, inflowId: T.aI, organizationId: ORG, organization_id: ORG, actorUserId: OWNER_ID, userId: OWNER_ID }) })
-      expect(JSON.parse(post.body)).toEqual({ outcome: 'nothing_to_reverse', pairId: null })
+      expect(post.statusCode).toBe(404); expect(post.body).not.toContain(T.aO)   // GREENLIGHT-1 B-2: refused like confirm/reject, before the database function runs
       const get = await mk(spendingHandler, prof(ORG_B))({ httpMethod: 'GET', headers: { authorization: 'Bearer t' }, queryStringParameters: { matches: '1', tab: 'all', from: '2026-07-01', to: '2026-10-11', organizationId: ORG } })
       expect(JSON.parse(get.body).items.map(i => i.outflow.id)).toEqual([T.bO])
     } finally { if (env === undefined) delete process.env.PLAID_ENV; else process.env.PLAID_ENV = env }

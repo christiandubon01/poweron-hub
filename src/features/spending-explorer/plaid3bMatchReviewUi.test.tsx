@@ -236,26 +236,36 @@ describe('Matches review screen (PLAID-3B)', () => {
     expect(gets().some(u => u.includes('offset=2'))).toBe(true)
   })
 
-  it('refunds use the existing category decisions: confirm, "not a refund" and undo each send the matching request, and say it is never income', async () => {
+  it('refund decisions are always about the category "refund" (GREENLIGHT-1 D-1): confirm and "not a refund" send refund_confirm / refund_reject, and say it is never income', async () => {
     const refundLeg = leg(10, -42, '2026-10-02', 'AMAZON REFUND', acct('Business Checking'))
     const original = leg(11, 42, '2026-09-20', 'AMAZON MKTPLACE', acct('Business Checking'))
     const suggested = { key: `refund:${id(10)}`, state: 'suggested' as const, confidence: 'high' as const, refund: refundLeg, original, candidates: [], reasons: ['Same merchant, same account, equal amount'] }
-    await mount(payload({ counts: counts({ refunds: 1 }), total: 0, items: [], refunds: [suggested] }), { ok: true })
+    await mount(payload({ counts: counts({ refunds: 1 }), total: 0, items: [], refunds: [suggested] }), { outcome: 'created' })
     expect(q('[data-testid="match-refund"]')!.textContent).toContain('Suggested refund'); expect(q('[data-testid="match-refund"]')!.textContent).toContain('never counted as income')
     await click(q('[data-testid="match-refund-confirm"]'))
-    expect(posts()).toEqual([{ action: 'accept_suggestion', transactionId: id(10), dimension: 'bucket' }])
+    expect(posts()).toEqual([{ action: 'refund_confirm', transactionId: id(10) }])
     expect(q('[data-testid="match-message"]')!.textContent).toContain('not counted as income')
     await click(q('[data-testid="match-refund-reject"]'))
-    expect(posts()[1]).toEqual({ action: 'reject_suggestion', transactionId: id(10), dimension: 'bucket' })
+    expect(posts()[1]).toEqual({ action: 'refund_reject', transactionId: id(10) })
   })
 
   it('a confirmed refund can be undone; an ambiguous refund lists its candidate purchases without claiming a link', async () => {
     const refundLeg = leg(10, -42, '2026-10-02', 'AMAZON REFUND', acct('Business Checking'))
     const confirmed = { key: `refund:${id(10)}`, state: 'confirmed' as const, confidence: null, refund: refundLeg, original: null, candidates: [], reasons: ['You confirmed this as a refund. It is shown as a refund, never as new income.'] }
-    await mount(payload({ tab: 'confirmed', counts: counts(), total: 0, items: [], refunds: [confirmed] }), { ok: true })
+    await mount(payload({ tab: 'confirmed', counts: counts(), total: 0, items: [], refunds: [confirmed] }), { outcome: 'nothing_to_undo' })
     expect(q('[data-testid="match-refund"]')!.dataset.state).toBe('confirmed')
     await click(q('[data-testid="match-refund-undo"]'))
-    expect(posts()).toEqual([{ action: 'undo', transactionId: id(10), dimension: 'bucket' }])
+    expect(posts()).toEqual([{ action: 'refund_undo', transactionId: id(10) }])
+    // GREENLIGHT-1 D-3: the message is what the server did, never a promise it did not keep
+    expect(q('[data-testid="match-message"]')!.textContent).toContain('nothing to undo')
+    expect(q('[data-testid="match-message"]')!.textContent).not.toContain('undecided again')
+    // a "Not a refund" card offers no Undo (a rejection cannot be undone) but lets the owner say it IS a refund
+    const rejected = { ...confirmed, state: 'rejected' as const, reasons: [] }
+    await act(async () => { root.unmount() }); root = createRoot(host)
+    await mount(payload({ tab: 'rejected', counts: counts(), total: 0, items: [], refunds: [rejected] }), { outcome: 'created' })
+    expect(q('[data-testid="match-refund-undo"]')).toBeNull()
+    await click(q('[data-testid="match-refund-confirm"]'))
+    expect(posts()[posts().length - 1]).toEqual({ action: 'refund_confirm', transactionId: id(10) })
     const amb = { key: `refund:${id(12)}`, state: 'suggested' as const, confidence: 'ambiguous' as const, refund: refundLeg, original: null, candidates: [leg(11, 42, '2026-09-20', 'AMAZON A', acct('Business Checking')), leg(13, 42, '2026-09-22', 'AMAZON B', acct('Business Checking'))], reasons: [] }
     await act(async () => { root.unmount() }); root = createRoot(host)
     await mount(payload({ total: 0, items: [], refunds: [amb] }), { ok: true })

@@ -153,7 +153,9 @@ function RefundCard({ refund, busy, canDecide, onAct }: { refund: RefundMatch; b
     <div className="flex flex-wrap gap-2 pt-1">
       {refund.state === 'suggested' && <><button type="button" className={btnPrimary} disabled={off} onClick={() => onAct(refund, 'accept')} data-testid="match-refund-confirm" aria-label={`Confirm ${label}`}>Confirm refund</button>
         <button type="button" className={btn} disabled={off} onClick={() => onAct(refund, 'reject')} data-testid="match-refund-reject" aria-label={`This is not a refund: ${label}`}>Not a refund</button></>}
-      {refund.state !== 'suggested' && <button type="button" className={btn} disabled={off} onClick={() => onAct(refund, 'undo')} data-testid="match-refund-undo" aria-label={`Undo the decision on this ${label}`}>Undo</button>}
+      {refund.state === 'confirmed' && <button type="button" className={btn} disabled={off} onClick={() => onAct(refund, 'undo')} data-testid="match-refund-undo" aria-label={`Undo the decision on this ${label}`}>Undo</button>}
+      {/* a rejection stays in the history and cannot be undone; the owner can still say it IS a refund */}
+      {refund.state === 'rejected' && <button type="button" className={btn} disabled={off} onClick={() => onAct(refund, 'accept')} data-testid="match-refund-confirm" aria-label={`This is a refund after all: ${label}`}>It is a refund</button>}
     </div>
   </li>
 }
@@ -174,9 +176,7 @@ export default function MatchReview({ onChanged }: { onChanged?: () => void }) {
   const done = async (p: Promise<void>) => { await p; onChanged?.() }
   const decide = (item: MatchItem, decision: 'confirm' | 'reject' | 'reverse') => void done(m.decide(item.key, decision, { outflowId: item.outflow.id, inflowId: item.inflow.id, fingerprint: item.fingerprint }))
   const pick = (g: AmbiguousGroup, c: AmbiguousGroup['candidates'][number]) => void done(m.decide(g.key, 'confirm', { outflowId: c.outflowId, inflowId: c.inflowId, fingerprint: c.fingerprint }))
-  const refundAct = (r: RefundMatch, a: 'accept' | 'reject' | 'undo') => void done(a === 'undo'
-    ? m.decideRefund(r.key, { action: 'undo', transactionId: r.refund.id, dimension: 'bucket' }, 'Decision undone. The refund is undecided again.')
-    : m.decideRefund(r.key, { action: a === 'accept' ? 'accept_suggestion' : 'reject_suggestion', transactionId: r.refund.id, dimension: 'bucket' }, a === 'accept' ? 'Confirmed as a refund. It is not counted as income.' : 'Marked as not a refund.'))
+  const refundAct = (r: RefundMatch, a: 'accept' | 'reject' | 'undo') => void done(m.decideRefund(r.key, a === 'accept' ? 'confirm' : a, r.refund.id))
   const showRefunds = tab === 'review' || tab === 'all' ? refunds : refunds.filter(r => (tab === 'confirmed' && r.state === 'confirmed') || (tab === 'rejected' && r.state === 'rejected'))
   const empty = items.length === 0 && groups.length === 0 && showRefunds.length === 0
   return <div className="mt-3 space-y-3" data-testid="match-review">

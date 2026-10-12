@@ -233,7 +233,8 @@ describe.runIf(!!PGlite)('PLAID-3B Matches review end to end (real SQL, two inst
     const fp = (await item(T.dO)).fingerprint
     // another organization's owner cannot see or decide this organization's transactions
     await expect(decideMatch(mkDeps(), ownerB, { decision: 'confirm', outflowId: T.dO, inflowId: T.dI, fingerprint: fp })).rejects.toMatchObject({ code: 'not_found' })
-    await expect(decideMatch(mkDeps(), ownerB, { decision: 'reverse', outflowId: T.aO, inflowId: T.aI })).resolves.toMatchObject({ outcome: 'nothing_to_reverse' })
+    // GREENLIGHT-1 B-2: reverse is now refused exactly like confirm/reject (the legs are not in this organization/environment), before the database function runs
+    await expect(decideMatch(mkDeps(), ownerB, { decision: 'reverse', outflowId: T.aO, inflowId: T.aI })).rejects.toMatchObject({ code: 'not_found' })
     const rb = await getMatchReview(mkDeps(), ownerB, { from: '2026-07-01', to: '2026-10-11' })
     expect(JSON.stringify(rb)).not.toContain(T.aO); expect(rb.items).toEqual([])
     // roles
