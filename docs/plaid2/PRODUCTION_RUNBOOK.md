@@ -9,7 +9,7 @@ All checks below are read-only SQL unless the step says "INSTALL". Project: `edx
 2. Install each proposal as **one named tracked migration** with the supported apply-migration operation (single transaction; every proposal file starts with `BEGIN;` and ends with `COMMIT;`). Do not paste into the SQL editor.
 3. Before each install: run `node scripts/plaid/proposal-evidence.mjs` and store the SHA-256 in the approval record. After install, re-run it on the same commit and confirm the hash did not change.
 4. Take the **evidence fingerprint** (section 1) before and after. It must be identical.
-5. Install in this order; each is independent unless noted: `plaid1c` -> `plaid2a` -> `plaid2c` -> (later phases, see the ledger). Feature switches stay OFF until the install and its validation are confirmed.
+5. Install in this order (proven on PostgreSQL 16 by `greenlight1MigrationOrder.test.ts`, which runs this runbook's own checks verbatim): `plaid1c` -> `plaid2c` -> `plaid2a` -> `plaid3b` (same order as section 7; plaid3b also installs alone). Feature switches stay OFF until the install and its validation are confirmed.
 
 ## 1. Evidence fingerprint (read-only; run before and after every install)
 
@@ -39,7 +39,9 @@ SELECT to_regclass('public.financial_provider_items') IS NOT NULL AS items,
        to_regproc('public.financial_provider_enforce_immutable') IS NOT NULL AS immutable_guard,
        to_regproc('public.financial_provider_block_update') IS NOT NULL AS block_update_guard,
        to_regproc('public.financial_provider_replace_interpretation') IS NOT NULL AS replace_fn,
-       to_regproc('public.financial_provider_connect_item') IS NOT NULL AS connect_fn;   -- all true
+       to_regprocedure('public.financial_provider_connect_item(uuid,text,text,text,text,text,uuid,text)') IS NOT NULL AS connect_fn;   -- all true
+-- (GREENLIGHT-1 correction: migration 156 keeps a 7-argument AND an 8-argument connect function on purpose, so the bare name is ambiguous and
+--  to_regproc('public.financial_provider_connect_item') returns NULL in production even though both exist. Always name the full signature.)
 
 -- 2.2 none of the objects this proposal creates exist yet (all false / zero)
 SELECT to_regclass('public.financial_provider_sync_staging_runs') IS NOT NULL AS plaid1c_runs,
@@ -72,11 +74,13 @@ SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('financial_provid
 SELECT count(*) FROM public.financial_provider_sync_staging_runs;   -- 0
 -- browser roles have NO access to the tables, service_role has
 SELECT grantee, table_name, string_agg(privilege_type, ',') FROM information_schema.role_table_grants
- WHERE table_name IN ('financial_provider_sync_staging_runs', 'financial_provider_sync_staged_changes') GROUP BY 1, 2;   -- service_role only
+ WHERE table_name IN ('financial_provider_sync_staging_runs', 'financial_provider_sync_staged_changes') GROUP BY 1, 2;   -- service_role (+ the table owner, e.g. postgres); NO anon or authenticated row
 -- functions: EXECUTE for service_role only
 SELECT p.proname, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authenticated,
        has_function_privilege('service_role', p.oid, 'EXECUTE') AS service_role
-  FROM pg_proc p WHERE p.proname LIKE 'financial_provider_sync_%run%' OR p.proname = 'financial_provider_sync_stage_page';   -- false, false, true
+  FROM pg_proc p WHERE p.proname IN ('financial_provider_sync_open_run', 'financial_provider_sync_stage_page', 'financial_provider_sync_restart_run',
+                                      'financial_provider_sync_abandon_run', 'financial_provider_sync_apply_run', 'financial_provider_sync_record_apply_failure');   -- six rows: false, false, true
+-- (GREENLIGHT-1 correction: the earlier filter LIKE '%run%' OR stage_page matched only five of the six functions and missed record_apply_failure.)
 ```
 
 Then re-run section 1 (identical). Switch: none yet.
@@ -159,8 +163,11 @@ As the signed-in owner, request `GET /.netlify/functions/plaid-spending?impact=1
 File `docs/plaid2/match-decisions-proposal.sql` (hash: `node scripts/plaid/proposal-evidence.mjs`). One function, `financial_provider_decide_match`, **SECURITY INVOKER**, fixed `search_path`, `EXECUTE` for `service_role` only. It creates no table, column or index and writes only `financial_provider_interpretations` rows (it only *locks* provider evidence). Install as one named tracked migration; never `db push`. Preflight: section 2.1 plus
 
 ```sql
-SELECT to_regproc('public.financial_provider_decide_match(uuid,uuid,text,uuid,uuid,text,text,jsonb)') IS NOT NULL AS already_there;   -- false
-SELECT to_regproc('public.financial_provider_json_is_safe(jsonb)') IS NOT NULL AS json_guard;                                         -- true
+SELECT to_regprocedure('public.financial_provider_decide_match(uuid,uuid,text,uuid,uuid,text,text,jsonb)') IS NOT NULL AS already_there;   -- false
+SELECT to_regprocedure('public.financial_provider_json_is_safe(jsonb)') IS NOT NULL AS json_guard;                                         -- true
+-- (GREENLIGHT-1 correction: these two lines used to call to_regproc with an argument list. to_regproc only accepts a bare name and returns NULL
+--  for 'name(args)', so the old lines answered already_there=false and json_guard=false whatever the database contained: the install would have
+--  been stopped by a false failure, and an existing function would never have been noticed. to_regprocedure takes the full signature.)
 ```
 
 Post-install validation (read-only):
