@@ -197,3 +197,30 @@ Unset a switch and redeploy the environment: the feature disappears and the code
 
 At the largest evidence set a request can hold (50,000 rows, the complete report source) the in-process computation is about 2-3 s (explorer rows 1.7-2.3 s, reconciliation 0.4 s, position 0.07 s). The Explorer window is capped at 5,000 rows (about 0.2 s). Native PostgreSQL 16 at 50,000 evidence / 20,000 decision rows: pair-decision read 4 ms, newest balance 0.1 ms, evidence page 20 ms, pair function p50/p95 51/58 ms. These are measurements on a scratch host, not a production verification.
 
+
+### 9.6 INSTALL — GREENLIGHT-1 `greenlight1_interpretation_write_lockdown` (finding B-1; needs approval; recommended before 9.2 is used)
+
+File `docs/plaid2/interpretation-write-lockdown-proposal.sql` (hash: `node scripts/plaid/proposal-evidence.mjs`). Drops the two owner/admin INSERT/UPDATE
+policies on `financial_provider_interpretations` and revokes INSERT/UPDATE from browser roles. Owners/admins keep SELECT; the server (service_role) is
+unaffected; no row, column or object is created or changed. Why: since migration 153 an owner or admin could write decision rows directly through the
+public API (bypassing the server), including rows attributed to another person or backdated. No browser code uses that access.
+
+Preflight (read-only):
+
+```sql
+SELECT has_table_privilege('authenticated', 'public.financial_provider_interpretations', 'INSERT') AS browser_can_insert;   -- true (today)
+SELECT policyname, cmd FROM pg_policies WHERE tablename = 'financial_provider_interpretations' ORDER BY policyname;     -- select + insert + update policies
+```
+
+Post-install validation (read-only):
+
+```sql
+SELECT has_table_privilege('authenticated', 'public.financial_provider_interpretations', 'SELECT') AS can_read,     -- true
+       has_table_privilege('authenticated', 'public.financial_provider_interpretations', 'INSERT') AS can_insert,   -- false
+       has_table_privilege('authenticated', 'public.financial_provider_interpretations', 'UPDATE') AS can_update,   -- false
+       has_table_privilege('service_role',  'public.financial_provider_interpretations', 'INSERT') AS server_can_insert;   -- true
+SELECT count(*) FROM pg_policies WHERE tablename = 'financial_provider_interpretations' AND cmd IN ('INSERT', 'UPDATE');   -- 0
+```
+
+Then re-run the section 1 fingerprint (identical) and make one ordinary decision in the Explorer (e.g. confirm a category): it must save as before.
+**Rollback:** re-create the two policies exactly as in migration 156 (lines 206-212) and `GRANT INSERT, UPDATE ON public.financial_provider_interpretations TO authenticated;`.

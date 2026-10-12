@@ -26,7 +26,7 @@ async function psql(db: string, sql: string, input?: string) {
   return await new Promise<string>((resolve, reject) => { const c = execFile(cmd, args, { maxBuffer: 64 * 1024 * 1024 }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim())) : resolve(out.trim()))); if (input !== undefined) c.stdin!.end(input) })
 }
 const file = (p: string) => readFileSync(p, 'utf8')
-const PROPOSALS = { plaid1c: 'docs/plaid1c/resumable-sync-proposal.sql', plaid2c: 'docs/plaid2/provider-revision-history-proposal.sql', plaid2a: 'docs/plaid2/pending-posted-continuity-proposal.sql', plaid3b: 'docs/plaid2/match-decisions-proposal.sql' }
+const PROPOSALS = { plaid1c: 'docs/plaid1c/resumable-sync-proposal.sql', plaid2c: 'docs/plaid2/provider-revision-history-proposal.sql', plaid2a: 'docs/plaid2/pending-posted-continuity-proposal.sql', plaid3b: 'docs/plaid2/match-decisions-proposal.sql', lockdown: 'docs/plaid2/interpretation-write-lockdown-proposal.sql' }
 const RUNBOOK = file('docs/plaid2/PRODUCTION_RUNBOOK.md')
 /** The n-th sql block after a runbook heading, VERBATIM: exactly what the owner will paste. */
 const runbook = (heading: string, n = 0) => {
@@ -66,7 +66,7 @@ describe.runIf(!!PSQL)('GREENLIGHT-1 SQL install order on PostgreSQL 16 (scratch
   const state = async (db: string) => await psql(db, '', runbook('## 1. Evidence fingerprint'))
   afterAll(async () => { const base = PSQL.split(/\s+/); for (const db of dbs) { try { await run(base[0], [...base.slice(1), '-X', '-q', '-d', 'postgres', '-c', `DROP DATABASE IF EXISTS ${db}`]) } catch { /* scratch */ } } })
 
-  it('production today + BANK-6G, then plaid1c -> plaid2c -> plaid2a -> plaid3b: every install applies cleanly, passes its runbook checks, and changes no data', async () => {
+  it('production today + BANK-6G, then plaid1c -> plaid2c -> plaid2a -> plaid3b -> B-1 lockdown: every install applies cleanly, passes its runbook checks, and changes no data', async () => {
     const db = await fresh('order')
     // the legacy projects table exists in production (the BANK-6G SQL references it); the same stub the PGlite world uses
     await psql(db, `CREATE TABLE IF NOT EXISTS public.projects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT NULL, name text NOT NULL, status text NOT NULL DEFAULT 'in_progress')`)
@@ -123,6 +123,11 @@ describe.runIf(!!PSQL)('GREENLIGHT-1 SQL install order on PostgreSQL 16 (scratch
     // runbook 9.2 post-install validation, verbatim
     expect(await psql(db, '', runbook('### 9.2', 1))).toBe('f|f|f|t|{search_path=public}')
     expect(await psql(db, `SELECT outcome FROM public.financial_provider_decide_match('${ORG}','${OWNER}','probe')`)).toBe('available')       // the capability probe touches nothing
+    expect(await state(db)).toBe(before)
+    // GREENLIGHT-1 B-1 lockdown (independent; recommended before plaid3b is used): browser roles keep SELECT only, nothing else changes
+    await psql(db, '', file(PROPOSALS.lockdown))
+    expect(await psql(db, `SELECT has_table_privilege('authenticated','public.financial_provider_interpretations','SELECT') || ',' || has_table_privilege('authenticated','public.financial_provider_interpretations','INSERT') || ',' || has_table_privilege('authenticated','public.financial_provider_interpretations','UPDATE') || ',' || has_table_privilege('service_role','public.financial_provider_interpretations','INSERT')`)).toBe('true,false,false,true')
+    expect(await psql(db, `SELECT count(*) FROM pg_policies WHERE tablename = 'financial_provider_interpretations' AND cmd IN ('INSERT','UPDATE')`)).toBe('0')
     expect(await state(db)).toBe(before)
     // the history trigger (2c) records evidence revisions made AFTER install, and none were made by the installs themselves
     expect(await psql(db, `SELECT count(*) FROM public.financial_provider_transaction_history`)).toBe('0')

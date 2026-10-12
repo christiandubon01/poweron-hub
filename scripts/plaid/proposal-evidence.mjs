@@ -16,6 +16,7 @@ export const PROPOSALS = [
   { id: 'plaid2a', migration: 'plaid2a_pending_posted_continuity', file: 'docs/plaid2/pending-posted-continuity-proposal.sql', note: 'independent of 1B/1C' },
   { id: 'plaid2c', migration: 'plaid2c_provider_revision_history', file: 'docs/plaid2/provider-revision-history-proposal.sql', note: 'replaces the revisions half of 1B' },
   { id: 'plaid3b', migration: 'plaid3b_match_decisions', file: 'docs/plaid2/match-decisions-proposal.sql', note: 'one service_role-only function, no table/column/index; the Matches review stays read-only until it is installed' },
+  { id: 'greenlight1b1', migration: 'greenlight1_interpretation_write_lockdown', file: 'docs/plaid2/interpretation-write-lockdown-proposal.sql', note: 'revokes browser INSERT/UPDATE on interpretations (finding B-1); recommended before plaid3b' },
 ]
 // Files added by later phases are appended here by those phases (balances, reconciliation, economic events ...).
 const EXTRA = 'docs/plaid2/proposals.extra.json'
