@@ -123,13 +123,26 @@ Every runtime change sits behind `CASH_OS_RECONCILIATION_ENABLED` or the positio
 
 ## 3. Test evidence
 
-- Full repository suite at `8edbe1d`: RUNNING at the time of this commit; the next commit records the exact counts and the comparison with d460b43 and 7efd734.
+- **Full repository suite** (`vitest run`, the same machine, JSON reports compared test by test):
+
+  | Run | Tests | Passed | Failed | Skipped |
+  |---|---|---|---|---|
+  | `d460b43` (baseline) | 7,648 | 7,598 | 48 | 2 |
+  | `7efd734` (checkpoint) | 7,838 | 7,780 | 47 | 11 |
+  | `8edbe1d` (final code) | 7,857 | 7,795 | 48 | 14 |
+
+  - **Final against d460b43: 0 new failures and 0 newly passing.** The failing set is identical, test for test. Every one of those
+    failures is pre-existing and outside the Cash OS bank code (auth store, migration guards, QuickBooks, admin and employee UI contracts).
+  - **Final against 7efd734: one difference.** `scopePackComposer.test.tsx` (ATB-5) fails in the full run. It also failed at the
+    baseline, passed at the checkpoint, and passes 12/12 when run alone at `8edbe1d`. Its directory's only change since the baseline is
+    `CashOsViews.tsx`, the panel mount, which it does not import. It is timing-sensitive under full-suite load and not caused by this work.
+  - The extra skips are the opt-in native-PostgreSQL tests (no `CASHOS_PG_PSQL` in the full run); they ran separately, below.
 
 - Focused suites at `8edbe1d`, run together: all bank provider, spending explorer, cash position and bank connection tests, 60 files and
   977 tests, all passing. This includes the OFF-equals-legacy differential proofs (`plaid3aReconciliationSwitch`, `plaid6EngineEquivalence`),
   `plaid4Integrity`, `plaid5Security`, the plaid3b service, model and UI tests, `bank5SpendingEndToEnd`, and the new GREENLIGHT-1 tests
   (`greenlight1Corrections` 8, `greenlight1Precedence` 4, `greenlight1InterpretationLockdown` 4).
-- Opt-in native PostgreSQL 16: `greenlight1MigrationOrder` 3/3 (re-run after the lockdown was added). The other opt-in native tests are re-run after the full suite and recorded in the next commit.
+- Opt-in native PostgreSQL 16: 19/19 at `8edbe1d`: `greenlight1MigrationOrder` 3, `plaid3bNativePgConcurrency` 7, `plaid6Performance` 9.
 - `npx tsc --noEmit`: clean. `npm run build`: succeeds (51.7 s; only the existing chunk-size warning).
 - The reviewers' own reproductions were re-run against the fixed code. A's probes now show:
   - S5c and S5d as Business with the switch ON;
@@ -138,7 +151,7 @@ Every runtime change sits behind `CASH_OS_RECONCILIATION_ENABLED` or the positio
 
 ## 4. Final commit
 
-Code: `8edbe1d`. Report: the commit that adds this file (its parent is `8edbe1d`). Working tree clean after the push.
+Code: `8edbe1d` (tested). The report commits on top of it change documentation only. Working tree clean after the push; the scratch worktree and scratch databases have been removed.
 
 ## 5. SQL migration order (none installed; each one needs approval, is one named tracked migration, and is never `db push`)
 
