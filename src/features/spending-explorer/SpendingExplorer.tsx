@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft } from './reviewDraft'
 import SmartReview from './SmartReview'
 import MatchReview from './MatchReview'
+import ImpactPreview from './ImpactPreview'
 import { HierarchyProvider } from './HierarchyProvider'
 import { HierarchyManager } from './HierarchyManager'
 import { REPORT_SCOPES, ReportView, useSpendingReport } from './SpendingReports'
@@ -260,6 +261,8 @@ export default function SpendingExplorer() {
       {value:'explorer',label:'Explore',testId:'spending-mode-explorer'},{value:'smart',label:'Smart Review',testId:'spending-mode-smart'},
       // PLAID-3B: offered only while the server's reconciliation switch is on (the payload carries `matches` only then)
       ...(data.matches?.enabled===true?[{value:'matches' as const,label:'Matches',testId:'spending-mode-matches'}]:[])]} />
+    {/* GREENLIGHT-1 Stage 1: read-only impact preview; requests nothing until the owner taps "Run preview" */}
+    <ImpactPreview />
     {mode==='explorer' && <>
       <div className="mt-4 border-t border-[var(--surface-line)] pt-3"><p className={eyebrow}>Spending scope</p>
       <SegmentedControl className="mt-2" label="Explorer scope" value={population} onChange={setPopulation} options={[
