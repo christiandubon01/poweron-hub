@@ -194,9 +194,24 @@ function rememberBackupInMemory(key: string, data: BackupData): void {
   try { _memoryBackupByKey.set(key, data) } catch { /* ignore */ }
 }
 
-/** Best-effort durable mirror to IndexedDB. One key per storage key (overwritten), so no growth loop. */
-function overflowBackupToIdb(key: string, data: BackupData): void {
-  try { void idbSet(BACKUP_OVERFLOW_PREFIX + key, JSON.stringify(data)).catch(() => {}) } catch { /* ignore */ }
+/**
+ * Best-effort durable mirror to IndexedDB. One key per storage key (overwritten), so no growth
+ * loop. Dispatches `poweron:storage-overflow-persisted` ONLY after the write actually resolves,
+ * so the UI can claim on-device durability only once it is actually confirmed — never before. `at`
+ * identifies which overflow edit this confirms, for correlation with the pending banner.
+ */
+function overflowBackupToIdb(key: string, data: BackupData, at: string): void {
+  try {
+    void idbSet(BACKUP_OVERFLOW_PREFIX + key, JSON.stringify(data))
+      .then(() => {
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('poweron:storage-overflow-persisted', { detail: { key, at } }))
+          }
+        } catch { /* ignore */ }
+      })
+      .catch(() => { /* IndexedDB also failed: make NO durable claim; the banner stays cautious */ })
+  } catch { /* ignore */ }
 }
 
 /** Drop a stale overflow mirror once localStorage can hold the blob again. Never touches business data. */
@@ -1066,15 +1081,18 @@ export function saveBackupData(
   } catch (err) {
     const failure = err instanceof BackupStorageWriteError ? err : new BackupStorageWriteError(err)
     const quota = isStorageQuotaError(err)
+    const at = new Date().toISOString()
     console.error('[backupDataService] Failed to save:', failure)
     if (quota) {
       // Non-destructive quota handling: the edit stays in memory, is mirrored to IndexedDB
       // (durable, far larger quota), and the tenant is marked dirty so the authoritative
       // Supabase push still fires (reading the in-memory copy via getBackupData). We STILL
       // rethrow so callers keep their existing contract and no path falsely reports a plain
-      // localStorage save; the UI banner reflects "preserved to cloud", not "work lost".
+      // localStorage save. The banner does NOT yet claim durable recovery: it is upgraded only
+      // when `poweron:storage-overflow-persisted` (IndexedDB confirmed) or a correlated
+      // `poweron:sync-success` (cloud confirmed) fires. `at` correlates those confirmations.
       _localStorageOverflowKeys.add(key)
-      overflowBackupToIdb(key, owned)
+      overflowBackupToIdb(key, owned, at)
       if (userId && _activeTenantUserId === userId && _tenantDataReady) {
         _dataChanged = true
       }
@@ -1082,7 +1100,9 @@ export function saveBackupData(
     try {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('poweron:storage-write-failed', {
-          detail: { error: failure.message, quota, preserved: quota },
+          // `quota` picks the cautious vs catastrophic banner; `at` correlates the later
+          // confirmation. No `preserved: true` here — durability is not yet confirmed.
+          detail: { error: failure.message, quota, at: quota ? at : undefined },
         }))
       }
     } catch {
@@ -1141,7 +1161,7 @@ function saveBackupDataSilent(data: BackupData, userId = _activeTenantUserId): v
     // IndexedDB so the data is durable and getBackupData returns the in-memory latest.
     if (isStorageQuotaError(err)) {
       _localStorageOverflowKeys.add(key)
-      overflowBackupToIdb(key, owned)
+      overflowBackupToIdb(key, owned, new Date().toISOString())
     }
   }
 }

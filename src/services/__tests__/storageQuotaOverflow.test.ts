@@ -113,7 +113,7 @@ describe('storage quota overflow resilience', () => {
     expect(isStorageQuotaError(new BackupStorageWriteError(quotaError()))).toBe(true)
   })
 
-  it('quota failure still throws but preserves the edit in memory and flags preserved', () => {
+  it('quota failure throws, preserves the edit in memory, and makes NO durable claim up front', () => {
     let failedDetail: any = null
     window.addEventListener('poweron:storage-write-failed', (e) => { failedDetail = (e as CustomEvent).detail }, { once: true })
     vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw quotaError() })
@@ -123,20 +123,51 @@ describe('storage quota overflow resilience', () => {
 
     // The edit is NOT lost: getBackupData returns the in-memory latest, not stale localStorage.
     expect(getBackupData(USER)?.projects?.[0]?.id).toBe('edit-1')
-    // The banner is told the work was preserved (not "work lost").
-    expect(failedDetail).toMatchObject({ quota: true, preserved: true })
-    // The durable IndexedDB mirror holds the edit.
+    // Honest contract: the failure event flags quota + a correlation timestamp, but does NOT
+    // claim the work was preserved/durable — that is only confirmed later (persist/sync events).
+    expect(failedDetail?.quota).toBe(true)
+    expect(typeof failedDetail?.at).toBe('string')
+    expect(failedDetail?.preserved).toBeUndefined()
+  })
+
+  it('emits poweron:storage-overflow-persisted ONLY after the IndexedDB write actually resolves', async () => {
+    const persisted: any[] = []
+    window.addEventListener('poweron:storage-overflow-persisted', (e) => { persisted.push((e as CustomEvent).detail) })
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw quotaError() })
+
+    let failedAt = ''
+    window.addEventListener('poweron:storage-write-failed', (e) => { failedAt = (e as CustomEvent).detail?.at }, { once: true })
+    try { saveBackupData(makeBackup('edit-1'), USER) } catch { /* expected */ }
+
+    // Not claimed synchronously — the durable-confirmation event is deferred to the IDB resolve.
+    expect(persisted).toHaveLength(0)
+    await vi.waitFor(() => expect(persisted.length).toBe(1))
+    expect(persisted[0]).toMatchObject({ key: STORAGE_KEY, at: failedAt })
     expect(idbStore.has(OVERFLOW_KEY)).toBe(true)
   })
 
-  it('does not claim a plain success: a non-quota write error is not marked preserved', () => {
+  it('does not claim durable recovery when IndexedDB ALSO fails (no persisted event)', async () => {
+    const persisted: any[] = []
+    window.addEventListener('poweron:storage-overflow-persisted', (e) => { persisted.push((e as CustomEvent).detail) })
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw quotaError() })
+    const idb = await import('@/services/idbStorage')
+    vi.spyOn(idb, 'idbSet').mockRejectedValueOnce(new Error('idb quota too'))
+
+    try { saveBackupData(makeBackup('edit-1'), USER) } catch { /* expected */ }
+    await Promise.resolve(); await Promise.resolve()
+    // IDB rejected -> no durability confirmation is ever emitted.
+    expect(persisted).toHaveLength(0)
+  })
+
+  it('does not claim a plain success: a non-quota write error is not quota and carries no timestamp', () => {
     let failedDetail: any = null
     window.addEventListener('poweron:storage-write-failed', (e) => { failedDetail = (e as CustomEvent).detail }, { once: true })
     vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
       const e = new Error('SecurityError: localStorage blocked'); e.name = 'SecurityError'; throw e
     })
     expect(() => saveBackupData(makeBackup('edit-x'), USER)).toThrow(BackupStorageWriteError)
-    expect(failedDetail).toMatchObject({ quota: false, preserved: false })
+    expect(failedDetail?.quota).toBe(false)
+    expect(failedDetail?.at).toBeUndefined()
   })
 
   it('repeated saves under quota do not grow localStorage without bound', () => {
