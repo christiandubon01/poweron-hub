@@ -299,6 +299,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [localSaveFailed, setLocalSaveFailed] = useState<string | null>(null)
   const [showSaveFailedModal, setShowSaveFailedModal] = useState(false)
+  // True when the local (browser) write failed on quota but the edit was preserved in
+  // memory + IndexedDB and queued to the cloud — so the banner must not say "work lost".
+  const [saveFailedPreserved, setSaveFailedPreserved] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
   // ROOT-SYNC: 'pushed' = this device wrote to the cloud; 'applied' = a remote
@@ -350,19 +353,29 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       refresh()
     }
     const handleStorageWriteFailed = (event: Event) => {
-      const detail = (event as CustomEvent<{ error?: string }>).detail
+      const detail = (event as CustomEvent<{ error?: string; preserved?: boolean }>).detail
       setLocalSaveFailed(detail?.error || 'Storage write failed')
+      setSaveFailedPreserved(Boolean(detail?.preserved))
       setSyncStatus('failed')
       setShowSaveFailedModal(true)
     }
+    // A confirmed cloud sync means the preserved edit is now durable — clear the banner.
+    const handleSyncSuccess = () => {
+      setLocalSaveFailed(null)
+      setSaveFailedPreserved(false)
+      setShowSaveFailedModal(false)
+      refresh()
+    }
     window.addEventListener('poweron-data-saved', handleDataSaved)
     window.addEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
+    window.addEventListener('poweron:sync-success', handleSyncSuccess)
 
     // Clean up listeners on unmount
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       window.removeEventListener('poweron-data-saved', handleDataSaved)
       window.removeEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
+      window.removeEventListener('poweron:sync-success', handleSyncSuccess)
     }
   }, [])
 
@@ -1135,16 +1148,25 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       )}
       {showSaveFailedModal && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 p-4" role="alertdialog" aria-modal="true" aria-labelledby="save-failed-title">
-          <div className="w-full max-w-md rounded-2xl border border-red-500 bg-red-950 p-6 shadow-2xl">
-            <h2 id="save-failed-title" className="text-lg font-black text-red-100">SAVE FAILED — YOUR WORK IS NOT SAVED</h2>
-            <p className="mt-3 text-sm text-red-200">The latest change could not be written to this browser. Keep this page open and free storage before trying again.</p>
-            {localSaveFailed && <p className="mt-3 break-words text-xs text-red-300">{localSaveFailed}</p>}
+          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${saveFailedPreserved ? 'border-amber-500 bg-amber-950' : 'border-red-500 bg-red-950'}`}>
+            {saveFailedPreserved ? (
+              <>
+                <h2 id="save-failed-title" className="text-lg font-black text-amber-100">STORAGE FULL — SAVING TO CLOUD</h2>
+                <p className="mt-3 text-sm text-amber-200">This browser's storage is full, so your latest change could not be written to this device. It has been kept and is being backed up to the cloud. Keep this page open until sync completes, and free up space on this device when you can.</p>
+              </>
+            ) : (
+              <>
+                <h2 id="save-failed-title" className="text-lg font-black text-red-100">SAVE FAILED — YOUR WORK IS NOT SAVED</h2>
+                <p className="mt-3 text-sm text-red-200">The latest change could not be written to this browser. Keep this page open and free storage before trying again.</p>
+              </>
+            )}
+            {localSaveFailed && <p className={`mt-3 break-words text-xs ${saveFailedPreserved ? 'text-amber-300' : 'text-red-300'}`}>{localSaveFailed}</p>}
             <button
               type="button"
               onClick={() => setShowSaveFailedModal(false)}
-              className="mt-6 w-full rounded-lg bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-500"
+              className={`mt-6 w-full rounded-lg px-4 py-3 text-sm font-bold text-white ${saveFailedPreserved ? 'bg-amber-600 hover:bg-amber-500' : 'bg-red-600 hover:bg-red-500'}`}
             >
-              Acknowledge
+              {saveFailedPreserved ? 'Got it' : 'Acknowledge'}
             </button>
           </div>
         </div>

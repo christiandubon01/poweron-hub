@@ -162,6 +162,84 @@ function getEffectiveStorageKey(userId = _activeTenantUserId): string {
   return userId ? getTenantStorageKey(userId) : LEGACY_STORAGE_KEY
 }
 
+// ── Storage-quota overflow resilience ─────────────────────────────────────────
+// HOTFIX (storage quota save failure): the whole-app blob is serialized into ONE
+// localStorage key on every save. On iOS/iPadOS Safari (~5 MB per-origin cap) a
+// growing blob makes localStorage.setItem throw QuotaExceededError. Previously that
+// (a) lost the edit and (b) starved the Supabase push, because syncToSupabase builds
+// its payload from getBackupData() — the same localStorage key. We keep the latest
+// blob in memory and mirror it to IndexedDB (far larger quota) so the edit is never
+// lost and the authoritative cloud push still gets it. localStorage simply stops
+// being written while it is full (bounded growth). Nothing is ever deleted here.
+const _memoryBackupByKey = new Map<string, BackupData>()
+const _localStorageOverflowKeys = new Set<string>()
+const BACKUP_OVERFLOW_PREFIX = 'poweron_backup_overflow:'
+
+/** True for a browser storage quota error across Safari / Chrome / Firefox variants. */
+export function isStorageQuotaError(err: unknown): boolean {
+  const e = err instanceof BackupStorageWriteError ? err.cause : err
+  if (!e || typeof e !== 'object') return false
+  const name = String((e as any).name || '')
+  const code = (e as any).code
+  const msg = String((e as any).message || '').toLowerCase()
+  return (
+    name === 'QuotaExceededError' ||            // Chrome / Safari
+    name === 'NS_ERROR_DOM_QUOTA_REACHED' ||    // Firefox
+    code === 22 || code === 1014 ||             // legacy numeric codes
+    msg.includes('quota')
+  )
+}
+
+function rememberBackupInMemory(key: string, data: BackupData): void {
+  try { _memoryBackupByKey.set(key, data) } catch { /* ignore */ }
+}
+
+/** Best-effort durable mirror to IndexedDB. One key per storage key (overwritten), so no growth loop. */
+function overflowBackupToIdb(key: string, data: BackupData): void {
+  try { void idbSet(BACKUP_OVERFLOW_PREFIX + key, JSON.stringify(data)).catch(() => {}) } catch { /* ignore */ }
+}
+
+/** Drop a stale overflow mirror once localStorage can hold the blob again. Never touches business data. */
+function clearBackupOverflow(key: string): void {
+  if (!_localStorageOverflowKeys.has(key)) return
+  _localStorageOverflowKeys.delete(key)
+  try { void idbDelete(BACKUP_OVERFLOW_PREFIX + key).catch(() => {}) } catch { /* ignore */ }
+}
+
+/**
+ * Recover a localStorage-overflow blob from IndexedDB into memory (call on startup/hydration).
+ * Adopts it only when it is at least as new as both the localStorage and in-memory copies, so it
+ * never resurrects stale data over a good local or remote copy. Never deletes anything.
+ */
+export async function recoverLocalOverflowBackup(userId = _activeTenantUserId): Promise<boolean> {
+  try {
+    const key = getEffectiveStorageKey(userId)
+    const raw = await idbGet<string>(BACKUP_OVERFLOW_PREFIX + key)
+    if (typeof raw !== 'string') return false
+    const overflow = JSON.parse(raw) as BackupData
+    if (userId && !tenantOwnerMatches(overflow, userId)) return false
+    let localSavedAt = ''
+    try {
+      const localRaw = localStorage.getItem(key)
+      if (localRaw) localSavedAt = String((JSON.parse(localRaw) as BackupData)?._lastSavedAt || '')
+    } catch { /* treat as empty */ }
+    const memSavedAt = String(_memoryBackupByKey.get(key)?._lastSavedAt || '')
+    const overflowSavedAt = String(overflow._lastSavedAt || '')
+    if (overflowSavedAt && overflowSavedAt >= localSavedAt && overflowSavedAt >= memSavedAt) {
+      _memoryBackupByKey.set(key, overflow)
+      _localStorageOverflowKeys.add(key)
+      return true
+    }
+    return false
+  } catch { return false }
+}
+
+/** Test-only: reset the in-memory overflow state between cases. */
+export function __resetStorageOverflowStateForTests(): void {
+  _memoryBackupByKey.clear()
+  _localStorageOverflowKeys.clear()
+}
+
 // ── Device ID System ─────────────────────────────────────────────────────────
 const DEVICE_ID_KEY = 'poweron_device_id'
 
@@ -810,6 +888,14 @@ export function getBackupData(userId = _activeTenantUserId): BackupData | null {
   if (isDemoRuntimeActive()) {
     return getDemoBackupData()
   }
+  // Storage-quota overflow: localStorage could not hold the latest blob, so it is stale.
+  // Return the in-memory authoritative copy (tenant-checked) so reads and the Supabase
+  // push see the real latest edit instead of the truncated/stale localStorage value.
+  const overflowKey = getEffectiveStorageKey(userId)
+  if (_localStorageOverflowKeys.has(overflowKey)) {
+    const mem = _memoryBackupByKey.get(overflowKey)
+    if (mem && (!userId || tenantOwnerMatches(mem, userId))) return mem
+  }
   try {
     const key = getEffectiveStorageKey(userId)
     const raw = localStorage.getItem(key)
@@ -960,10 +1046,15 @@ export function saveBackupData(
     }
     return
   }
+  const owned = userId ? attachTenantOwner(data, userId) : data
+  const key = getEffectiveStorageKey(userId)
+  // Capture the latest blob in memory BEFORE attempting the (possibly failing) localStorage
+  // write, so a quota failure can never lose the edit and the cloud push can still read it.
+  rememberBackupInMemory(key, owned)
   try {
-    const owned = userId ? attachTenantOwner(data, userId) : data
-    const key = getEffectiveStorageKey(userId)
     localStorage.setItem(key, JSON.stringify(owned))
+    // localStorage held the blob again: drop any stale overflow mirror (bounded, no growth).
+    clearBackupOverflow(key)
 
     // Global save trigger:
     // Any normal user-facing save inside a fully hydrated tenant marks data dirty
@@ -974,11 +1065,24 @@ export function saveBackupData(
     }
   } catch (err) {
     const failure = err instanceof BackupStorageWriteError ? err : new BackupStorageWriteError(err)
+    const quota = isStorageQuotaError(err)
     console.error('[backupDataService] Failed to save:', failure)
+    if (quota) {
+      // Non-destructive quota handling: the edit stays in memory, is mirrored to IndexedDB
+      // (durable, far larger quota), and the tenant is marked dirty so the authoritative
+      // Supabase push still fires (reading the in-memory copy via getBackupData). We STILL
+      // rethrow so callers keep their existing contract and no path falsely reports a plain
+      // localStorage save; the UI banner reflects "preserved to cloud", not "work lost".
+      _localStorageOverflowKeys.add(key)
+      overflowBackupToIdb(key, owned)
+      if (userId && _activeTenantUserId === userId && _tenantDataReady) {
+        _dataChanged = true
+      }
+    }
     try {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('poweron:storage-write-failed', {
-          detail: { error: failure.message },
+          detail: { error: failure.message, quota, preserved: quota },
         }))
       }
     } catch {
@@ -1024,11 +1128,22 @@ export function saveBackupData(
  * to prevent re-triggering the sync loop.
  */
 function saveBackupDataSilent(data: BackupData, userId = _activeTenantUserId): void {
+  const owned = userId ? attachTenantOwner(data, userId) : data
+  const key = getEffectiveStorageKey(userId)
+  // Keep the in-memory authoritative copy current even for silent sync/hydration writes,
+  // so getBackupData stays correct while localStorage is overflowed.
+  rememberBackupInMemory(key, owned)
   try {
-    const owned = userId ? attachTenantOwner(data, userId) : data
-    const key = getEffectiveStorageKey(userId)
     localStorage.setItem(key, JSON.stringify(owned))
-  } catch { /* ignore */ }
+    clearBackupOverflow(key)
+  } catch (err) {
+    // Silent path: never throw, never re-trigger sync. On a quota failure still mirror to
+    // IndexedDB so the data is durable and getBackupData returns the in-memory latest.
+    if (isStorageQuotaError(err)) {
+      _localStorageOverflowKeys.add(key)
+      overflowBackupToIdb(key, owned)
+    }
+  }
 }
 
 /** Phase 6T: read session remote baseline without altering freshness guard behavior. */
@@ -3512,6 +3627,11 @@ export async function loadFromSupabase(
       console.error('[Sync] loadFromSupabase blocked: user mismatch', { requested: userId, sessionUser: user.id })
       return { success: false, merged: false, status: 'failed', error: 'Authenticated user mismatch' }
     }
+
+    // HOTFIX: if a prior session overflowed the localStorage blob to IndexedDB (quota full),
+    // pull it back into memory first so the freshness/merge logic below sees the latest local
+    // edit and pushes it to the cloud instead of losing it. Never overrides a newer copy.
+    await recoverLocalOverflowBackup(userId)
 
     const sameTenant = _activeTenantUserId === userId
     const preApplyKnownRemoteBaselineMs = sameTenant ? getKnownRemoteBaselineMs() : 0
