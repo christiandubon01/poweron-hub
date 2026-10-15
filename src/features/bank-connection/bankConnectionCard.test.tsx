@@ -101,6 +101,25 @@ describe('BankConnectionCard (BANK-2)', () => {
     expect(host.querySelector('[data-testid="bank-connect"]')!.className).toContain('min-h-[44px]')
   })
 
+  it('offers the controlled 730-day recovery in Production and shows per-account coverage and safety warnings', async () => {
+    const recovery = { id: 'r1', sourceItemId: 'i1', replacementItemId: 'i2', institutionName: 'Wells Fargo', state: 'ready', requestedDays: 730,
+      createdAt: '2026-10-14T00:00:00Z', updatedAt: '2026-10-14T00:00:00Z', errorCode: null,
+      overlap: { confirmed: 461, review: 0, missingFromReplacement: 0 },
+      transactionReview: [],
+      accounts: [{ id: 'm1', oldAccountId: 'a1', newAccountId: 'a2', oldLabel: 'Business Checking ••••6960', newLabel: 'Business Checking ••••6960', financialAccountName: 'Business Checking', matchBasis: 'provider_account_id', status: 'confirmed', oldestDate: '2026-01-01', newestDate: '2026-10-14', transactionCount: 291 }] }
+    await mount({
+      'plaid-connection-status': { body: { environment: 'production', connected: true, connections: [conn({ institutionName: 'Wells Fargo', environment: 'production' })] } },
+      'plaid-history-recovery': { body: { enabled: true, recoveries: [recovery] } },
+      'plaid-accounts': { body: { accounts: [], cashAccounts: [] } }, 'plaid-sync': { body: { syncs: [] } },
+    })
+    const panel = host.querySelector('[data-testid="bank-history-recovery"]')!
+    expect(panel.textContent).toMatch(/up to 730 days/i); expect(panel.textContent).toMatch(/may return less history/i)
+    expect(panel.textContent).toMatch(/original connection is never removed automatically/i); expect(panel.textContent).toMatch(/Plaid billing/i)
+    expect(panel.querySelector('[data-testid="bank-history-dates"]')!.textContent).toContain('2026-01-01 to 2026-10-14')
+    expect(panel.querySelector('[data-testid="bank-history-overlap"]')!.textContent).toContain('461 conservatively matched')
+    expect(panel.querySelector('[data-testid="bank-history-activate"]')).not.toBeNull()
+  })
+
   describe('BANK-3 account discovery + mapping', () => {
     const acct = (over: Record<string, unknown> = {}) => ({ id: 'a1', connectionId: 'i1', institutionName: 'Tartan Bank', name: 'Tartan Checking', officialName: null, mask: '0000', type: 'depository', subtype: 'checking', live: true, mapping: null, ...over })
     const cash = [{ id: 'f1', displayName: 'Wells Fargo Business Checking 6960', accountType: 'checking', ownershipContext: 'business' }, { id: 'f2', displayName: 'Savings', accountType: 'savings', ownershipContext: 'business' }]

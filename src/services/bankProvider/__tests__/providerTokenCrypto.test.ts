@@ -82,9 +82,9 @@ describe('provider token encryption', () => {
 
 describe('Plaid configuration (sandbox only, fail closed)', () => {
   const ok = { PLAID_ENV: 'sandbox', PLAID_CLIENT_ID: 'cid', PLAID_SECRET: 'sec' }
-  it('accepts sandbox with credentials and records the Transactions product and the locked 90-day window', () => {
+  it('accepts sandbox with credentials and records the Transactions product and 730-day window', () => {
     const c = loadPlaidConfig(ok)
-    expect(c).toMatchObject({ environment: 'sandbox', countryCodes: ['US'], language: 'en', products: ['transactions'], transactionsDaysRequested: 90 })
+    expect(c).toMatchObject({ environment: 'sandbox', countryCodes: ['US'], language: 'en', products: ['transactions'], transactionsDaysRequested: 730 })
     expect((c as unknown as Record<string, unknown>).consentedProducts).toBeUndefined()
     expect(c.clientName.length).toBeLessThanOrEqual(30)
     expect(loadPlaidConfig({ ...ok, PLAID_ENV: ' Sandbox ' }).environment).toBe('sandbox')

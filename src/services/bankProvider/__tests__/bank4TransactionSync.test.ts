@@ -754,6 +754,6 @@ describe('BANK-4 static guarantees', () => {
   it('the browser code never references secrets and never auto-syncs on load', () => {
     const ui = readFileSync(new URL('../../../features/bank-connection/useBankConnection.ts', import.meta.url), 'utf8')
     expect(ui).not.toMatch(/access_token|encrypted|PLAID_SECRET|service_role|api\.plaid\.com/i)
-    expect(ui).toMatch(/useEffect\(\(\) => \{ void refresh\(\); void refreshAccounts\(\); void refreshSyncs\(\); void refreshBalanceList\(\) \}/) // load = reads only (PLAID-2E: the balance list is a GET)
+    expect(ui).toMatch(/useEffect\(\(\) => \{ void refresh\(\); void refreshAccounts\(\); void refreshSyncs\(\); void refreshBalanceList\(\); void refreshRecoveries\(\) \}/) // load = reads only; balances and recovery status are GETs
   })
 })

@@ -28,7 +28,7 @@ const ok = { PLAID_CLIENT_ID: 'cid', PLAID_SECRET: 'sec' }
 
 describe('production configuration', () => {
   it('accepts exactly sandbox or production, never defaults, and names (never echoes) a bad variable', () => {
-    expect(loadPlaidConfig({ ...ok, PLAID_ENV: 'production' })).toMatchObject({ environment: 'production', products: ['transactions'], transactionsDaysRequested: 90, redirectUri: null, webhookUrl: null })
+    expect(loadPlaidConfig({ ...ok, PLAID_ENV: 'production' })).toMatchObject({ environment: 'production', products: ['transactions'], transactionsDaysRequested: 730, redirectUri: null, webhookUrl: null })
     expect(() => loadPlaidConfig(ok)).toThrow(PlaidConfigError) // no PLAID_ENV: no default
     for (const bad of ['development', 'prod', 'live', 'true', 'sandbox ']) {
       if (bad === 'sandbox ') continue // whitespace is trimmed, like the existing behaviour
@@ -53,7 +53,7 @@ describe('production configuration', () => {
     const cfg = (extra: Record<string, string>) => loadPlaidConfig({ ...ok, PLAID_ENV: 'production', ...extra })
     const withRedirect = createPlaidSdkPort(cfg({ PLAID_REDIRECT_URI: 'https://app.example.com/oauth' }), { linkTokenCreate } as any)
     await withRedirect.createLinkToken({ clientUserId: 'u' })
-    expect(linkTokenCreate.mock.calls[0][0]).toMatchObject({ redirect_uri: 'https://app.example.com/oauth', products: ['transactions'], transactions: { days_requested: 90 } })
+    expect(linkTokenCreate.mock.calls[0][0]).toMatchObject({ redirect_uri: 'https://app.example.com/oauth', products: ['transactions'], transactions: { days_requested: 730 } })
     await withRedirect.createLinkToken({ clientUserId: 'u', accessToken: 'tok' })
     expect(linkTokenCreate.mock.calls[1][0]).toMatchObject({ redirect_uri: 'https://app.example.com/oauth', access_token: 'tok' })
     expect(linkTokenCreate.mock.calls[1][0]).not.toHaveProperty('products')

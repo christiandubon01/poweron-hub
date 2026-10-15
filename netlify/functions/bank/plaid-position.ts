@@ -12,7 +12,8 @@ import { createSpendingRepo } from '../../../src/services/bankProvider/spending/
 import { createBankAccountRepo } from '../../../src/services/bankProvider/bankAccountRepo'
 import { createBankBalanceRepo } from '../../../src/services/bankProvider/bankBalanceRepo'
 import { createBankConnectionRepo } from '../../../src/services/bankProvider/bankConnectionRepo'
-import { balancesEnabled, corsPreflight, errorResponse, jsonResponse, positionEnabled, reconciliationEnabled, resolveOwnerContext, safeLog } from './plaidAuth'
+import { createHistoryRecoveryRepo } from '../../../src/services/bankProvider/historyRecoveryRepo'
+import { balancesEnabled, corsPreflight, errorResponse, historyRecoveryEnabled, jsonResponse, positionEnabled, reconciliationEnabled, resolveOwnerContext, safeLog } from './plaidAuth'
 
 export function buildHandler(overrides = {}) {
   return async (event) => {
@@ -25,6 +26,7 @@ export function buildHandler(overrides = {}) {
     const deps = {
       repo: (overrides.spendingRepo ?? createSpendingRepo)(auth.svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(auth.svc), balances: (overrides.balanceRepo ?? createBankBalanceRepo)(auth.svc),
       connections: (overrides.connectionRepo ?? createBankConnectionRepo)(auth.svc), log: safeLog, now: overrides.now, environment,
+      recovery: (overrides.historyRecoveryRepo ?? createHistoryRecoveryRepo)(auth.svc), historyRecoveryEnabled: (overrides.historyRecoveryEnabled ?? historyRecoveryEnabled)(),
       positionEnabled: (overrides.positionEnabled ?? positionEnabled)(), balancesEnabled: (overrides.balancesEnabled ?? balancesEnabled)(), reconciliationEnabled: (overrides.reconciliationEnabled ?? reconciliationEnabled)(),
     }
     try {

@@ -84,6 +84,18 @@ export interface AccountAdditionPreview {
   skipped: number
   previewToken: string
 }
+export interface HistoryRecoveryAccount {
+  id: string; oldAccountId: string; newAccountId: string | null; oldLabel: string; newLabel: string | null; financialAccountName: string
+  matchBasis: 'provider_account_id' | 'account_details' | 'owner_confirmed' | 'ambiguous'; status: 'confirmed' | 'review'
+  oldestDate: string | null; newestDate: string | null; transactionCount: number
+}
+export interface HistoryRecoverySummary {
+  id: string; sourceItemId: string; replacementItemId: string | null; institutionName: string | null
+  state: 'link_pending' | 'accounts_pending' | 'account_review' | 'syncing' | 'transaction_review' | 'ready' | 'activated' | 'error' | 'cancelled'
+  requestedDays: 730; createdAt: string; updatedAt: string; accounts: HistoryRecoveryAccount[]
+  overlap: { confirmed: number; review: number; missingFromReplacement: number }; errorCode: string | null
+  transactionReview: Array<{ id: string; sourceTransactionId: string; replacementTransactionId: string; accountLabel: string; date: string; name: string; amountMinor: number; sourceRef: string; replacementRef: string }>
+}
 
 /** `unavailable` = the caller may not manage bank connections (or it is not configured); the card renders nothing. */
 export type BankConnectionLoad = 'loading' | 'ready' | 'unavailable'
@@ -109,6 +121,8 @@ export function useBankConnection() {
   const [syncProgress, setSyncProgress] = useState<string | null>(null)
   const [balancesEnabled, setBalancesEnabled] = useState(false)
   const [balances, setBalances] = useState<BankBalanceSummary[]>([])
+  const [historyRecoveryEnabled, setHistoryRecoveryEnabled] = useState(false)
+  const [recoveries, setRecoveries] = useState<HistoryRecoverySummary[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -148,7 +162,14 @@ export function useBankConnection() {
       setBalances(Array.isArray(data.accounts) ? data.accounts : [])
     } catch { /* keep the last known balances */ }
   }, [])
-  useEffect(() => { void refresh(); void refreshAccounts(); void refreshSyncs(); void refreshBalanceList() }, [refresh, refreshAccounts, refreshSyncs, refreshBalanceList])
+  const refreshRecoveries = useCallback(async () => {
+    try {
+      const data = await request('plaid-history-recovery', { method: 'GET' })
+      setHistoryRecoveryEnabled(data.enabled === true)
+      setRecoveries(Array.isArray(data.recoveries) ? data.recoveries : [])
+    } catch { setHistoryRecoveryEnabled(false) }
+  }, [])
+  useEffect(() => { void refresh(); void refreshAccounts(); void refreshSyncs(); void refreshBalanceList(); void refreshRecoveries() }, [refresh, refreshAccounts, refreshSyncs, refreshBalanceList, refreshRecoveries])
 
   /** Separate, retry-safe call (never part of the connection exchange): fetch + save the bank's accounts, then reload the list. */
   const discoverAccounts = useCallback(async (itemId: string) => {
@@ -166,7 +187,7 @@ export function useBankConnection() {
   }, [])
 
   /** What happens after Link succeeds: the public token goes straight to the server (never kept), then the list and accounts reload. */
-  const handleLinkSuccess = useCallback(async (onDone: (publicToken: string, institutionId: string | null) => Promise<unknown>, publicToken: string, institutionId: string | null = null, addAccountsItemId: string | null = null) => {
+  const handleLinkSuccess = useCallback(async (onDone: (publicToken: string, institutionId: string | null) => Promise<unknown>, publicToken: string, institutionId: string | null = null, addAccountsItemId: string | null = null, recoveryId: string | null = null) => {
     clearPendingOauth()
     try {
       const done = await onDone(publicToken, institutionId) as { connection?: { id?: unknown } } | undefined
@@ -185,8 +206,12 @@ export function useBankConnection() {
       for (const c of live) {
         try { await discoverAccounts(c.id) } catch (error) { setMessage(`Connected, but the bank accounts could not be loaded yet: ${(error as Error).message}`); await refresh(); await refreshSyncs() }
       }
+      if (recoveryId) {
+        await request('plaid-history-recovery', { method: 'POST', body: { action: 'prepare_accounts', recoveryId } })
+        await refreshRecoveries()
+      }
     } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
-  }, [discoverAccounts, refresh, refreshSyncs, previewAccounts])
+  }, [discoverAccounts, refresh, refreshSyncs, previewAccounts, refreshRecoveries])
 
   const runLink = useCallback(async (body: Record<string, unknown>, onDone: (publicToken: string, institutionId: string | null) => Promise<unknown>) => {
     setBusy(true); setMessage(null)
@@ -194,7 +219,7 @@ export function useBankConnection() {
       const { linkToken } = await request('plaid-link-token', { method: 'POST', body })
       const mode = body.mode === 'update' || body.mode === 'add_accounts' ? body.mode : 'new'
       const itemId = typeof body.itemId === 'string' ? body.itemId : null
-      rememberLinkToken({ linkToken, mode, itemId })
+      rememberLinkToken({ linkToken, mode, itemId, recoveryId: null })
       await openPlaidLink({
         linkToken,
         onSuccess: (publicToken, institutionId) => handleLinkSuccess(onDone, publicToken, institutionId, mode === 'add_accounts' ? itemId : null),
@@ -219,11 +244,13 @@ export function useBankConnection() {
       ? (async () => { /* update mode keeps the same Item and access token: there is nothing to exchange */ })
       : pending.mode === 'update' && pending.itemId
       ? (async () => { await request('plaid-exchange', { method: 'POST', body: { mode: 'update_complete', itemId: pending.itemId } }) })
+      : pending.mode === 'history_recovery' && pending.recoveryId
+      ? (async (publicToken: string, institutionId: string | null) => request('plaid-exchange', { method: 'POST', body: { mode: 'history_recovery', recoveryId: pending.recoveryId, publicToken, ...(institutionId ? { institutionId } : {}) } }))
       : (async (publicToken: string, institutionId: string | null) => { await request('plaid-exchange', { method: 'POST', body: { publicToken, ...(institutionId ? { institutionId } : {}) } }) })
     setBusy(true)
     void Promise.resolve(openPlaidLink({
       linkToken: pending.linkToken, receivedRedirectUri: returnedUri,
-      onSuccess: (publicToken, institutionId) => handleLinkSuccess(onDone, publicToken, institutionId, pending.mode === 'add_accounts' ? pending.itemId : null),
+      onSuccess: (publicToken, institutionId) => handleLinkSuccess(onDone, publicToken, institutionId, pending.mode === 'add_accounts' ? pending.itemId : null, pending.mode === 'history_recovery' ? pending.recoveryId ?? null : null),
       onExit: () => { clearPendingOauth(); setBusy(false) },
     })).catch(error => { setMessage((error as Error).message || 'Could not resume the bank connection.'); setBusy(false) })
   }, [handleLinkSuccess])
@@ -254,6 +281,20 @@ export function useBankConnection() {
   const dismissPreview = useCallback(() => setAddPreview(null), [])
   /** Re-authentication of an existing connection (no new Item). */
   const reconnect = useCallback((itemId: string) => runLink({ mode: 'update', itemId }, () => request('plaid-exchange', { method: 'POST', body: { mode: 'update_complete', itemId } })), [runLink])
+  const recoverHistory = useCallback(async (sourceItemId: string) => {
+    setBusy(true); setMessage(null)
+    try {
+      const started = await request('plaid-history-recovery', { method: 'POST', body: { action: 'start', sourceItemId } })
+      const recoveryId = String(started.recoveryId ?? '')
+      rememberLinkToken({ linkToken: started.linkToken, mode: 'history_recovery', itemId: sourceItemId, recoveryId })
+      await openPlaidLink({ linkToken: started.linkToken,
+        onSuccess: (publicToken, institutionId) => handleLinkSuccess(
+          (token, bankId) => request('plaid-exchange', { method: 'POST', body: { mode: 'history_recovery', recoveryId, publicToken: token, ...(bankId ? { institutionId: bankId } : {}) } }),
+          publicToken, institutionId, null, recoveryId),
+        onExit: () => { clearPendingOauth(); setBusy(false) },
+      })
+    } catch (error) { setMessage((error as Error).message || 'Could not start older-history recovery.'); setBusy(false) }
+  }, [handleLinkSuccess])
   const disconnect = useCallback(async (itemId: string) => {
     setBusy(true); setMessage(null)
     try { await request('plaid-disconnect', { method: 'POST', body: { itemId } }); await refresh(); await refreshAccounts() }
@@ -329,6 +370,34 @@ export function useBankConnection() {
     catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
   }, [refreshAccounts])
 
+  const confirmRecoveryAccount = useCallback(async (recoveryId: string, matchId: string, replacementAccountId: string) => {
+    setBusy(true); setMessage(null)
+    try { await request('plaid-history-recovery', { method: 'POST', body: { action: 'confirm_account', recoveryId, matchId, replacementAccountId } }); await refreshRecoveries() }
+    catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [refreshRecoveries])
+  const reconcileRecovery = useCallback(async (recoveryId: string) => {
+    setBusy(true); setMessage(null)
+    try { await request('plaid-history-recovery', { method: 'POST', body: { action: 'reconcile', recoveryId } }); await refreshRecoveries() }
+    catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [refreshRecoveries])
+  const confirmRecoveryTransaction = useCallback(async (recoveryId: string, matchId: string) => {
+    setBusy(true); setMessage(null)
+    try {
+      await request('plaid-history-recovery', { method: 'POST', body: { action: 'confirm_transaction', recoveryId, matchId } })
+      await request('plaid-history-recovery', { method: 'POST', body: { action: 'reconcile', recoveryId } })
+      await refreshRecoveries()
+    } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [refreshRecoveries])
+  const activateRecovery = useCallback(async (recoveryId: string) => {
+    setBusy(true); setMessage(null)
+    try {
+      await request('plaid-history-recovery', { method: 'POST', body: { action: 'activate', recoveryId } })
+      setMessage('Recovered history is active. The original connection was retained and was not disconnected.')
+      await Promise.all([refreshRecoveries(), refreshAccounts(), refresh()])
+    } catch (error) { setMessage((error as Error).message) } finally { setBusy(false) }
+  }, [refreshRecoveries, refreshAccounts, refresh])
+
   return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked }
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked,
+    historyRecoveryEnabled, recoveries, recoverHistory, confirmRecoveryAccount, confirmRecoveryTransaction, reconcileRecovery, activateRecovery, refreshRecoveries }
 }

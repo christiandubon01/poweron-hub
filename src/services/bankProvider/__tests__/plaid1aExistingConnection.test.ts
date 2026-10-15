@@ -92,7 +92,7 @@ describe('PLAID-1A Plaid request shape', () => {
     await port.createLinkToken({ clientUserId: 'o.u', accessToken: ACCESS })
     expect(linkTokenCreate.mock.calls[0][0]).not.toHaveProperty('update')
     await port.createLinkToken({ clientUserId: 'o.u' })
-    expect(linkTokenCreate.mock.calls[1][0]).toMatchObject({ products: ['transactions'], transactions: { days_requested: 90 } })
+    expect(linkTokenCreate.mock.calls[1][0]).toMatchObject({ products: ['transactions'], transactions: { days_requested: 730 } })
     expect(linkTokenCreate.mock.calls[1][0]).not.toHaveProperty('update')
   })
 })

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { AccountAdditionPreview, BankAccountSummary, BankBalanceSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption, SharedAccountView } from './useBankConnection'
+import type { AccountAdditionPreview, BankAccountSummary, BankBalanceSummary, BankConnectionSummary, BankSyncSummary, CashAccountOption, HistoryRecoverySummary, SharedAccountView } from './useBankConnection'
 import { useBankConnection } from './useBankConnection'
 import { buildAttention } from '../../services/bankProvider/attention'
 
@@ -157,17 +157,77 @@ function BalancesSection({ connectionId, balances, busy, onRefresh }: { connecti
   </div>
 }
 
+const RECOVERY_LABEL: Record<HistoryRecoverySummary['state'], string> = {
+  link_pending: 'Waiting for Wells Fargo authorization', accounts_pending: 'Loading replacement accounts', account_review: 'Account confirmation required',
+  syncing: 'Importing available history', transaction_review: 'Overlap review required', ready: 'Verified and ready to activate',
+  activated: 'Recovered history active', error: 'Recovery needs attention', cancelled: 'Recovery cancelled',
+}
+
+function HistoryRecoveryPanel({ recovery, accounts, busy, balancesEnabled, onConfirmAccount, onConfirmTransaction, onSync, onRefreshBalances, onReconcile, onActivate }: {
+  recovery: HistoryRecoverySummary; accounts: BankAccountSummary[]; busy: boolean
+  balancesEnabled: boolean
+  onConfirmAccount: (recoveryId: string, matchId: string, replacementAccountId: string) => Promise<void>
+  onConfirmTransaction: (recoveryId: string, matchId: string) => Promise<void>
+  onSync: (itemId: string) => Promise<void>; onRefreshBalances: (itemId: string) => Promise<void>; onReconcile: (recoveryId: string) => Promise<void>; onActivate: (recoveryId: string) => Promise<void>
+}) {
+  const replacementAccounts = accounts.filter(a => a.connectionId === recovery.replacementItemId)
+  const [choices, setChoices] = useState<Record<string, string>>({})
+  const allAccountsConfirmed = recovery.accounts.length > 0 && recovery.accounts.every(a => a.status === 'confirmed')
+  return <div className="w-full rounded-lg p-3 ring-1 ring-[var(--border-primary)]" data-testid="bank-history-recovery" data-state={recovery.state}>
+    <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-secondary)]">Older bank history · up to 730 days</p>
+    <p className="mt-1 text-sm font-semibold">{RECOVERY_LABEL[recovery.state]}</p>
+    <p className="mt-1 text-xs text-[var(--text-secondary)]">Wells Fargo may return less history. Your existing connection, mappings, classifications and evidence remain in place until verified activation. The original connection is never removed automatically.</p>
+    <p className="mt-1 text-xs" style={{ color: 'var(--fin-warning)' }}>A replacement Item may affect Plaid billing.</p>
+    {recovery.errorCode && <p role="alert" className="mt-1 text-xs" style={{ color: 'var(--fin-negative)' }}>Recovery error: {recovery.errorCode}</p>}
+    {recovery.accounts.length > 0 && <ul className="mt-2 divide-y divide-[var(--border-primary)]" data-testid="bank-history-coverage">{recovery.accounts.map(a => <li key={a.id} className="py-2 text-xs">
+      <p className="font-semibold">{a.oldLabel} → {a.financialAccountName}</p>
+      <p className="text-[var(--text-secondary)]">Replacement: {a.newLabel ?? 'Needs owner selection'} · {a.status === 'confirmed' ? 'Identity confirmed' : 'Confirm this account'}</p>
+      <p data-testid="bank-history-dates">Actual imported coverage: {a.oldestDate ?? 'not imported yet'} to {a.newestDate ?? 'not imported yet'} · {a.transactionCount.toLocaleString('en-US')} transaction(s)</p>
+      {a.status === 'review' && a.newAccountId && <button type="button" className={`${btn} mt-1`} disabled={busy} onClick={() => void onConfirmAccount(recovery.id, a.id, a.newAccountId!)}>Confirm account match</button>}
+      {a.status === 'review' && !a.newAccountId && replacementAccounts.length > 0 && <div className="mt-1 flex flex-wrap items-center gap-2">
+        <span style={{ color: 'var(--fin-warning)' }}>More than one account could match.</span>
+        <select aria-label={`Replacement for ${a.oldLabel}`} value={choices[a.id] ?? ''} onChange={e => setChoices(v => ({ ...v, [a.id]: e.target.value }))} className="min-h-[44px] rounded-lg bg-transparent px-2 ring-1 ring-[var(--border-primary)]">
+          <option value="">Choose replacement account…</option>
+          {replacementAccounts.map(candidate => <option key={candidate.id} value={candidate.id}>{bankLabel(candidate)}</option>)}
+        </select>
+        <button type="button" className={btn} disabled={busy || !choices[a.id]} onClick={() => void onConfirmAccount(recovery.id, a.id, choices[a.id])}>Confirm selected account</button>
+      </div>}
+    </li>)}</ul>}
+    {(recovery.overlap.confirmed > 0 || recovery.overlap.review > 0 || recovery.overlap.missingFromReplacement > 0) && <p className="mt-2 text-xs" data-testid="bank-history-overlap">
+      Overlap: {recovery.overlap.confirmed} conservatively matched · {recovery.overlap.review} ambiguous · {recovery.overlap.missingFromReplacement} existing transaction(s) not returned by the replacement.
+    </p>}
+    {recovery.transactionReview?.length > 0 && <div className="mt-2" data-testid="bank-history-transaction-review">
+      <p className="text-xs font-semibold">Ambiguous overlap · owner confirmation required</p>
+      <p className="text-xs text-[var(--text-secondary)]">These full provider facts are identical but the provider identities differ. Confirm only the one-to-one pair you recognize; nothing is merged or deleted.</p>
+      <ul className="mt-1 divide-y divide-[var(--border-primary)]">{recovery.transactionReview.map(t => <li key={t.id} className="py-1 text-xs">
+        <span className="font-semibold">{t.accountLabel}</span> · {t.date} · {t.name} · {usd(t.amountMinor)} · evidence {t.sourceRef} → {t.replacementRef}
+        <button type="button" className={`${btn} ml-2`} disabled={busy} onClick={() => void onConfirmTransaction(recovery.id, t.id)}>Confirm this pair</button>
+      </li>)}</ul>
+    </div>}
+    <div className="mt-2 flex flex-wrap gap-2">
+      {recovery.replacementItemId && allAccountsConfirmed && !['ready', 'activated'].includes(recovery.state) && <button type="button" className={btn} disabled={busy} data-testid="bank-history-sync" onClick={() => void onSync(recovery.replacementItemId!).then(() => onReconcile(recovery.id))}>Sync and verify older history</button>}
+      {balancesEnabled && recovery.replacementItemId && recovery.state !== 'activated' && <button type="button" className={btn} disabled={busy} data-testid="bank-history-balances" onClick={() => void onRefreshBalances(recovery.replacementItemId!).then(() => onReconcile(recovery.id))}>Refresh replacement balances</button>}
+      {recovery.replacementItemId && recovery.state === 'transaction_review' && <button type="button" className={btn} disabled={busy} onClick={() => void onReconcile(recovery.id)}>Recheck overlap</button>}
+      {recovery.state === 'ready' && <button type="button" className={btn} disabled={busy} data-testid="bank-history-activate" onClick={() => {
+        if (window.confirm('Activate the verified replacement mappings? The original connection and all of its evidence will be retained. It will not be disconnected.')) void onActivate(recovery.id)
+      }}>Activate recovered history</button>}
+    </div>
+  </div>
+}
+
 /**
  * Minimal bank connection surface (Sandbox or Production, per server configuration). It renders nothing when the caller cannot manage bank connections or the feature is
  * not configured. Connecting a bank does not change any balance, project, obligation, debt or Outlook number.
  */
 export default function BankConnectionCard() {
   const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked } = useBankConnection()
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked,
+    historyRecoveryEnabled, recoveries, recoverHistory, confirmRecoveryAccount, confirmRecoveryTransaction, reconcileRecovery, activateRecovery } = useBankConnection()
   if (load !== 'ready') return null
   // Only Items of THIS environment are active here. An Item of the other environment (e.g. the earlier Sandbox test) is kept, shown for clarity, and has no actions.
   const here = connections.filter(c => (c.environment ?? 'sandbox') === (environment ?? 'sandbox'))
-  const active = here.filter(c => c.status !== 'disconnected')
+  const hiddenReplacementIds = new Set(recoveries.filter(r => r.state !== 'activated').map(r => r.replacementItemId).filter((v): v is string => !!v))
+  const active = here.filter(c => c.status !== 'disconnected' && !hiddenReplacementIds.has(c.id))
   const otherEnvironment = connections.filter(c => (c.environment ?? 'sandbox') !== (environment ?? 'sandbox') && c.status !== 'disconnected')
   return <section data-testid="bank-connection-card" aria-label="Bank connection" className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-card)] p-4 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -197,8 +257,12 @@ export default function BankConnectionCard() {
           {(c.status === 'login_required' || c.status === 'error') && <button type="button" className={btn} disabled={busy} onClick={() => void reconnect(c.id)}>Reconnect</button>}
           {accountAdditionsEnabled && c.status === 'healthy' && <button type="button" className={btn} disabled={busy} onClick={() => void addAccounts(c.id)} data-testid="bank-add-accounts">Add accounts at this bank</button>}
           {accountAdditionsEnabled && c.status === 'healthy' && <button type="button" className={btn} disabled={busy} onClick={() => void reviewSharedAccounts(c.id)} data-testid="bank-review-shared">Review shared accounts</button>}
+          {historyRecoveryEnabled && environment === 'production' && c.status === 'healthy' && !recoveries.some(r => r.sourceItemId === c.id && !['activated', 'cancelled'].includes(r.state)) && <button type="button" className={btn} disabled={busy} onClick={() => {
+            if (window.confirm('Recover older bank history by authorizing Wells Fargo again? This requests up to 730 days, may affect Plaid billing, and will not remove the current connection.')) void recoverHistory(c.id)
+          }} data-testid="bank-history-start">Recover older bank history</button>}
           <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Disconnect this bank? Your history and records are kept.')) void disconnect(c.id) }}>Disconnect</button>
         </div>
+        {recoveries.filter(r => r.sourceItemId === c.id && r.state !== 'cancelled').map(r => <HistoryRecoveryPanel key={r.id} recovery={r} accounts={accounts} busy={busy} balancesEnabled={balancesEnabled} onConfirmAccount={confirmRecoveryAccount} onConfirmTransaction={confirmRecoveryTransaction} onSync={syncNow} onRefreshBalances={refreshBalancesNow} onReconcile={reconcileRecovery} onActivate={activateRecovery} />)}
         {addPreview?.itemId === c.id && <AddAccountsPreview preview={addPreview} busy={busy} onSave={saveNewAccounts} onClose={dismissPreview} />}
         <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} onDiscard={discardBlocked} />
         {balancesEnabled && c.status !== 'disconnected' && <BalancesSection connectionId={c.id} balances={balances} busy={busy} onRefresh={refreshBalancesNow} />}

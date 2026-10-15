@@ -81,7 +81,7 @@ describe('BANK-3 provider account discovery', () => {
   })
   it('the Plaid adapter returns only allowlisted account fields and never a balance (raw response discarded)', async () => {
     const api = { accountsGet: async () => ({ data: { accounts: [{ account_id: 'acc-1', name: 'N', official_name: null, mask: '0000', type: 'depository', subtype: 'checking', balances: { current: 9999, available: 8888, iso_currency_code: 'USD' }, persistent_account_id: 'secret-ish' }], item: { item_id: 'i' }, request_id: 'r' } }) }
-    const out = await createPlaidSdkPort({ environment: 'sandbox', clientId: 'c', secret: 's', clientName: 'x', language: 'en', countryCodes: ['US'], products: ['transactions'], transactionsDaysRequested: 90 }, api as never).getAccounts(ACCESS)
+    const out = await createPlaidSdkPort({ environment: 'sandbox', clientId: 'c', secret: 's', clientName: 'x', language: 'en', countryCodes: ['US'], products: ['transactions'], transactionsDaysRequested: 730 }, api as never).getAccounts(ACCESS)
     expect(out).toEqual([{ accountId: 'acc-1', name: 'N', officialName: null, mask: '0000', type: 'depository', subtype: 'checking', currency: 'USD' }])
     expect(JSON.stringify(out)).not.toMatch(/9999|8888|persistent|request/)
   })

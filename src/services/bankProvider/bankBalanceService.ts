@@ -32,6 +32,8 @@ export interface BalanceReadDeps {
   /** The environment this server is configured for. Items of any other environment are never read here (BANK-6P): a Sandbox test balance must never appear as real money. */
   environment?: string
   now?: () => number
+  historyRecoveryEnabled?: boolean
+  recovery?: { excludedBalanceAccountIds(organizationId: string, environment: 'sandbox' | 'production'): Promise<string[]> }
 }
 const clock = (d: { now?: () => number }) => (d.now ? d.now() : Date.now())
 
@@ -125,11 +127,16 @@ export async function getBalances(deps: BalanceReadDeps, actor: BankActor): Prom
   assertAuthority(actor)
   if (deps.balancesEnabled !== true) return { accounts: [], enabled: false }
   const org = actor.organizationId
-  const [all, mappings, cash] = await Promise.all([deps.accounts.listAllProviderAccounts(org), deps.accounts.listActiveMappings(org), deps.accounts.listCashAccounts(org)])
+  const environment = deps.environment === 'production' ? 'production' as const : 'sandbox' as const
+  const [all, mappings, cash, excluded] = await Promise.all([
+    deps.accounts.listAllProviderAccounts(org), deps.accounts.listActiveMappings(org), deps.accounts.listCashAccounts(org),
+    deps.historyRecoveryEnabled === true && deps.recovery ? deps.recovery.excludedBalanceAccountIds(org, environment) : Promise.resolve([]),
+  ])
   const ownerOf = new Map(cash.map(c => [c.id, c.ownershipContext === 'personal' ? 'personal' as const : c.ownershipContext === 'business' ? 'business' as const : null]))
   // BANK-6P: only Items of THIS server's environment. (An undefined environment applies no filter: unit-test fakes only; the handler always sets it.)
   const env = deps.environment === undefined ? null : deps.environment === 'production' ? 'production' : 'sandbox'
-  const live = all.filter(a => a.status === 'active' && a.itemStatus !== 'disconnected' && (env === null || (a.itemEnvironment ?? 'sandbox') === env))
+  const hidden = new Set(excluded)
+  const live = all.filter(a => !hidden.has(a.id) && a.status === 'active' && a.itemStatus !== 'disconnected' && (env === null || (a.itemEnvironment ?? 'sandbox') === env))
   const latest = await deps.balances.latestSnapshots(org, live.map(a => a.id))
   const mapped = new Map(mappings.map(m => [m.providerAccountRef, m.financialAccountId]))
   const now = clock(deps)

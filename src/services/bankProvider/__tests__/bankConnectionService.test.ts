@@ -369,11 +369,11 @@ describe('Plaid SDK adapter (no network)', () => {
   }
   const axiosError = (code: string, type: string, status = 400) => Object.assign(new Error('axios secret-detail ' + SECRET_ACCESS), { response: { status, data: { error_code: code, error_type: type, error_message: 'detail ' + SECRET_ACCESS } } })
 
-  it('initializes Transactions at Link via products=[transactions] with days_requested=90; no consent-only field, no other product, no webhook', async () => {
+  it('initializes Transactions at Link via products=[transactions] with days_requested=730; no consent-only field, no other product, no webhook', async () => {
     const { port, seen } = make()
     await port.createLinkToken({ clientUserId: 'org.user' })
     const req = seen.linkTokenCreate[0] as Record<string, any>
-    expect(req).toMatchObject({ client_name: 'Power On Hub', country_codes: ['US'], language: 'en', products: ['transactions'], transactions: { days_requested: 90 }, user: { client_user_id: 'org.user' } })
+    expect(req).toMatchObject({ client_name: 'Power On Hub', country_codes: ['US'], language: 'en', products: ['transactions'], transactions: { days_requested: 730 }, user: { client_user_id: 'org.user' } })
     expect(req.products).toEqual(['transactions'])
     expect(req.additional_consented_products).toBeUndefined(); expect(req.required_if_supported_products).toBeUndefined(); expect(req.optional_products).toBeUndefined()
     expect(req.access_token).toBeUndefined(); expect(req.webhook).toBeUndefined(); expect(req.redirect_uri).toBeUndefined()
