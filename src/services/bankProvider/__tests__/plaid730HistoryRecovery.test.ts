@@ -98,7 +98,9 @@ describe('PLAID-730 controlled history recovery', () => {
   it('the reviewed SQL isolates mappings, uses conservative overlap, copies decisions, and retains both Items', () => {
     const sql = readFileSync('docs/plaid730/history-recovery-proposal.sql', 'utf8')
     expect(sql).toContain("replacement accounts stay unmapped")
-    expect(sql).toContain("provider_transaction_id','confirmed")
+    // Provider-id matches auto-confirm ONLY when unique 1:1 on both sides; duplicates -> review.
+    expect(sql).toContain("new_id,'provider_transaction_id',")
+    expect(sql).toMatch(/'provider_transaction_id',\s*\n\s*CASE WHEN old_candidates=1 AND new_candidates=1 THEN 'confirmed' ELSE 'review' END/)
     expect(sql).toContain('unique_full_provider_facts')
     expect(sql).toContain('old_candidates=1 AND new_candidates=1')
     expect(sql).toContain('history_recovery_source_interpretation')

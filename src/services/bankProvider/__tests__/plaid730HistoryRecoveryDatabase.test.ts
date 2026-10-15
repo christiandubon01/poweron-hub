@@ -232,4 +232,40 @@ describe.runIf(!!PGlite)('PLAID-730 recovery database contract (PGlite)', () => 
     expect((await rows(db, `SELECT count(*)::int n FROM public.financial_provider_account_mappings WHERE provider_account_ref=ANY($1::uuid[]) AND status='active'`,
       [Object.values(world.replacementAccounts)]))[0].n).toBe(0)
   })
+
+  it('auto-confirms a provider-id match only as a guarded 1:1, and the schema keeps either side from becoming ambiguous', async () => {
+    const world = await setupRecovery()
+    // A replacement row that carries the SOURCE business tx's provider id -> a genuine cross-item
+    // provider-id match on the paired business account. Distinct amount so ONLY the provider id
+    // (not full facts) can match it.
+    const sourceBusinessProviderId = `old-${world.sequence}-0`
+    await db.query(`INSERT INTO public.financial_provider_transactions(
+      organization_id,provider_item_ref,provider_account_ref,provider_transaction_id,pending,provider_amount,provider_amount_minor,currency,transaction_date,authorized_date,name,merchant_name)
+      VALUES($1,$2,$3,$4,false,5.55,555,'USD','2026-01-01','2026-01-01','PROVIDER ID MATCH','PROVIDER ID MATCH')`,
+      [ORG, world.replacement, world.replacementAccounts.business, sourceBusinessProviderId])
+
+    await expect(db.query(`SELECT public.financial_provider_history_recovery_reconcile($1,$2)`, [ORG, world.recovery.id]))
+      .resolves.toBeTruthy()
+
+    // The 1:1 provider-id match auto-confirms with the provider_transaction_id basis, and the
+    // guard never produced a second confirmed row for that source (no unique-index collision).
+    const matched = await rows(db, `SELECT status,match_basis FROM public.financial_provider_history_recovery_transactions
+      WHERE recovery_ref=$1 AND source_transaction_ref=$2 AND match_basis='provider_transaction_id'`,
+      [world.recovery.id, world.oldTransactions[0]])
+    expect(matched).toEqual([{ status: 'confirmed', match_basis: 'provider_transaction_id' }])
+
+    // No confirmed row ever shares a source ref — the partial unique index is never violated.
+    const dupeConfirmed = await rows(db, `SELECT source_transaction_ref FROM public.financial_provider_history_recovery_transactions
+      WHERE recovery_ref=$1 AND status='confirmed' GROUP BY source_transaction_ref HAVING count(*) > 1`, [world.recovery.id])
+    expect(dupeConfirmed.length).toBe(0)
+
+    // A provider id is unique per item by schema, so a side can never present an ambiguous
+    // duplicate to the confirmer in the first place: a second replacement row with the same
+    // provider id in the same item is rejected.
+    await expect(db.query(`INSERT INTO public.financial_provider_transactions(
+      organization_id,provider_item_ref,provider_account_ref,provider_transaction_id,pending,provider_amount,provider_amount_minor,currency,transaction_date,name)
+      VALUES($1,$2,$3,$4,false,6.66,666,'USD','2026-01-01','DUPLICATE PROVIDER ID')`,
+      [ORG, world.replacement, world.replacementAccounts.business, sourceBusinessProviderId]))
+      .rejects.toThrow(/identity_unique|duplicate key/)
+  })
 })

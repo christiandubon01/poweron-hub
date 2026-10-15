@@ -389,16 +389,30 @@ BEGIN
               AND n.merchant_name IS NOT DISTINCT FROM o.merchant_name AND n.pending=o.pending))
       );
 
+  -- Provider-transaction-id matches auto-confirm ONLY when the id maps 1:1 across the paired
+  -- accounts: exactly one source row and one replacement row carry it. A provider id duplicated
+  -- on either side is ambiguous -> status 'review' (owner decides), never 'confirmed'. This both
+  -- keeps a duplicated id out of the partial unique indexes uq_fphrt_confirmed_source/replacement
+  -- (which would otherwise raise a collision and abort the whole reconcile) and prevents an
+  -- ambiguous id from being silently auto-linked.
+  WITH provider_id_pairs AS (
+    SELECT o.id old_id,n.id new_id,
+      count(*) OVER(PARTITION BY o.id) old_candidates,
+      count(*) OVER(PARTITION BY n.id) new_candidates
+    FROM public.financial_provider_history_recovery_accounts a
+    JOIN public.financial_provider_transactions o ON o.provider_account_ref=a.source_account_ref AND o.organization_id=a.organization_id
+    JOIN public.financial_provider_transactions n ON n.provider_account_ref=a.replacement_account_ref AND n.organization_id=a.organization_id AND n.provider_transaction_id=o.provider_transaction_id
+    WHERE a.recovery_ref=r.id AND a.status='confirmed' AND o.removed_at IS NULL AND n.removed_at IS NULL
+      AND o.provider_transaction_id IS NOT NULL AND n.provider_transaction_id IS NOT NULL
+      AND NOT EXISTS(SELECT 1 FROM public.financial_provider_history_recovery_transactions x
+        WHERE x.recovery_ref=r.id AND x.status='confirmed'
+          AND (x.source_transaction_ref=o.id OR x.replacement_transaction_ref=n.id))
+  )
   INSERT INTO public.financial_provider_history_recovery_transactions(organization_id,recovery_ref,source_transaction_ref,replacement_transaction_ref,match_basis,status)
-  SELECT p_organization_id,r.id,o.id,n.id,'provider_transaction_id','confirmed'
-  FROM public.financial_provider_history_recovery_accounts a
-  JOIN public.financial_provider_transactions o ON o.provider_account_ref=a.source_account_ref AND o.organization_id=a.organization_id
-  JOIN public.financial_provider_transactions n ON n.provider_account_ref=a.replacement_account_ref AND n.organization_id=a.organization_id AND n.provider_transaction_id=o.provider_transaction_id
-  WHERE a.recovery_ref=r.id AND a.status='confirmed' AND o.removed_at IS NULL AND n.removed_at IS NULL
-    AND NOT EXISTS(SELECT 1 FROM public.financial_provider_history_recovery_transactions x
-      WHERE x.recovery_ref=r.id AND x.status='confirmed'
-        AND (x.source_transaction_ref=o.id OR x.replacement_transaction_ref=n.id))
-  ORDER BY o.id,n.id
+  SELECT p_organization_id,r.id,old_id,new_id,'provider_transaction_id',
+    CASE WHEN old_candidates=1 AND new_candidates=1 THEN 'confirmed' ELSE 'review' END
+  FROM provider_id_pairs
+  ORDER BY old_id,new_id
   ON CONFLICT(recovery_ref,source_transaction_ref,replacement_transaction_ref) DO UPDATE SET
     match_basis=excluded.match_basis,status=excluded.status,invalidated_at=NULL,invalidation_reason=NULL
   WHERE financial_provider_history_recovery_transactions.invalidated_at IS NOT NULL;
