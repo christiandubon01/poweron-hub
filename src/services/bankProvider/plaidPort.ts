@@ -34,7 +34,11 @@ export class ProviderResponseError extends Error {
 
 export interface LinkTokenResult { linkToken: string; expiration: string }
 export interface ExchangeResult { accessToken: string; itemId: string }
-export interface ItemSummary { itemId: string; institutionId: string | null; hasError: boolean }
+export interface ItemSummary {
+  itemId: string; institutionId: string | null; hasError: boolean
+  /** PLAID-2A: the webhook URL registered on the Item at Plaid (null = none). Read only by the one-time registration check. */
+  webhook?: string | null
+}
 
 /**
  * BANK-4: the ONLY transaction fields that leave this adapter (explicitly picked, never spread). Everything else Plaid returns
@@ -99,6 +103,8 @@ export interface BankPlaidPort {
   createLinkToken(input: { clientUserId: string; accessToken?: string; accountSelection?: boolean }): Promise<LinkTokenResult>
   exchangePublicToken(publicToken: string): Promise<ExchangeResult>
   getItem(accessToken: string): Promise<ItemSummary>
+  /** PLAID-2A: /item/webhook/update. Points an EXISTING Item at the webhook URL without reconnecting it. Never part of the automatic path. */
+  updateItemWebhook?(accessToken: string, webhookUrl: string): Promise<void>
   getInstitutionName(institutionId: string): Promise<string | null>
   /** /accounts/get: the accounts at the Item (free; not tied to any product). Returns an allowlisted shape, never the raw response or any balance. */
   getAccounts(accessToken: string): Promise<ProviderAccountSummary[]>
@@ -147,7 +153,10 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
     },
     async getItem(accessToken) {
       const { data } = await call(() => api.itemGet({ access_token: accessToken }))
-      return { itemId: data.item.item_id, institutionId: data.item.institution_id ?? null, hasError: !!data.item.error }
+      return { itemId: data.item.item_id, institutionId: data.item.institution_id ?? null, hasError: !!data.item.error, webhook: typeof data.item.webhook === 'string' ? data.item.webhook : null }
+    },
+    async updateItemWebhook(accessToken, webhookUrl) {
+      await call(() => api.itemWebhookUpdate({ access_token: accessToken, webhook: webhookUrl }))
     },
     async getInstitutionName(institutionId) {
       try {

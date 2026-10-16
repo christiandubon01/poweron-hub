@@ -52,7 +52,7 @@ describe('BankConnectionCard (BANK-2)', () => {
     await mount({ 'plaid-connection-status': { body: { environment: 'sandbox', connected: true, connections: [conn({ status: 'login_required' })] } } })
     const row = host.querySelector('[data-testid="bank-connection-row"]')!
     expect(row.textContent).toMatch(/Sign-in needed/)
-    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Reconnect', 'Disconnect', 'Sync transactions', 'Find bank accounts'])
+    expect([...row.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Sign in to First Platypus Bank again', 'Disconnect', 'Sync transactions', 'Find bank accounts'])
     expect(host.innerHTML).not.toMatch(/access-|v1:|public-|link-sandbox/)
   })
 
@@ -218,7 +218,7 @@ describe('BankConnectionCard (BANK-2)', () => {
       await flush()
       const row = host.querySelector('[data-testid="bank-connection-row"]')!
       expect(row.getAttribute('data-status')).toBe('login_required'); expect(row.textContent).toMatch(/Sign-in needed/)
-      expect([...row.querySelectorAll('button')].map(b => b.textContent)).toContain('Reconnect')
+      expect([...row.querySelectorAll('button')].map(b => b.textContent)).toContain('Sign in to First Platypus Bank again')
       expect(host.querySelector('[role="alert"]')!.textContent).toBe('The bank needs you to sign in again. Use Reconnect.')
       expect(host.textContent).not.toMatch(/ITEM_LOGIN_REQUIRED|ITEM_ERROR/)
       expect(host.querySelector('[data-testid="bank-sync-state"]')!.textContent).toMatch(/Sign-in needed/)

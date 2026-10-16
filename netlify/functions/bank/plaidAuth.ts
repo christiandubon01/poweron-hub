@@ -130,9 +130,12 @@ export async function resolveBankContext(event, overrides = {}) {
     deps: { plaid: (overrides.plaidPort ?? createPlaidSdkPort)(config), repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), accounts: (overrides.accountRepo ?? createBankAccountRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc, { auditEnabled: syncAuditEnabled() }), key, environment: config.environment, log: safeLog,
       // PLAID-1A: server configuration only, never a request value. Off unless exactly "true".
       accountAdditionsEnabled: (process.env.PLAID_ACCOUNT_ADDITIONS_ENABLED ?? '').trim() === 'true',
+      // PLAID-2A: used only by the one-time webhook registration on an existing Item.
+      webhookUrl: config.webhookUrl,
       // PLAID-1B: while background sync is on, every reader and claimer uses the long background lease.
       backgroundSyncEnabled: backgroundSyncEnabled(), syncLeaseMs: backgroundSyncEnabled() ? BACKGROUND_SYNC_LEASE_MS : SYNC_LEASE_MS,
       // PLAID-1C: resumable (Netlify Free) sync; its tables exist only after the reviewed SQL, so it stays unused until switched on.
+      autoSyncEnabled: (process.env.PLAID_AUTO_SYNC_ENABLED ?? '').trim() === 'true',
       resumableSyncEnabled: resumableSyncEnabled(), staging: (overrides.stagingRepo ?? createSyncStagingRepo)(svc),
       // PLAID-2A: pending-to-posted decision continuity; its SQL is uninstalled, so it stays unused until the owner switches it on.
       pendingContinuityEnabled: pendingContinuityEnabled(), continuity: (overrides.continuityRepo ?? createPendingContinuityRepo)(svc) },

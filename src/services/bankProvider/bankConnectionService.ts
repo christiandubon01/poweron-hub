@@ -69,6 +69,9 @@ export interface BankConnectionRepo {
   listLiveInstitutions(organizationId: string): Promise<Array<{ id: string; institutionId: string | null; environment: PlaidEnvironmentName; status: BankConnectionView['status'] }>>
   disconnectItem(organizationId: string, itemId: string): Promise<'disconnected' | 'already_disconnected'>
   markHealthy(organizationId: string, itemId: string): Promise<boolean>
+  /** PLAID-2A (automatic sync only, service role): one Item by id across organizations, and every healthy Item of an environment. */
+  findItemById?(itemId: string): Promise<{ id: string; organizationId: string; status: BankConnectionView['status']; environment: PlaidEnvironmentName; provider: string } | null>
+  listSyncableItems?(environment: PlaidEnvironmentName): Promise<Array<{ id: string; organizationId: string }>>
 }
 
 /**
@@ -88,6 +91,8 @@ export interface BankConnectionDeps {
    * mode with Account Select, and saving newly shared accounts, are refused until the owner enables it after validation.
    */
   accountAdditionsEnabled?: boolean
+  /** PLAID-2A: the configured webhook URL (PLAID_WEBHOOK_URL), used only by the one-time registration on an existing Item. */
+  webhookUrl?: string | null
   /** Receives only the safe fields above. */
   log?: (event: SafeLogEvent) => void
 }
@@ -313,4 +318,30 @@ export async function completeUpdateMode(deps: BankConnectionDeps, actor: BankAc
   await deps.repo.markHealthy(actor.organizationId, item.id)
   note(deps, { event: 'bank.update_mode.completed', organizationId: actor.organizationId, itemId: item.id })
   return { id: item.id, healthy: true }
+}
+
+/**
+ * PLAID-2A: ONE-TIME owner action. Points an EXISTING production Item at the configured webhook URL (/item/webhook/update) so Plaid can nudge Cash OS
+ * without reconnecting: same Item, same access token, same transaction ids, so every review stays attached. Needs the typed confirmation REGISTER
+ * and a configured PLAID_WEBHOOK_URL. If the Item already points at that URL nothing is changed.
+ */
+export async function registerItemWebhook(deps: BankConnectionDeps, actor: BankActor, input: { itemId?: unknown; confirm?: unknown }) {
+  assertAuthority(actor)
+  if (input.confirm !== 'REGISTER') throw new BankConnectionError('invalid_request', 400, 'Type REGISTER to confirm. Nothing was changed.')
+  const url = deps.webhookUrl
+  if (!url) throw new BankConnectionError('feature_disabled', 409, 'The webhook address is not configured on this server yet. Nothing was changed.')
+  if (!deps.plaid.updateItemWebhook) throw new BankConnectionError('feature_disabled', 409, 'Webhook registration is not available. Nothing was changed.')
+  const { item, envelope } = await loadCredential(deps, actor, input.itemId as string)
+  if (item.environment !== 'production') throw new BankConnectionError('conflict', 409, 'Automatic updates are only for Production bank connections.')
+  if (!envelope || item.status === 'disconnected') throw new BankConnectionError('conflict', 409, 'This bank connection is disconnected.')
+  const token = decryptFor(deps, actor, item, envelope)
+  try {
+    const info = await deps.plaid.getItem(token)
+    if (info.webhook === url) return { id: item.id, registered: true, changed: false }
+    await deps.plaid.updateItemWebhook(token, url)
+  } catch {
+    throw new BankConnectionError('plaid_unavailable', 502, 'The bank connection service is unavailable. Nothing was changed; try again shortly.')
+  }
+  note(deps, { event: 'bank.webhook.registered', organizationId: actor.organizationId, itemId: item.id })
+  return { id: item.id, registered: true, changed: true }
 }

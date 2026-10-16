@@ -395,7 +395,7 @@ describe('Plaid SDK adapter (no network)', () => {
     const { port } = make()
     expect(await port.createLinkToken({ clientUserId: 'x' })).toEqual({ linkToken: 'link-x', expiration: 'soon' })
     expect(await port.exchangePublicToken(PUBLIC)).toEqual({ accessToken: SECRET_ACCESS, itemId: 'item-9' })
-    expect(await port.getItem(SECRET_ACCESS)).toEqual({ itemId: 'item-9', institutionId: 'ins_1', hasError: false })
+    expect(await port.getItem(SECRET_ACCESS)).toEqual({ itemId: 'item-9', institutionId: 'ins_1', hasError: false, webhook: null }) // PLAID-2A adds the registered webhook address (null when none)
     expect(await port.getInstitutionName('ins_1')).toBe('Test Bank')
   })
   it('reduces any Plaid failure to a sanitized code: no message, no credentials', async () => {
@@ -415,6 +415,6 @@ describe('Plaid SDK adapter (no network)', () => {
     expect(await make({ institutionsGetById: async () => { throw axiosError('INSTITUTION_NOT_FOUND', 'INVALID_INPUT') } }).port.getInstitutionName('ins_x')).toBeNull()
   })
   it('exposes no /transactions/get, refresh, real-time balance or sandbox-shortcut method (BANK-3 added /accounts/get; BANK-4 added /transactions/sync and webhook-key lookup; PLAID-2E reads cached balances from /accounts/get)', () => {
-    expect(Object.keys(make().port).sort()).toEqual(['createLinkToken', 'exchangePublicToken', 'getAccountBalances', 'getAccounts', 'getInstitutionName', 'getItem', 'getWebhookVerificationKey', 'removeItem', 'syncTransactions'])
+    expect(Object.keys(make().port).sort()).toEqual(['createLinkToken', 'exchangePublicToken', 'getAccountBalances', 'getAccounts', 'getInstitutionName', 'getItem', 'getWebhookVerificationKey', 'removeItem', 'syncTransactions', 'updateItemWebhook']) // PLAID-2A: /item/webhook/update, only ever called by the one-time owner registration
   })
 })

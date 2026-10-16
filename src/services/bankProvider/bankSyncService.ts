@@ -88,9 +88,18 @@ export interface BankSyncRepo {
   /** Marks removed_at (never deletes). Returns how many existing, not-yet-removed rows were marked. */
   markRemoved(organizationId: string, itemId: string, providerTransactionIds: string[]): Promise<number>
   countEvidence(organizationId: string, itemId: string): Promise<EvidenceCounts>
-  recordWebhook(input: { organizationId: string; itemId: string; eventKey: string; webhookType: string; webhookCode: string }): Promise<'recorded' | 'duplicate'>
+  /** `processed: true` (PLAID-2A ITEM events already acted on) stores the event as processed, so it never counts as a pending nudge or notice. */
+  recordWebhook(input: { organizationId: string; itemId: string; eventKey: string; webhookType: string; webhookCode: string; processed?: boolean }): Promise<'recorded' | 'duplicate'>
+  /** Only TRANSACTIONS events are "updates available" nudges (PLAID-2A: ITEM events are kept apart). */
   hasPendingNudge(organizationId: string, itemId: string): Promise<boolean>
   markNudgesProcessed(organizationId: string, itemId: string, receivedBeforeIso: string): Promise<void>
+  /** PLAID-2A: posted/pending evidence counts and newest transaction date per provider account of the Item (no text, ids or amounts). */
+  countEvidenceByAccount?(organizationId: string, itemId: string): Promise<Array<{ providerAccountRef: string; posted: number; pending: number; newestDate: string | null }>>
+  /** PLAID-2A: when a verified webhook last arrived for the Item (any type); proof the webhook is registered. */
+  lastWebhookAt?(organizationId: string, itemId: string): Promise<string | null>
+  /** PLAID-2A: the newest unresolved PENDING_EXPIRATION / PENDING_DISCONNECT notice of the Item. */
+  openItemNotice?(organizationId: string, itemId: string): Promise<{ code: string; receivedAt: string } | null>
+  markItemNoticesProcessed?(organizationId: string, itemId: string): Promise<void>
 }
 export interface BankSyncDeps extends BankAccountDeps {
   sync: BankSyncRepo
@@ -101,6 +110,8 @@ export interface BankSyncDeps extends BankAccountDeps {
   backgroundSyncEnabled?: boolean
   /** PLAID-1C server switch (PLAID_RESUMABLE_SYNC_ENABLED === 'true'); requires the PLAID-1C SQL. Off by default. */
   resumableSyncEnabled?: boolean
+  /** PLAID-2A server switch (PLAID_AUTO_SYNC_ENABLED === 'true'): only reported to the card so its wording is true. */
+  autoSyncEnabled?: boolean
   /** PLAID-1C: progress of an open resumable run (never a cursor). Only read while resumable sync is enabled. */
   staging?: {
     getProgress(organizationId: string, itemId: string): Promise<{ status: 'fetching' | 'fetched'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null>
@@ -195,9 +206,13 @@ export async function getSyncStatus(deps: BankSyncDeps, actor: BankActor) {
     out.push({ connectionId: item.id, state: ui, lastSyncedAt: state?.lastSuccessfulAt ?? null, lastAttemptAt: state?.completedAt ?? state?.startedAt ?? null, counts, updatesAvailable,
       lastErrorCode, recovery, recoveryText: RECOVERY_TEXT[recovery],
       blocked: blockedRun ? { runId: blockedRun.runId, reason: blockedRun.reason, stagedRows: blockedRun.stagedRows, pagesStaged: blockedRun.pagesStaged, restarts: blockedRun.restarts, applyFailures: blockedRun.applyFailures, startedAt: blockedRun.startedAt } : null,
-      progress: progress ? { phase: progress.status === 'fetched' ? 'ready_to_apply' : 'fetching', pagesStaged: progress.pagesStaged, restarts: progress.restarts, startedAt: progress.startedAt, updatedAt: progress.updatedAt } : null })
+      progress: progress ? { phase: progress.status === 'fetched' ? 'ready_to_apply' : 'fetching', pagesStaged: progress.pagesStaged, restarts: progress.restarts, startedAt: progress.startedAt, updatedAt: progress.updatedAt } : null,
+      // PLAID-2A, all best effort and counts/dates only: per-account freshness, whether a bank webhook was ever received, and a sign-in-soon notice.
+      accounts: (await deps.sync.countEvidenceByAccount?.(actor.organizationId, item.id).catch(() => null))?.map(a => ({ id: a.providerAccountRef, posted: a.posted, pending: a.pending, newestDate: a.newestDate })) ?? [],
+      webhookLastAt: (await deps.sync.lastWebhookAt?.(actor.organizationId, item.id).catch(() => null)) ?? null,
+      itemNotice: (await deps.sync.openItemNotice?.(actor.organizationId, item.id).catch(() => null)) ?? null })
   }
-  return { syncs: out, backgroundSyncEnabled: deps.backgroundSyncEnabled === true, resumableSyncEnabled: deps.resumableSyncEnabled === true }
+  return { syncs: out, backgroundSyncEnabled: deps.backgroundSyncEnabled === true, resumableSyncEnabled: deps.resumableSyncEnabled === true, autoSyncEnabled: deps.autoSyncEnabled === true }
 }
 
 const unavailable = () => new BankConnectionError('plaid_unavailable', 502, 'The bank connection service is unavailable. Try again shortly.')
@@ -399,4 +414,58 @@ export async function recordVerifiedWebhook(deps: Pick<BankSyncDeps, 'repo' | 's
   const outcome = await deps.sync.recordWebhook({ organizationId: owner.organizationId, itemId: owner.id, eventKey: input.bodyHash, webhookType: 'TRANSACTIONS', webhookCode: WEBHOOK_CODE })
   note(deps as BankSyncDeps, { event: 'bank.webhook.received', organizationId: owner.organizationId, itemId: owner.id, outcome })
   return { outcome }
+}
+
+/** PLAID-2A: the ITEM webhook codes Cash OS acts on. Everything else is acknowledged and ignored. */
+const ITEM_WEBHOOK_CODES = new Set(['ERROR', 'LOGIN_REPAIRED', 'PENDING_EXPIRATION', 'PENDING_DISCONNECT', 'USER_PERMISSION_REVOKED', 'USER_ACCOUNT_REVOKED'])
+export type WebhookAction = 'sync' | 'login_required' | 'notice' | 'repaired' | 'ignored'
+
+/**
+ * PLAID-2A: a verified webhook, resolved to an Item and acted on. Nothing automatic ever happens for anything but a PRODUCTION Item on a server configured
+ * for Production: a Sandbox Item's nudge is still stored exactly as before (harmless), but it never returns `sync`, and ITEM events change nothing for it.
+ * The webhook still never reads a transaction and never runs a sync itself: `sync` only tells the caller to start the background sync.
+ *   TRANSACTIONS/SYNC_UPDATES_AVAILABLE   record the nudge; action 'sync'
+ *   ITEM/ERROR (ITEM_LOGIN_REQUIRED), USER_PERMISSION_REVOKED, USER_ACCOUNT_REVOKED   Item -> login_required (the owner signs in again with update mode)
+ *   ITEM/PENDING_EXPIRATION, PENDING_DISCONNECT   a visible "sign in soon" notice; the Item keeps working, so its status is NOT changed
+ *   ITEM/LOGIN_REPAIRED   Item -> healthy, notices cleared
+ */
+export async function handleVerifiedWebhook(deps: Pick<BankSyncDeps, 'repo' | 'sync' | 'log'>, input: { webhookType: unknown; webhookCode: unknown; plaidItemId: unknown; errorCode?: unknown; bodyHash: string; serverEnvironment: string }): Promise<{ action: WebhookAction; organizationId?: string; itemId?: string }> {
+  const type = input.webhookType, code = input.webhookCode
+  const isSync = type === 'TRANSACTIONS' && code === WEBHOOK_CODE
+  const isItem = type === 'ITEM' && typeof code === 'string' && ITEM_WEBHOOK_CODES.has(code)
+  if ((!isSync && !isItem) || typeof input.plaidItemId !== 'string' || !input.plaidItemId) return { action: 'ignored' }
+  const owner = await deps.repo.findItemOwner('plaid', input.plaidItemId)
+  if (!owner) return { action: 'ignored' } // unknown Item: acknowledge without leaking anything
+  const item = await deps.repo.getItem(owner.organizationId, owner.id)
+  if (!item) return { action: 'ignored' }
+  const production = item.status !== 'disconnected' && item.environment === 'production' && input.serverEnvironment === 'production'
+  const org = owner.organizationId
+  const ref = { organizationId: org, itemId: owner.id }
+  if (isSync) {
+    const outcome = await deps.sync.recordWebhook({ organizationId: org, itemId: owner.id, eventKey: input.bodyHash, webhookType: 'TRANSACTIONS', webhookCode: WEBHOOK_CODE })
+    note(deps as BankSyncDeps, { event: 'bank.webhook.received', ...ref, outcome })
+    return production ? { action: 'sync', ...ref } : { action: 'ignored', ...ref }
+  }
+  if (!production) return { action: 'ignored' }
+  const record = (processed: boolean) => deps.sync.recordWebhook({ organizationId: org, itemId: owner.id, eventKey: input.bodyHash, webhookType: 'ITEM', webhookCode: code as string, processed })
+  if (code === 'ERROR') {
+    if (input.errorCode !== 'ITEM_LOGIN_REQUIRED') return { action: 'ignored' }
+    await deps.sync.markLoginRequired(org, owner.id); await record(true)
+    note(deps as BankSyncDeps, { event: 'bank.webhook.item', ...ref, code: 'ITEM_LOGIN_REQUIRED', outcome: 'login_required' })
+    return { action: 'login_required', ...ref }
+  }
+  if (code === 'USER_PERMISSION_REVOKED' || code === 'USER_ACCOUNT_REVOKED') {
+    await deps.sync.markLoginRequired(org, owner.id); await record(true)
+    note(deps as BankSyncDeps, { event: 'bank.webhook.item', ...ref, code: code as string, outcome: 'login_required' })
+    return { action: 'login_required', ...ref }
+  }
+  if (code === 'LOGIN_REPAIRED') {
+    await deps.repo.markHealthy(org, owner.id)
+    await deps.sync.markItemNoticesProcessed?.(org, owner.id); await record(true)
+    note(deps as BankSyncDeps, { event: 'bank.webhook.item', ...ref, code: 'LOGIN_REPAIRED', outcome: 'healthy' })
+    return { action: 'repaired', ...ref }
+  }
+  await record(false) // PENDING_EXPIRATION / PENDING_DISCONNECT: stays open as a notice until sign-in is repaired
+  note(deps as BankSyncDeps, { event: 'bank.webhook.item', ...ref, code: code as string, outcome: 'notice' })
+  return { action: 'notice', ...ref }
 }

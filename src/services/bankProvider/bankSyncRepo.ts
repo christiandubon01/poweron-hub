@@ -124,17 +124,18 @@ export function createBankSyncRepo(svc: Svc, opts: { auditEnabled?: boolean } = 
       ])
       return { posted, pending, removed }
     },
-    async recordWebhook({ organizationId, itemId, eventKey, webhookType, webhookCode }) {
+    async recordWebhook({ organizationId, itemId, eventKey, webhookType, webhookCode, processed }) {
       const events = () => svc.from('financial_provider_webhook_events')
       const { data: existing, error } = await events().select('id, delivery_count').eq('organization_id', organizationId).eq('provider', 'plaid').eq('event_key', eventKey).maybeSingle()
       if (error) failed('record_webhook', error)
       if (existing) {
         // Same signed body again: count it and re-arm the nudge (a nudge is idempotent; it never creates evidence).
-        const { error: e2 } = await events().update({ delivery_count: (existing.delivery_count ?? 1) + 1, last_received_at: now(), processing_status: 'received', processed_at: null }).eq('id', existing.id).eq('organization_id', organizationId)
+        const rearm = processed === true ? {} : { processing_status: 'received', processed_at: null } // an already-handled ITEM event is only counted, never re-armed
+      const { error: e2 } = await events().update({ delivery_count: (existing.delivery_count ?? 1) + 1, last_received_at: now(), ...rearm }).eq('id', existing.id).eq('organization_id', organizationId)
         if (e2) failed('record_webhook', e2)
         return 'duplicate'
       }
-      const { error: e3 } = await events().insert({ organization_id: organizationId, provider_item_ref: itemId, provider: 'plaid', event_key: eventKey, webhook_type: webhookType, webhook_code: webhookCode, payload_hash: eventKey, processing_status: 'received' })
+      const { error: e3 } = await events().insert({ organization_id: organizationId, provider_item_ref: itemId, provider: 'plaid', event_key: eventKey, webhook_type: webhookType, webhook_code: webhookCode, payload_hash: eventKey, ...(processed === true ? { processing_status: 'processed', processed_at: now() } : { processing_status: 'received' }) })
       if (e3) {
         if (e3.code === '23505') return 'duplicate' // a concurrent delivery of the same body won the race
         failed('record_webhook', e3)
@@ -143,14 +144,43 @@ export function createBankSyncRepo(svc: Svc, opts: { auditEnabled?: boolean } = 
     },
     async hasPendingNudge(organizationId, itemId) {
       const { count, error } = await svc.from('financial_provider_webhook_events').select('id', { count: 'exact', head: true })
-        .eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('processing_status', 'received')
+        .eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('processing_status', 'received').eq('webhook_type', 'TRANSACTIONS')
       if (error) failed('has_pending_nudge', error)
       return (count ?? 0) > 0
     },
     async markNudgesProcessed(organizationId, itemId, receivedBeforeIso) {
       const { error } = await svc.from('financial_provider_webhook_events').update({ processing_status: 'processed', processed_at: now() })
-        .eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('processing_status', 'received').lte('last_received_at', receivedBeforeIso)
+        .eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('processing_status', 'received').eq('webhook_type', 'TRANSACTIONS').lte('last_received_at', receivedBeforeIso)
       if (error) failed('mark_nudges_processed', error)
+    },
+    async countEvidenceByAccount(organizationId, itemId) {
+      const { data: accts, error: ae } = await svc.from('financial_provider_accounts').select('id').eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('status', 'active')
+      if (ae) failed('count_by_account', ae)
+      const out = []
+      for (const a of accts ?? []) {
+        const base = () => svc.from('financial_provider_transactions').select('id', { count: 'exact', head: true }).eq('organization_id', organizationId).eq('provider_account_ref', a.id).is('removed_at', null)
+        const [posted, pending, newest] = await Promise.all([base().eq('pending', false), base().eq('pending', true),
+          svc.from('financial_provider_transactions').select('transaction_date').eq('organization_id', organizationId).eq('provider_account_ref', a.id).is('removed_at', null).order('transaction_date', { ascending: false }).limit(1)])
+        if (posted.error || pending.error || newest.error) failed('count_by_account', posted.error ?? pending.error ?? newest.error)
+        out.push({ providerAccountRef: a.id, posted: posted.count ?? 0, pending: pending.count ?? 0, newestDate: newest.data?.[0]?.transaction_date ?? null })
+      }
+      return out
+    },
+    async lastWebhookAt(organizationId, itemId) {
+      const { data, error } = await svc.from('financial_provider_webhook_events').select('last_received_at').eq('organization_id', organizationId).eq('provider_item_ref', itemId).order('last_received_at', { ascending: false }).limit(1)
+      if (error) failed('last_webhook_at', error)
+      return data?.[0]?.last_received_at ?? null
+    },
+    async openItemNotice(organizationId, itemId) {
+      const { data, error } = await svc.from('financial_provider_webhook_events').select('webhook_code, last_received_at').eq('organization_id', organizationId).eq('provider_item_ref', itemId)
+        .eq('webhook_type', 'ITEM').eq('processing_status', 'received').in('webhook_code', ['PENDING_EXPIRATION', 'PENDING_DISCONNECT']).gte('last_received_at', new Date(Date.now() - 14 * 86_400_000).toISOString()).order('last_received_at', { ascending: false }).limit(1)
+      if (error) failed('open_item_notice', error)
+      return data?.[0] ? { code: data[0].webhook_code, receivedAt: data[0].last_received_at } : null
+    },
+    async markItemNoticesProcessed(organizationId, itemId) {
+      const { error } = await svc.from('financial_provider_webhook_events').update({ processing_status: 'processed', processed_at: now() })
+        .eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('webhook_type', 'ITEM').eq('processing_status', 'received')
+      if (error) failed('mark_item_notices_processed', error)
     },
   }
 }

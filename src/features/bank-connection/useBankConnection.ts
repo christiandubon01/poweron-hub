@@ -51,6 +51,12 @@ export interface BankSyncSummary {
   progress?: { phase: 'fetching' | 'ready_to_apply'; pagesStaged: number; restarts: number; startedAt: string; updatedAt: string } | null
   /** PLAID-2H: an update waiting for owner review (counts only). */
   blocked?: { runId: string; reason: 'RUN_TOO_LARGE' | 'APPLY_FAILED_REPEATEDLY'; stagedRows: number; pagesStaged: number; restarts: number; applyFailures: number; startedAt: string } | null
+  /** PLAID-2A: per bank account, counts and the newest transaction date only (id = the bank account id used by the account list). */
+  accounts?: Array<{ id: string; posted: number; pending: number; newestDate: string | null }>
+  /** PLAID-2A: when the bank last sent this connection a verified update notice; null = never (automatic updates not confirmed yet). */
+  webhookLastAt?: string | null
+  /** PLAID-2A: the bank warned that sign-in will be needed soon (the connection still works). */
+  itemNotice?: { code: string; receivedAt: string } | null
 }
 /** PLAID-2E: one account's newest bank-reported balance, already separated into bank cash / card debt / unused credit (no provider id, no token). */
 export interface BankBalanceSummary {
@@ -106,6 +112,7 @@ export function useBankConnection() {
   const [addPreview, setAddPreview] = useState<AccountAdditionPreview | null>(null)
   const [backgroundSyncEnabled, setBackgroundSyncEnabled] = useState(false)
   const [resumableSyncEnabled, setResumableSyncEnabled] = useState(false)
+  const [autoSyncOn, setAutoSyncOn] = useState(false)
   const [syncProgress, setSyncProgress] = useState<string | null>(null)
   const [balancesEnabled, setBalancesEnabled] = useState(false)
   const [balances, setBalances] = useState<BankBalanceSummary[]>([])
@@ -137,6 +144,7 @@ export function useBankConnection() {
       setSyncs(Array.isArray(data.syncs) ? data.syncs : [])
       setBackgroundSyncEnabled(data.backgroundSyncEnabled === true)
       setResumableSyncEnabled(data.resumableSyncEnabled === true)
+      setAutoSyncOn(data.autoSyncEnabled === true)
       return Array.isArray(data.syncs) ? data.syncs as BankSyncSummary[] : []
     } catch { /* keep the last known status */ return null }
   }, [])
@@ -267,8 +275,9 @@ export function useBankConnection() {
     finally { await refresh(); await refreshSyncs(); setBusy(false) } // a sign-in-needed result changes the connection status: show Reconnect
   }, [discoverAccounts])
   /**
-   * Owner-requested only: never automatic. Stores bank evidence; changes no balance, ledger or report. PLAID-1B: when the server runs syncs in the
-   * background, the request is accepted at once (202) and the card follows the status until the run ends (at most the 16-minute lease).
+   * The manual "Sync again" press. (PLAID-2A: the server ALSO syncs on its own, when the bank reports new activity and every 6 hours; both use the same
+   * per-connection lock, so this can never overlap an automatic run.) Stores bank evidence; changes no balance, ledger or report. PLAID-1B: when the server
+   * runs syncs in the background, the request is accepted at once (202) and the card follows the status until the run ends (at most the 16-minute lease).
    */
   const syncNow = useCallback(async (itemId: string) => {
     setBusy(true); setMessage(null)
@@ -318,6 +327,14 @@ export function useBankConnection() {
     try { const out = await request('plaid-sync', { method: 'POST', body: { action: 'discard_blocked_run', itemId, runId, confirm: 'DISCARD' } }); if (typeof out?.next === 'string') setMessage(out.next) }
     catch (error) { setMessage((error as Error).message) } finally { await refreshSyncs(); setBusy(false) }
   }, [refreshSyncs])
+  /** PLAID-2A: the ONE-TIME owner action that points the existing connection at the bank-notice address (no reconnect, same history and reviews). */
+  const registerWebhook = useCallback(async (itemId: string) => {
+    setBusy(true); setMessage(null)
+    try {
+      const out = await request('plaid-sync', { method: 'POST', body: { action: 'register_webhook', itemId, confirm: 'REGISTER' } })
+      setMessage(out?.changed === false ? 'Automatic updates were already turned on for this connection.' : 'Automatic updates are turned on. The bank will now tell Cash OS when there is new activity.')
+    } catch (error) { setMessage((error as Error).message) } finally { await refreshSyncs(); setBusy(false) }
+  }, [refreshSyncs])
   const mapAccount = useCallback(async (providerAccountId: string, financialAccountId: string) => {
     setBusy(true); setMessage(null)
     try { await request('plaid-accounts', { method: 'POST', body: { action: 'map', providerAccountId, financialAccountId } }); await refreshAccounts() }
@@ -330,5 +347,5 @@ export function useBankConnection() {
   }, [refreshAccounts])
 
   return { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect, refresh,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked }
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked, registerWebhook, autoSyncOn }
 }

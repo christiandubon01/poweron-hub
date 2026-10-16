@@ -11,7 +11,7 @@
  */
 import { getSyncStatus, syncTransactions } from '../../../src/services/bankProvider/bankSyncService'
 import { discardBlockedRun, relinkPendingPosted, resumableSyncStep } from '../../../src/services/bankProvider/resumableSync'
-import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
+import { BankConnectionError, registerItemWebhook } from '../../../src/services/bankProvider/bankConnectionService'
 import { corsPreflight, errorResponse, jsonResponse, parseJsonBody, resolveBankContext } from './plaidAuth'
 
 export function buildHandler(overrides = {}) {
@@ -25,6 +25,7 @@ export function buildHandler(overrides = {}) {
       const body = parseJsonBody(event)
       if (body.action === 'sync_step') return jsonResponse(200, await resumableSyncStep(auth.deps, auth.actor, { itemId: body.itemId }))
       if (body.action === 'discard_blocked_run') return jsonResponse(200, await discardBlockedRun(auth.deps, auth.actor, { itemId: body.itemId, runId: body.runId, confirm: body.confirm }))
+      if (body.action === 'register_webhook') return jsonResponse(200, await registerItemWebhook(auth.deps, auth.actor, { itemId: body.itemId, confirm: body.confirm }))
       if (body.action === 'relink_pending') return jsonResponse(200, await relinkPendingPosted(auth.deps, auth.actor, { itemId: body.itemId }))
       if (body.action === 'sync' && auth.deps.resumableSyncEnabled) throw new BankConnectionError('conflict', 409, 'Syncs on this server run in resumable steps. Press Sync again from the bank card.')
       if (body.action === 'sync' && auth.deps.backgroundSyncEnabled) throw new BankConnectionError('conflict', 409, 'Syncs run in the background on this server. Use Sync again from the bank card.')

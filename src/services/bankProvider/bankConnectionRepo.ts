@@ -64,6 +64,18 @@ export function createBankConnectionRepo(svc: Svc): BankConnectionRepo {
       if (error) failed()
       return (data ?? []).map(toView)
     },
+    async findItemById(itemId) {
+      const { data, error } = await svc.from('financial_provider_items').select('id, organization_id, status, environment, provider').eq('id', itemId).maybeSingle()
+      if (error) failed()
+      return data ? { id: data.id, organizationId: data.organization_id, status: data.status, environment: data.environment === 'production' ? 'production' as const : 'sandbox' as const, provider: data.provider } : null
+    },
+    async listSyncableItems(environment) {
+      // PLAID-2A: every HEALTHY Item of this server's environment across all organizations (service role, no user session). Never-synced and oldest-synced first.
+      const { data, error } = await svc.from('financial_provider_items').select('id, organization_id').eq('provider', 'plaid').eq('status', 'healthy').eq('environment', environment)
+        .order('last_successful_sync_at', { ascending: true, nullsFirst: true }).limit(200)
+      if (error) failed()
+      return (data ?? []).map((r: any) => ({ id: r.id, organizationId: r.organization_id }))
+    },
     async getActiveCredential(organizationId, itemId) {
       const { data, error } = await svc.from('financial_provider_credentials').select('encrypted_access_token').eq('organization_id', organizationId).eq('provider_item_ref', itemId).eq('status', 'active').maybeSingle()
       if (error) failed()

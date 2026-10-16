@@ -11,9 +11,10 @@ import { loadPlaidConfig } from '../../../src/services/bankProvider/plaidConfig'
 import { createPlaidSdkPort } from '../../../src/services/bankProvider/plaidPort'
 import { createBankConnectionRepo } from '../../../src/services/bankProvider/bankConnectionRepo'
 import { createBankSyncRepo } from '../../../src/services/bankProvider/bankSyncRepo'
-import { recordVerifiedWebhook } from '../../../src/services/bankProvider/bankSyncService'
+import { handleVerifiedWebhook } from '../../../src/services/bankProvider/bankSyncService'
+import { autoSyncBaseUrl, autoSyncEnabled, kickOffItemSync } from '../../../src/services/bankProvider/autoSync'
 import { MAX_WEBHOOK_BYTES, createWebhookKeyCache, sha256Hex, verifyPlaidWebhook } from '../../../src/services/bankProvider/plaidWebhookVerify'
-import { CORS_HEADERS, jsonResponse, safeLog, serviceClient } from './plaidAuth'
+import { CORS_HEADERS, jsonResponse, resumableSyncEnabled, safeLog, serviceClient } from './plaidAuth'
 
 let keyCache = null // lazily created: bounded, TTL'd cache of Plaid's PUBLIC verification keys
 
@@ -36,7 +37,13 @@ export function buildHandler(overrides = {}) {
       const svc = (overrides.serviceClient ?? serviceClient)()
       if (!svc) return jsonResponse(500, { error: 'Server unavailable.' })
       const deps = { repo: (overrides.connectionRepo ?? createBankConnectionRepo)(svc), sync: (overrides.syncRepo ?? createBankSyncRepo)(svc), log: safeLog }
-      await recordVerifiedWebhook(deps, { webhookType: body?.webhook_type, webhookCode: body?.webhook_code, plaidItemId: body?.item_id, bodyHash: sha256Hex(raw) })
+      const handled = await handleVerifiedWebhook(deps, { webhookType: body?.webhook_type, webhookCode: body?.webhook_code, plaidItemId: body?.item_id, errorCode: body?.error?.error_code, bodyHash: sha256Hex(raw), serverEnvironment: config.environment })
+      // PLAID-2A: a verified "updates available" starts the background sync for THAT Item only. It is a kick-off: a failure here never fails the webhook,
+      // because the nudge is already stored and the 6-hour sweep picks it up.
+      if (handled.action === 'sync' && handled.itemId && autoSyncEnabled() && resumableSyncEnabled()) {
+        const kicked = await (overrides.kick ?? kickOffItemSync)({ baseUrl: autoSyncBaseUrl(), serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '', itemId: handled.itemId })
+        safeLog({ event: 'bank.webhook.autosync_kick', organizationId: handled.organizationId, itemId: handled.itemId, outcome: kicked })
+      }
       return { statusCode: 200, headers: CORS_HEADERS, body: JSON.stringify({ ok: true }) }
     } catch {
       safeLog({ event: 'bank.webhook.failed', code: 'persistence_failed' })

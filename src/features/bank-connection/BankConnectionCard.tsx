@@ -20,8 +20,10 @@ const bankLabel = (a: BankAccountSummary) => `${a.name ?? a.officialName ?? 'Ban
 const cashLabel = (c: CashAccountOption) => `${c.displayName} · ${TYPE_LABEL[c.accountType] ?? titleCase(c.accountType)} · ${c.ownershipContext === 'personal' ? 'Personal' : 'Business'}`
 
 /** One bank account row: shows the BANK side and the CASH OS side separately. Mapping is always an explicit owner choice. */
-function AccountRow({ account, cashAccounts, mappedElsewhere, busy, onMap, onUnmap }: {
+function AccountRow({ account, cashAccounts, mappedElsewhere, busy, onMap, onUnmap, stats }: {
   account: BankAccountSummary; cashAccounts: CashAccountOption[]; mappedElsewhere: Set<string>; busy: boolean
+  /** PLAID-2A: this account's freshness (connection's last successful sync, transaction counts, newest transaction date). */
+  stats?: { lastSyncedAt: string | null; posted: number; pending: number; newestDate: string | null }
   onMap: (providerAccountId: string, financialAccountId: string) => Promise<void>; onUnmap: (providerAccountId: string) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
@@ -32,6 +34,7 @@ function AccountRow({ account, cashAccounts, mappedElsewhere, busy, onMap, onUnm
       <div className="min-w-0">
         <p className="truncate font-semibold"><span className="text-xs font-normal text-[var(--text-secondary)]">Bank account · </span>{bankLabel(account)}</p>
         <p className="text-xs text-[var(--text-secondary)]">{bankKind(account)}{account.live ? '' : ' · No longer connected'}</p>
+        {stats && <p className="text-xs text-[var(--text-secondary)]" data-testid="bank-account-freshness">{stats.lastSyncedAt ? `Last synced ${new Date(stats.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Not synced yet'} · {(stats.posted + stats.pending).toLocaleString('en-US')} transaction{stats.posted + stats.pending === 1 ? '' : 's'}{stats.pending > 0 ? ` (${stats.pending} pending)` : ''}{stats.newestDate ? ` · newest ${stats.newestDate}` : ''}</p>}
         <p className="text-xs" data-testid="bank-account-mapping">{m
           ? <><span className="text-[var(--text-secondary)]">Cash OS account → </span><span className="font-semibold">{m.financialAccountName}</span><span style={{ color: 'var(--fin-cash)' }}> · Mapped</span></>
           : <span className="text-[var(--text-secondary)]">Not mapped</span>}</p>
@@ -93,7 +96,7 @@ const SYNC_LABEL: Record<BankSyncSummary['state'], string> = {
 }
 
 /** Compact bank-evidence status. It is NOT the ledger: nothing here changes a balance, report or Outlook number. */
-function SyncSection({ connectionId, sync, busy, onSync, onDiscard }: { connectionId: string; sync: BankSyncSummary | undefined; busy: boolean; onSync: (id: string) => Promise<void>; onDiscard?: (id: string, runId: string) => Promise<void> }) {
+function SyncSection({ connectionId, sync, busy, onSync, onDiscard, autoSyncOn, canRegisterWebhook, onRegisterWebhook }: { connectionId: string; sync: BankSyncSummary | undefined; busy: boolean; onSync: (id: string) => Promise<void>; onDiscard?: (id: string, runId: string) => Promise<void>; autoSyncOn?: boolean; canRegisterWebhook?: boolean; onRegisterWebhook?: (id: string) => Promise<void> }) {
   const state = sync?.state ?? 'not_synced'
   const when = sync?.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null
   return <div className="w-full" data-testid="bank-sync-section" data-state={state}>
@@ -116,6 +119,12 @@ function SyncSection({ connectionId, sync, busy, onSync, onDiscard }: { connecti
         {sync?.updatesAvailable && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-updates">New bank updates are available.</p>}
         {state === 'error' && sync?.recoveryText && <p style={{ color: 'var(--fin-warning)' }} data-testid="bank-sync-recovery">{sync.recoveryText}{sync.lastErrorCode ? ` (code ${sync.lastErrorCode})` : ''}</p>}
         {state !== 'synced' && sync?.lastSyncedAt && <p className="text-[var(--text-secondary)]" data-testid="bank-sync-last-success">Last successful sync {new Date(sync.lastSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>}
+        <p className="text-[var(--text-secondary)]" data-testid="bank-auto-sync-note">{autoSyncOn
+          ? 'Updates automatically when your bank reports new activity, with a backup check about every 6 hours. You can still press Sync again at any time.'
+          : 'Automatic updates are not turned on for this site yet. Press Sync again to update.'}</p>
+        {autoSyncOn && !sync?.webhookLastAt && <p className="text-[var(--text-secondary)]" data-testid="bank-auto-sync-unconfirmed">The bank has not sent an update notice for this connection yet, so it relies on the backup check.{canRegisterWebhook && onRegisterWebhook ? ' ' : ''}
+          {canRegisterWebhook && onRegisterWebhook && <button type="button" className={btn} disabled={busy} data-testid="bank-register-webhook" onClick={() => { if (window.confirm('Turn on automatic updates for this connection? This does not reconnect the bank and changes none of your history or reviews.')) void onRegisterWebhook(connectionId) }}>Turn on automatic updates</button>}</p>}
+        {sync?.webhookLastAt && <p className="text-[var(--text-secondary)]" data-testid="bank-auto-sync-last">Last bank notice {new Date(sync.webhookLastAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>}
         <p className="text-[var(--text-secondary)]">Bank evidence only. It does not change your balances, ledger or reports.</p>
       </div>
       <button type="button" className={btn} disabled={busy || state === 'syncing' || state === 'login_required'} onClick={() => void onSync(connectionId)}>{state === 'not_synced' ? 'Sync transactions' : 'Sync again'}</button>
@@ -163,7 +172,7 @@ function BalancesSection({ connectionId, balances, busy, onRefresh }: { connecti
  */
 export default function BankConnectionCard() {
   const { load, connections, accounts, cashAccounts, findAccounts, mapAccount, unmapAccount, syncs, syncNow, environment, busy, message, connect, reconnect, disconnect,
-    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked } = useBankConnection()
+    accountAdditionsEnabled, addPreview, addAccounts, reviewSharedAccounts, saveNewAccounts, dismissPreview, syncProgress, balancesEnabled, balances, refreshBalancesNow, discardBlocked, registerWebhook, autoSyncOn } = useBankConnection()
   if (load !== 'ready') return null
   // Only Items of THIS environment are active here. An Item of the other environment (e.g. the earlier Sandbox test) is kept, shown for clarity, and has no actions.
   const here = connections.filter(c => (c.environment ?? 'sandbox') === (environment ?? 'sandbox'))
@@ -194,13 +203,13 @@ export default function BankConnectionCard() {
           <p className="text-xs" style={{ color: s.color }}><span aria-hidden="true">{s.glyph} </span>{s.label}{date(c.connectedAt) ? <span className="text-[var(--text-secondary)]"> · since {date(c.connectedAt)}</span> : null}</p>
         </div>
         <div className="flex gap-2">
-          {(c.status === 'login_required' || c.status === 'error') && <button type="button" className={btn} disabled={busy} onClick={() => void reconnect(c.id)}>Reconnect</button>}
+          {(c.status === 'login_required' || c.status === 'error' || !!syncs.find(x => x.connectionId === c.id)?.itemNotice) && <button type="button" className={btn} disabled={busy} data-testid="bank-signin-again" onClick={() => void reconnect(c.id)}>{c.status === 'error' ? 'Reconnect' : `Sign in to ${c.institutionName ?? 'your bank'} again`}</button>}
           {accountAdditionsEnabled && c.status === 'healthy' && <button type="button" className={btn} disabled={busy} onClick={() => void addAccounts(c.id)} data-testid="bank-add-accounts">Add accounts at this bank</button>}
           {accountAdditionsEnabled && c.status === 'healthy' && <button type="button" className={btn} disabled={busy} onClick={() => void reviewSharedAccounts(c.id)} data-testid="bank-review-shared">Review shared accounts</button>}
           <button type="button" className={btn} disabled={busy} onClick={() => { if (window.confirm('Disconnect this bank? Your history and records are kept.')) void disconnect(c.id) }}>Disconnect</button>
         </div>
         {addPreview?.itemId === c.id && <AddAccountsPreview preview={addPreview} busy={busy} onSave={saveNewAccounts} onClose={dismissPreview} />}
-        <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} onDiscard={discardBlocked} />
+        <SyncSection connectionId={c.id} sync={syncs.find(x => x.connectionId === c.id)} busy={busy} onSync={syncNow} onDiscard={discardBlocked} autoSyncOn={autoSyncOn} canRegisterWebhook={(c.environment ?? 'sandbox') === 'production' && c.status === 'healthy'} onRegisterWebhook={registerWebhook} />
         {balancesEnabled && c.status !== 'disconnected' && <BalancesSection connectionId={c.id} balances={balances} busy={busy} onRefresh={refreshBalancesNow} />}
         <div className="w-full">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -212,7 +221,7 @@ export default function BankConnectionCard() {
             const mappedElsewhere = new Set(accounts.filter(a => a.live && a.mapping).map(a => a.mapping!.financialAccountId))
             return mine.length === 0
               ? <div className="flex flex-wrap items-center gap-2 py-1"><p className="text-xs text-[var(--text-secondary)]" data-testid="bank-no-accounts">No bank accounts loaded yet.</p><button type="button" className={btn} disabled={busy} onClick={() => void findAccounts(c.id)}>Find bank accounts</button></div>
-              : <ul className="divide-y divide-[var(--border-primary)]" data-testid="bank-account-list">{mine.map(a => <AccountRow key={a.id} account={a} cashAccounts={cashAccounts} mappedElsewhere={mappedElsewhere} busy={busy} onMap={mapAccount} onUnmap={unmapAccount} />)}</ul>
+              : <ul className="divide-y divide-[var(--border-primary)]" data-testid="bank-account-list">{mine.map(a => { const s = syncs.find(x => x.connectionId === c.id); const st = s?.accounts?.find(x => x.id === a.id); return <AccountRow key={a.id} account={a} cashAccounts={cashAccounts} mappedElsewhere={mappedElsewhere} busy={busy} onMap={mapAccount} onUnmap={unmapAccount} stats={st ? { lastSyncedAt: s?.lastSyncedAt ?? null, posted: st.posted, pending: st.pending, newestDate: st.newestDate } : undefined} /> })}</ul>
           })()}
         </div>
       </div>

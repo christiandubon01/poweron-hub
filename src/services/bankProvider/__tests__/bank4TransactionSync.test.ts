@@ -724,7 +724,10 @@ describe('BANK-4 static guarantees', () => {
     const repo = read('../bankSyncRepo.ts')
     const tables = [...repo.matchAll(/from\('([a-z_]+)'\)/g)].map(m => m[1])
     // PLAID-1B adds ONLY the append-only sync-run audit (insert-only, switched off until its reviewed SQL is installed).
-    expect(new Set(tables)).toEqual(new Set(['financial_provider_items', 'financial_provider_transactions', 'financial_provider_webhook_events', 'financial_provider_sync_runs']))
+    // PLAID-2A adds a READ of the Item's account ids (per-account counts for the card) and nothing else.
+    expect(new Set(tables)).toEqual(new Set(['financial_provider_items', 'financial_provider_transactions', 'financial_provider_webhook_events', 'financial_provider_sync_runs', 'financial_provider_accounts']))
+    expect(repo).toMatch(/from\('financial_provider_accounts'\)\.select\(/)
+    expect([...repo.matchAll(/from\('financial_provider_accounts'\)\.(\w+)/g)].map(m => m[1])).toEqual(['select'])
     expect([...repo.matchAll(/from\('financial_provider_sync_runs'\)\.(\w+)/g)].map(m => m[1])).toEqual(['insert'])
     expect(repo).not.toMatch(/raw_payload|original_description|provider_metadata|raw_evidence|payload:/)
     expect(repo).not.toMatch(/\.select\(\s*['"`]\*['"`]/)
