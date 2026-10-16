@@ -46,7 +46,7 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authedJsonHeaders } from '@/services/authedFetch'
-import { shouldClearOverflowWarningOnSync, shouldMarkDurableOnPersist } from '@/services/storageOverflowBanner'
+import { shouldClearOverflowWarningOnLocalPersistence, shouldClearOverflowWarningOnSync, shouldMarkDurableOnPersist } from '@/services/storageOverflowBanner'
 import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, fmt, fmtK, num, type BackupData } from '@/services/backupDataService'
 import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
 import { calculateYearlyRevenueTargetProgress } from '@/services/yearlyRevenueTarget'
@@ -303,11 +303,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Storage-overflow banner state. `saveFailedQuota` picks the cautious (storage-full) vs the
   // catastrophic (hard-failure) banner. `saveFailedDurable` is set ONLY once on-device
   // IndexedDB persistence is confirmed — until then the banner makes no durable claim. The ref
-  // mirrors the warned edit's timestamp so the event handlers (registered once) correlate
+  // mirrors the warned edit's generation so the event handlers (registered once) correlate
   // confirmations against the latest pending warning without a stale closure.
   const [saveFailedQuota, setSaveFailedQuota] = useState(false)
   const [saveFailedDurable, setSaveFailedDurable] = useState(false)
-  const pendingWarnAtRef = useRef<string | null>(null)
+  const pendingWarnGenerationRef = useRef<string | null>(null)
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
   // ROOT-SYNC: 'pushed' = this device wrote to the cloud; 'applied' = a remote
@@ -355,19 +355,23 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       setShowSaveFailedModal(false)
       setSaveFailedQuota(false)
       setSaveFailedDurable(false)
-      pendingWarnAtRef.current = null
+      pendingWarnGenerationRef.current = null
     }
     const handleDataSaved = (event: Event) => {
-      const detail = (event as CustomEvent<{ source?: string }>).detail
-      if (detail?.source !== 'remote-refresh') {
-        // A successful local save wrote the full in-memory blob to localStorage, so the
-        // overflow is resolved and everything up to now is durably persisted locally.
+      const detail = (event as CustomEvent<{ source?: string; persistence?: string; generation?: string }>).detail
+      if (shouldClearOverflowWarningOnLocalPersistence(
+        pendingWarnGenerationRef.current,
+        detail?.persistence,
+        detail?.generation,
+      )) {
+        // Only saveBackupData emits this after localStorage.setItem returned successfully.
+        // Generic refresh/data-changed events are not persistence confirmations.
         clearOverflowBanner()
       }
       refresh()
     }
     const handleStorageWriteFailed = (event: Event) => {
-      const detail = (event as CustomEvent<{ error?: string; quota?: boolean; at?: string }>).detail
+      const detail = (event as CustomEvent<{ error?: string; quota?: boolean; generation?: string }>).detail
       setLocalSaveFailed(detail?.error || 'Storage write failed')
       setSyncStatus('failed')
       setShowSaveFailedModal(true)
@@ -376,34 +380,40 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         // to the cloud, but NONE of that is confirmed yet — make no durable claim until it is.
         setSaveFailedQuota(true)
         setSaveFailedDurable(false)
-        pendingWarnAtRef.current = detail?.at ?? null
+        pendingWarnGenerationRef.current = detail?.generation ?? null
       } else {
         // Genuine non-quota failure: nothing was preserved. Keep the catastrophic banner.
         setSaveFailedQuota(false)
         setSaveFailedDurable(false)
-        pendingWarnAtRef.current = null
+        pendingWarnGenerationRef.current = null
       }
     }
     // IndexedDB mirror confirmed: upgrade to a durable-on-device claim, but ONLY when it
     // confirms the warned edit (or a later one) — never an older one.
     const handleOverflowPersisted = (event: Event) => {
-      const detail = (event as CustomEvent<{ at?: string }>).detail
-      if (shouldMarkDurableOnPersist(pendingWarnAtRef.current, detail?.at)) {
+      const detail = (event as CustomEvent<{ generation?: string }>).detail
+      if (shouldMarkDurableOnPersist(pendingWarnGenerationRef.current, detail?.generation)) {
         setSaveFailedDurable(true)
       }
     }
     // Confirmed cloud sync clears the warning, but ONLY when the push covered the warned edit
     // (or a later one). An older in-flight sync completing must not clear a newer pending edit.
     const handleSyncSuccess = (event: Event) => {
-      const detail = (event as CustomEvent<{ savedAt?: string }>).detail
-      if (shouldClearOverflowWarningOnSync(pendingWarnAtRef.current, detail?.savedAt)) {
+      const detail = (event as CustomEvent<{ generation?: string }>).detail
+      if (shouldClearOverflowWarningOnSync(pendingWarnGenerationRef.current, detail?.generation)) {
         clearOverflowBanner()
         refresh()
       }
     }
+    const handleOverflowConflict = () => {
+      if (!pendingWarnGenerationRef.current) return
+      setSaveFailedDurable(false)
+      setShowSaveFailedModal(true)
+    }
     window.addEventListener('poweron-data-saved', handleDataSaved)
     window.addEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
     window.addEventListener('poweron:storage-overflow-persisted', handleOverflowPersisted)
+    window.addEventListener('poweron:storage-overflow-conflict', handleOverflowConflict)
     window.addEventListener('poweron:sync-success', handleSyncSuccess)
 
     // Clean up listeners on unmount
@@ -412,6 +422,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       window.removeEventListener('poweron-data-saved', handleDataSaved)
       window.removeEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
       window.removeEventListener('poweron:storage-overflow-persisted', handleOverflowPersisted)
+      window.removeEventListener('poweron:storage-overflow-conflict', handleOverflowConflict)
       window.removeEventListener('poweron:sync-success', handleSyncSuccess)
     }
   }, [])
