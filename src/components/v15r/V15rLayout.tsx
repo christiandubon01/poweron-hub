@@ -46,6 +46,7 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authedJsonHeaders } from '@/services/authedFetch'
+import { shouldClearOverflowWarningOnLocalPersistence, shouldClearOverflowWarningOnSync, shouldMarkDurableOnPersist } from '@/services/storageOverflowBanner'
 import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, fmt, fmtK, num, type BackupData } from '@/services/backupDataService'
 import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
 import { calculateYearlyRevenueTargetProgress } from '@/services/yearlyRevenueTarget'
@@ -299,6 +300,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [localSaveFailed, setLocalSaveFailed] = useState<string | null>(null)
   const [showSaveFailedModal, setShowSaveFailedModal] = useState(false)
+  // Storage-overflow banner state. `saveFailedQuota` picks the cautious (storage-full) vs the
+  // catastrophic (hard-failure) banner. `saveFailedDurable` is set ONLY once on-device
+  // IndexedDB persistence is confirmed — until then the banner makes no durable claim. The ref
+  // mirrors the warned edit's generation so the event handlers (registered once) correlate
+  // confirmations against the latest pending warning without a stale closure.
+  const [saveFailedQuota, setSaveFailedQuota] = useState(false)
+  const [saveFailedDurable, setSaveFailedDurable] = useState(false)
+  const pendingWarnGenerationRef = useRef<string | null>(null)
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
   // ROOT-SYNC: 'pushed' = this device wrote to the cloud; 'applied' = a remote
@@ -341,28 +350,80 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
     // Listen for same-tab saves dispatched by saveBackupData (e.g. status changes, deletions)
     // so the pipeline KPI in the header updates in real time without a page reload.
+    const clearOverflowBanner = () => {
+      setLocalSaveFailed(null)
+      setShowSaveFailedModal(false)
+      setSaveFailedQuota(false)
+      setSaveFailedDurable(false)
+      pendingWarnGenerationRef.current = null
+    }
     const handleDataSaved = (event: Event) => {
-      const detail = (event as CustomEvent<{ source?: string }>).detail
-      if (detail?.source !== 'remote-refresh') {
-        setLocalSaveFailed(null)
-        setShowSaveFailedModal(false)
+      const detail = (event as CustomEvent<{ source?: string; persistence?: string; generation?: string }>).detail
+      if (shouldClearOverflowWarningOnLocalPersistence(
+        pendingWarnGenerationRef.current,
+        detail?.persistence,
+        detail?.generation,
+      )) {
+        // Only saveBackupData emits this after localStorage.setItem returned successfully.
+        // Generic refresh/data-changed events are not persistence confirmations.
+        clearOverflowBanner()
       }
       refresh()
     }
     const handleStorageWriteFailed = (event: Event) => {
-      const detail = (event as CustomEvent<{ error?: string }>).detail
+      const detail = (event as CustomEvent<{ error?: string; quota?: boolean; generation?: string }>).detail
       setLocalSaveFailed(detail?.error || 'Storage write failed')
       setSyncStatus('failed')
+      setShowSaveFailedModal(true)
+      if (detail?.quota) {
+        // Storage full: the edit is captured in memory and being mirrored to IndexedDB + pushed
+        // to the cloud, but NONE of that is confirmed yet — make no durable claim until it is.
+        setSaveFailedQuota(true)
+        setSaveFailedDurable(false)
+        pendingWarnGenerationRef.current = detail?.generation ?? null
+      } else {
+        // Genuine non-quota failure: nothing was preserved. Keep the catastrophic banner.
+        setSaveFailedQuota(false)
+        setSaveFailedDurable(false)
+        pendingWarnGenerationRef.current = null
+      }
+    }
+    // IndexedDB mirror confirmed: upgrade to a durable-on-device claim, but ONLY when it
+    // confirms the warned edit (or a later one) — never an older one.
+    const handleOverflowPersisted = (event: Event) => {
+      const detail = (event as CustomEvent<{ generation?: string }>).detail
+      if (shouldMarkDurableOnPersist(pendingWarnGenerationRef.current, detail?.generation)) {
+        setSaveFailedDurable(true)
+      }
+    }
+    // Confirmed cloud sync clears the warning, but ONLY when the push covered the warned edit
+    // (or a later one). An older in-flight sync completing must not clear a newer pending edit.
+    const handleSyncSuccess = (event: Event) => {
+      const detail = (event as CustomEvent<{ generation?: string }>).detail
+      if (shouldClearOverflowWarningOnSync(pendingWarnGenerationRef.current, detail?.generation)) {
+        clearOverflowBanner()
+        refresh()
+      }
+    }
+    const handleOverflowConflict = () => {
+      if (!pendingWarnGenerationRef.current) return
+      setSaveFailedDurable(false)
       setShowSaveFailedModal(true)
     }
     window.addEventListener('poweron-data-saved', handleDataSaved)
     window.addEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
+    window.addEventListener('poweron:storage-overflow-persisted', handleOverflowPersisted)
+    window.addEventListener('poweron:storage-overflow-conflict', handleOverflowConflict)
+    window.addEventListener('poweron:sync-success', handleSyncSuccess)
 
     // Clean up listeners on unmount
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       window.removeEventListener('poweron-data-saved', handleDataSaved)
       window.removeEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
+      window.removeEventListener('poweron:storage-overflow-persisted', handleOverflowPersisted)
+      window.removeEventListener('poweron:storage-overflow-conflict', handleOverflowConflict)
+      window.removeEventListener('poweron:sync-success', handleSyncSuccess)
     }
   }, [])
 
@@ -1135,16 +1196,33 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       )}
       {showSaveFailedModal && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 p-4" role="alertdialog" aria-modal="true" aria-labelledby="save-failed-title">
-          <div className="w-full max-w-md rounded-2xl border border-red-500 bg-red-950 p-6 shadow-2xl">
-            <h2 id="save-failed-title" className="text-lg font-black text-red-100">SAVE FAILED — YOUR WORK IS NOT SAVED</h2>
-            <p className="mt-3 text-sm text-red-200">The latest change could not be written to this browser. Keep this page open and free storage before trying again.</p>
-            {localSaveFailed && <p className="mt-3 break-words text-xs text-red-300">{localSaveFailed}</p>}
+          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${saveFailedQuota ? 'border-amber-500 bg-amber-950' : 'border-red-500 bg-red-950'}`}>
+            {!saveFailedQuota ? (
+              // Genuine non-quota failure: nothing was preserved.
+              <>
+                <h2 id="save-failed-title" className="text-lg font-black text-red-100">SAVE FAILED — YOUR WORK IS NOT SAVED</h2>
+                <p className="mt-3 text-sm text-red-200">The latest change could not be written to this browser. Keep this page open and free storage before trying again.</p>
+              </>
+            ) : saveFailedDurable ? (
+              // On-device IndexedDB persistence CONFIRMED — a durable claim is now justified.
+              <>
+                <h2 id="save-failed-title" className="text-lg font-black text-amber-100">STORAGE FULL — CHANGE BACKED UP</h2>
+                <p className="mt-3 text-sm text-amber-200">This browser's storage is full. Your latest change is backed up on this device and will sync to the cloud. Keep this page open until it syncs, and free up space on this device when you can.</p>
+              </>
+            ) : (
+              // Quota hit, but NOT yet confirmed durable anywhere — make no durable claim.
+              <>
+                <h2 id="save-failed-title" className="text-lg font-black text-amber-100">STORAGE FULL — SAVING YOUR CHANGE</h2>
+                <p className="mt-3 text-sm text-amber-200">This browser's storage is full, so your latest change could not be written to this device. We're backing it up and syncing it to the cloud now — keep this page open until it confirms, and free up space on this device when you can.</p>
+              </>
+            )}
+            {localSaveFailed && <p className={`mt-3 break-words text-xs ${saveFailedQuota ? 'text-amber-300' : 'text-red-300'}`}>{localSaveFailed}</p>}
             <button
               type="button"
               onClick={() => setShowSaveFailedModal(false)}
-              className="mt-6 w-full rounded-lg bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-500"
+              className={`mt-6 w-full rounded-lg px-4 py-3 text-sm font-bold text-white ${saveFailedQuota ? 'bg-amber-600 hover:bg-amber-500' : 'bg-red-600 hover:bg-red-500'}`}
             >
-              Acknowledge
+              {saveFailedQuota ? 'Got it' : 'Acknowledge'}
             </button>
           </div>
         </div>

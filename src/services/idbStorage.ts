@@ -60,6 +60,53 @@ export async function idbSet(key: IDBValidKey, value: unknown): Promise<void> {
   })
 }
 
+/**
+ * Atomically inspect and optionally replace one value. The read and write share a
+ * single readwrite transaction, so callers in different tabs cannot race a stale
+ * compare followed by an unconditional put.
+ */
+export async function idbAtomicUpdate<T>(
+  key: IDBValidKey,
+  update: (current: T | undefined) =>
+    | { action: 'keep' }
+    | { action: 'put'; value: T }
+    | { action: 'delete' },
+): Promise<{ action: 'kept' | 'put' | 'deleted'; value: T | undefined }> {
+  const db = await openDatabase()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.get(key)
+    let action: 'kept' | 'put' | 'deleted' = 'kept'
+    let resolvedValue: T | undefined
+
+    request.onsuccess = () => {
+      try {
+        const current = request.result as T | undefined
+        const decision = update(current)
+        if (decision.action === 'put') {
+          action = 'put'
+          resolvedValue = decision.value
+          store.put(decision.value, key)
+        } else if (decision.action === 'delete') {
+          action = 'deleted'
+          resolvedValue = undefined
+          store.delete(key)
+        } else {
+          resolvedValue = current
+        }
+      } catch (error) {
+        try { transaction.abort() } catch { /* ignore */ }
+        reject(error)
+      }
+    }
+    request.onerror = () => reject(request.error || new Error('IndexedDB atomic read failed'))
+    transaction.oncomplete = () => resolve({ action, value: resolvedValue })
+    transaction.onerror = () => reject(transaction.error || new Error('IndexedDB atomic update failed'))
+    transaction.onabort = () => reject(transaction.error || new Error('IndexedDB atomic update aborted'))
+  })
+}
+
 export async function idbDelete(key: IDBValidKey): Promise<void> {
   const db = await openDatabase()
   return new Promise((resolve, reject) => {

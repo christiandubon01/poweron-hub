@@ -40,7 +40,7 @@ import { getSettingsDataFieldNames, mergeRemoteSettingsIntoOutgoing, mergeSettin
 // remote blueprint annotations / scope layers. blueprintLibraryService only imports
 // backupDataService dynamically, so this static edge introduces no module cycle.
 import { mergeBlueprintAnnotationsById, mergeBlueprintQuickAccessWireProfileBindings, mergeBlueprintScopeLayersById, mergeBlueprintSetRecordsById, mergeBlueprintWireProfilesById, mergeOperationsBlueprintLibraryById } from './blueprintLibraryService'
-import { idbDelete, idbGet, idbSet } from './idbStorage'
+import { idbAtomicUpdate, idbDelete, idbGet, idbSet } from './idbStorage'
 import { getDemoBackupData, persistDemoBackupData } from './demoDataService'
 import { isDemoRuntimeActive } from './demoModeSafety'
 import { resolveProjectLaborSource } from '@/utils/costSourceHelper'
@@ -162,6 +162,345 @@ function getEffectiveStorageKey(userId = _activeTenantUserId): string {
   return userId ? getTenantStorageKey(userId) : LEGACY_STORAGE_KEY
 }
 
+// ── Storage-quota overflow resilience ─────────────────────────────────────────
+// HOTFIX (storage quota save failure): the whole-app blob is serialized into ONE
+// localStorage key on every save. On iOS/iPadOS Safari (~5 MB per-origin cap) a
+// growing blob makes localStorage.setItem throw QuotaExceededError. Previously that
+// (a) lost the edit and (b) starved the Supabase push, because syncToSupabase builds
+// its payload from getBackupData() — the same localStorage key. We keep the latest
+// blob in memory and mirror it to IndexedDB (far larger quota) so the edit is never
+// lost and the authoritative cloud push still gets it. localStorage simply stops
+// being written while it is full (bounded growth). Nothing is ever deleted here.
+const _memoryBackupByKey = new Map<string, BackupData>()
+const _localStorageOverflowKeys = new Set<string>()
+const _latestGenerationByKey = new Map<string, string>()
+const _pendingGenerationByKey = new Map<string, string>()
+const BACKUP_OVERFLOW_PREFIX = 'poweron_backup_overflow:'
+const BACKUP_GENERATION_FIELD = '_localSaveGeneration'
+const OVERFLOW_ENVELOPE_VERSION = 2
+const OVERFLOW_CHANNEL_NAME = 'poweron-storage-overflow-v2'
+
+type OverflowBackupEnvelope = {
+  version: 2
+  storageKey: string
+  tenantUserId: string | null
+  generation: string
+  savedAt: string
+  writerId: string
+  cloudAcknowledged: boolean
+  data: BackupData
+}
+
+const _overflowWriterId = (() => {
+  try { return crypto.randomUUID() } catch { return `tab-${Date.now()}-${Math.random().toString(36).slice(2)}` }
+})()
+let _lastGenerationTick = 0
+let _overflowChannel: BroadcastChannel | null = null
+
+function getBackupGeneration(data: BackupData | null | undefined): string | null {
+  const value = String((data as any)?.[BACKUP_GENERATION_FIELD] || '').trim()
+  return value || null
+}
+
+function withBackupGeneration(data: BackupData, generation: string): BackupData {
+  return { ...(data as any), [BACKUP_GENERATION_FIELD]: generation } as BackupData
+}
+
+function nextBackupGeneration(): string {
+  let tick = Date.now() * 1000
+  try {
+    if (typeof performance !== 'undefined' && Number.isFinite(performance.timeOrigin) && Number.isFinite(performance.now())) {
+      tick = Math.floor((performance.timeOrigin + performance.now()) * 1000)
+    }
+  } catch { /* Date.now fallback */ }
+  if (tick <= _lastGenerationTick) tick = _lastGenerationTick + 1
+  _lastGenerationTick = tick
+  return `${String(tick).padStart(19, '0')}:${_overflowWriterId}`
+}
+
+function compareGenerations(a: string | null | undefined, b: string | null | undefined): number {
+  if (a === b) return 0
+  if (!a) return -1
+  if (!b) return 1
+  return a < b ? -1 : 1
+}
+
+function isOrderedGeneration(value: string | null | undefined): boolean {
+  return /^\d{19}:[^:]+$/.test(String(value || ''))
+}
+
+function compareSnapshotOrder(
+  candidateGeneration: string | null | undefined,
+  candidateSavedAt: string | null | undefined,
+  currentGeneration: string | null | undefined,
+  currentSavedAt: string | null | undefined,
+): number {
+  // V2 generations are the ordering authority. Business timestamps can remain unchanged across
+  // scoped saves, so they cannot reject a later write from another tab.
+  if (isOrderedGeneration(candidateGeneration) && isOrderedGeneration(currentGeneration)) {
+    return compareGenerations(candidateGeneration, currentGeneration)
+  }
+  // The first hotfix stored raw backup JSON without a generation. Use its save time only for
+  // this compatibility comparison.
+  const candidateMs = parseBackupTimestampMs(candidateSavedAt)
+  const currentMs = parseBackupTimestampMs(currentSavedAt)
+  if (candidateMs !== currentMs) return candidateMs < currentMs ? -1 : 1
+  if (isOrderedGeneration(candidateGeneration) !== isOrderedGeneration(currentGeneration)) {
+    return isOrderedGeneration(candidateGeneration) ? 1 : -1
+  }
+  return compareGenerations(candidateGeneration, currentGeneration)
+}
+
+function parseOverflowEnvelope(raw: unknown, storageKey: string): OverflowBackupEnvelope | null {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!parsed || typeof parsed !== 'object') return null
+    if ((parsed as any).version === OVERFLOW_ENVELOPE_VERSION && (parsed as any).data) {
+      const envelope = parsed as OverflowBackupEnvelope
+      if (envelope.storageKey !== storageKey || !envelope.generation) return null
+      return envelope
+    }
+    // Backward-compatible read of the first hotfix's raw JSON mirror.
+    const data = parsed as BackupData
+    const savedAt = String(data?._lastSavedAt || '')
+    const generation = getBackupGeneration(data) || `${savedAt || '0000'}:legacy`
+    return {
+      version: OVERFLOW_ENVELOPE_VERSION,
+      storageKey,
+      tenantUserId: String((data as any)?._tenantUserId || '') || null,
+      generation,
+      savedAt,
+      writerId: 'legacy',
+      cloudAcknowledged: false,
+      data: withBackupGeneration(data, generation),
+    }
+  } catch { return null }
+}
+
+function isEnvelopeNewer(candidate: OverflowBackupEnvelope, current: OverflowBackupEnvelope): boolean {
+  return compareSnapshotOrder(
+    candidate.generation,
+    candidate.savedAt,
+    current.generation,
+    current.savedAt,
+  ) > 0
+}
+
+function adoptOverflowEnvelope(envelope: OverflowBackupEnvelope, userId: string | null): boolean {
+  if (userId && envelope.tenantUserId !== userId) return false
+  const key = envelope.storageKey
+  const currentGeneration = _latestGenerationByKey.get(key) || getBackupGeneration(_memoryBackupByKey.get(key))
+  const currentSavedAt = String(_memoryBackupByKey.get(key)?._lastSavedAt || '')
+  if (compareSnapshotOrder(envelope.generation, envelope.savedAt, currentGeneration, currentSavedAt) < 0) return false
+  _memoryBackupByKey.set(key, envelope.data)
+  _latestGenerationByKey.set(key, envelope.generation)
+  _localStorageOverflowKeys.add(key)
+  if (!envelope.cloudAcknowledged) {
+    _pendingGenerationByKey.set(key, envelope.generation)
+    _dataChanged = true
+  } else if (_pendingGenerationByKey.get(key) === envelope.generation) {
+    _pendingGenerationByKey.delete(key)
+  }
+  return true
+}
+
+function ensureOverflowChannel(): BroadcastChannel | null {
+  if (_overflowChannel) return _overflowChannel
+  try {
+    if (typeof window === 'undefined' || typeof window.BroadcastChannel !== 'function') return null
+    const channel = new window.BroadcastChannel(OVERFLOW_CHANNEL_NAME)
+    channel.onmessage = (event: MessageEvent<{ storageKey?: string; generation?: string }>) => {
+      const storageKey = String(event.data?.storageKey || '')
+      if (!storageKey || storageKey !== getEffectiveStorageKey(_activeTenantUserId)) return
+      void recoverLocalOverflowBackup(_activeTenantUserId).then((adopted) => {
+        if (!adopted || typeof window === 'undefined') return
+        window.dispatchEvent(new CustomEvent('poweron-data-saved', {
+          detail: { source: 'overflow-cross-tab', generation: event.data?.generation },
+        }))
+      })
+    }
+    _overflowChannel = channel
+    return channel
+  } catch { return null }
+}
+
+/** True for a browser storage quota error across Safari / Chrome / Firefox variants. */
+export function isStorageQuotaError(err: unknown): boolean {
+  const e = err instanceof BackupStorageWriteError ? err.cause : err
+  if (!e || typeof e !== 'object') return false
+  const name = String((e as any).name || '')
+  const code = (e as any).code
+  const msg = String((e as any).message || '').toLowerCase()
+  return (
+    name === 'QuotaExceededError' ||            // Chrome / Safari
+    name === 'NS_ERROR_DOM_QUOTA_REACHED' ||    // Firefox
+    code === 22 || code === 1014 ||             // legacy numeric codes
+    msg.includes('quota')
+  )
+}
+
+function rememberBackupInMemory(key: string, data: BackupData): boolean {
+  try {
+    const incomingGeneration = getBackupGeneration(data)
+    const current = _memoryBackupByKey.get(key)
+    const currentGeneration = _latestGenerationByKey.get(key) || getBackupGeneration(current)
+    if (compareSnapshotOrder(
+      incomingGeneration,
+      String(data?._lastSavedAt || ''),
+      currentGeneration,
+      String(current?._lastSavedAt || ''),
+    ) < 0) return false
+    _memoryBackupByKey.set(key, data)
+    if (incomingGeneration) _latestGenerationByKey.set(key, incomingGeneration)
+    return true
+  } catch { return false }
+}
+
+/**
+ * Best-effort durable mirror to IndexedDB. One key per storage key (overwritten), so no growth
+ * loop. Dispatches `poweron:storage-overflow-persisted` ONLY after the write actually resolves,
+ * so the UI can claim on-device durability only once it is actually confirmed — never before.
+ * The immutable generation identifies the exact serialized snapshot being confirmed.
+ */
+function overflowBackupToIdb(key: string, data: BackupData, generation: string, userId: string | null): void {
+  const envelope: OverflowBackupEnvelope = {
+    version: OVERFLOW_ENVELOPE_VERSION,
+    storageKey: key,
+    tenantUserId: userId,
+    generation,
+    savedAt: String(data._lastSavedAt || ''),
+    writerId: _overflowWriterId,
+    cloudAcknowledged: false,
+    data,
+  }
+  try {
+    void idbAtomicUpdate<unknown>(BACKUP_OVERFLOW_PREFIX + key, (raw) => {
+      const current = parseOverflowEnvelope(raw, key)
+      if (!current || isEnvelopeNewer(envelope, current)) return { action: 'put', value: envelope }
+      if (current.generation === generation && current.cloudAcknowledged) {
+        return { action: 'keep' }
+      }
+      if (current.generation === generation) return { action: 'keep' }
+      return { action: 'keep' }
+    })
+      .then((result) => {
+        const current = parseOverflowEnvelope(result.value, key)
+        const persisted = result.action === 'put' ? envelope : current
+        if (!persisted || persisted.generation !== generation) {
+          if (current) adoptOverflowEnvelope(current, userId)
+          try {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('poweron:storage-overflow-conflict', {
+                detail: { key, generation, currentGeneration: current?.generation },
+              }))
+            }
+          } catch { /* ignore */ }
+          return
+        }
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('poweron:storage-overflow-persisted', {
+              detail: { key, generation },
+            }))
+          }
+        } catch { /* ignore */ }
+        try { ensureOverflowChannel()?.postMessage({ storageKey: key, generation }) } catch { /* ignore */ }
+      })
+      .catch(() => { /* IndexedDB also failed: make NO durable claim; the banner stays cautious */ })
+  } catch { /* ignore */ }
+}
+
+/** Drop a stale overflow mirror once localStorage can hold the blob again. Never touches business data. */
+function clearBackupOverflow(key: string, generation: string): void {
+  if (!_localStorageOverflowKeys.has(key)) return
+  _localStorageOverflowKeys.delete(key)
+  try {
+    void idbAtomicUpdate<unknown>(BACKUP_OVERFLOW_PREFIX + key, (raw) => {
+      const current = parseOverflowEnvelope(raw, key)
+      const savedAt = String(_memoryBackupByKey.get(key)?._lastSavedAt || '')
+      if (!current || compareSnapshotOrder(current.generation, current.savedAt, generation, savedAt) < 0) {
+        return { action: 'delete' }
+      }
+      // Keep an equal pending overflow marker across reloads until its exact cloud ACK.
+      if (current.generation === generation && current.cloudAcknowledged) return { action: 'delete' }
+      return { action: 'keep' }
+    }).catch(() => {})
+  } catch { /* ignore */ }
+}
+
+async function markOverflowGenerationCloudAcknowledged(key: string, generation: string): Promise<void> {
+  try {
+    let localGeneration: string | null = null
+    try {
+      const rawLocal = localStorage.getItem(key)
+      if (rawLocal) localGeneration = getBackupGeneration(JSON.parse(rawLocal) as BackupData)
+    } catch { /* localStorage remains stale/full */ }
+    await idbAtomicUpdate<unknown>(BACKUP_OVERFLOW_PREFIX + key, (raw) => {
+      const current = parseOverflowEnvelope(raw, key)
+      if (!current || current.generation !== generation || current.cloudAcknowledged) return { action: 'keep' }
+      if (localGeneration === generation) return { action: 'delete' }
+      return { action: 'put', value: { ...current, cloudAcknowledged: true } }
+    })
+  } catch { /* the cloud copy is still authoritative; retain the local pending marker on reload */ }
+}
+
+/**
+ * Recover a localStorage-overflow blob from IndexedDB into memory (call on startup/hydration).
+ * Adopts it only when it is at least as new as both the localStorage and in-memory copies, so it
+ * never resurrects stale data over a good local or remote copy. Never deletes anything.
+ */
+export async function recoverLocalOverflowBackup(userId = _activeTenantUserId): Promise<boolean> {
+  try {
+    const key = getEffectiveStorageKey(userId)
+    ensureOverflowChannel()
+    const raw = await idbGet<unknown>(BACKUP_OVERFLOW_PREFIX + key)
+    const envelope = parseOverflowEnvelope(raw, key)
+    if (!envelope) return false
+    const overflow = envelope.data
+    if (userId && (envelope.tenantUserId !== userId || !tenantOwnerMatches(overflow, userId))) return false
+    let localSavedAt = ''
+    try {
+      const localRaw = localStorage.getItem(key)
+      if (localRaw) localSavedAt = String((JSON.parse(localRaw) as BackupData)?._lastSavedAt || '')
+    } catch { /* treat as empty */ }
+    const mem = _memoryBackupByKey.get(key)
+    const memSavedAt = String(mem?._lastSavedAt || '')
+    const overflowSavedAt = String(overflow._lastSavedAt || '')
+    const localGeneration = (() => {
+      try {
+        const rawLocal = localStorage.getItem(key)
+        return rawLocal ? getBackupGeneration(JSON.parse(rawLocal) as BackupData) : null
+      } catch { return null }
+    })()
+    const memGeneration = getBackupGeneration(mem)
+    const newerThanLocal = compareSnapshotOrder(
+      envelope.generation,
+      overflowSavedAt,
+      localGeneration,
+      localSavedAt,
+    ) >= 0
+    const newerThanMemory = compareSnapshotOrder(
+      envelope.generation,
+      overflowSavedAt,
+      memGeneration,
+      memSavedAt,
+    ) >= 0
+    if (overflowSavedAt && newerThanLocal && newerThanMemory) {
+      return adoptOverflowEnvelope(envelope, userId)
+    }
+    return false
+  } catch { return false }
+}
+
+/** Test-only: reset the in-memory overflow state between cases. */
+export function __resetStorageOverflowStateForTests(): void {
+  _memoryBackupByKey.clear()
+  _localStorageOverflowKeys.clear()
+  _latestGenerationByKey.clear()
+  _pendingGenerationByKey.clear()
+  _dataChanged = false
+}
+
 // ── Device ID System ─────────────────────────────────────────────────────────
 const DEVICE_ID_KEY = 'poweron_device_id'
 
@@ -254,7 +593,45 @@ export function markChanged(...keys: string[]) {
  * module, not just the ones that registered a feature-specific dirty scope.
  */
 export function hasPendingLocalSave(): boolean {
-  return _dataChanged || _changedKeys.size > 0
+  const activeKey = getEffectiveStorageKey(_activeTenantUserId)
+  return _dataChanged || _changedKeys.size > 0 || _pendingGenerationByKey.has(activeKey)
+}
+
+function currentGenerationForUser(userId = _activeTenantUserId): string | null {
+  const key = getEffectiveStorageKey(userId)
+  return _latestGenerationByKey.get(key) || getBackupGeneration(_memoryBackupByKey.get(key))
+}
+
+async function isSnapshotGenerationCurrent(userId: string, generation: string | null): Promise<boolean> {
+  const key = getEffectiveStorageKey(userId)
+  if (currentGenerationForUser(userId) !== generation) return false
+  try {
+    const raw = await idbGet<unknown>(BACKUP_OVERFLOW_PREFIX + key)
+    const envelope = parseOverflowEnvelope(raw, key)
+    const current = _memoryBackupByKey.get(key)
+    if (envelope && compareSnapshotOrder(
+      envelope.generation,
+      envelope.savedAt,
+      generation,
+      String(current?._lastSavedAt || ''),
+    ) > 0) {
+      adoptOverflowEnvelope(envelope, userId)
+      return false
+    }
+  } catch { /* an unavailable IDB mirror does not invalidate an in-memory generation */ }
+  return currentGenerationForUser(userId) === generation
+}
+
+function clearDirtyStateForGeneration(generation: string | null | undefined): boolean {
+  const key = getEffectiveStorageKey(_activeTenantUserId)
+  const latest = currentGenerationForUser(_activeTenantUserId)
+  const pending = _pendingGenerationByKey.get(key) || null
+  if ((latest && generation !== latest) || (pending && generation !== pending)) return false
+  _dataChanged = false
+  _lastSyncedAt = Date.now()
+  _changedKeys.clear()
+  if (generation && pending === generation) _pendingGenerationByKey.delete(key)
+  return true
 }
 
 /** Start periodic sync timer — call from V15rLayout on mount */
@@ -265,9 +642,7 @@ export function startPeriodicSync(): () => void {
       syncToSupabase(_activeTenantUserId, { source: 'periodic-sync' })
         .then((result) => {
           if (result.success) {
-            _dataChanged = false
-            _lastSyncedAt = Date.now()
-            _changedKeys.clear()
+            clearDirtyStateForGeneration(result.generation)
           } else if (result.blocked || result.conflict) {
             console.warn('[sync] Periodic sync blocked — local changes preserved', result.error)
           }
@@ -664,6 +1039,8 @@ export interface BackupData {
   _schemaVersion: number
   /** Cross-device sync metadata — embedded by syncToSupabase() */
   _syncMeta?: { savedBy: string; savedAt: string }
+  /** Local snapshot identity used to correlate overflow durability/cloud acknowledgments. */
+  _localSaveGeneration?: string
 
   /** Deleted relationship/customer accounts that must not be revived from stale local gcContacts */
   _deletedRelationshipAccounts?: Array<{
@@ -810,6 +1187,14 @@ export function getBackupData(userId = _activeTenantUserId): BackupData | null {
   if (isDemoRuntimeActive()) {
     return getDemoBackupData()
   }
+  // Storage-quota overflow: localStorage could not hold the latest blob, so it is stale.
+  // Return the in-memory authoritative copy (tenant-checked) so reads and the Supabase
+  // push see the real latest edit instead of the truncated/stale localStorage value.
+  const overflowKey = getEffectiveStorageKey(userId)
+  if (_localStorageOverflowKeys.has(overflowKey)) {
+    const mem = _memoryBackupByKey.get(overflowKey)
+    if (mem && (!userId || tenantOwnerMatches(mem, userId))) return mem
+  }
   try {
     const key = getEffectiveStorageKey(userId)
     const raw = localStorage.getItem(key)
@@ -819,6 +1204,8 @@ export function getBackupData(userId = _activeTenantUserId): BackupData | null {
         console.warn('[backupDataService] Ignoring cache owned by another tenant')
         return null
       }
+      const generation = getBackupGeneration(data)
+      if (generation) _latestGenerationByKey.set(key, generation)
       // ISSUE 4: Price book dual-storage reconciliation. Only run legacy poweron_v2
       // reconciliation when no active tenant exists; authenticated sessions must not
       // hydrate from browser-global poweron_v2.
@@ -960,25 +1347,53 @@ export function saveBackupData(
     }
     return
   }
+  const generation = nextBackupGeneration()
+  const versioned = withBackupGeneration(data, generation)
+  const owned = userId ? attachTenantOwner(versioned, userId) : versioned
+  const key = getEffectiveStorageKey(userId)
+  // Capture the latest blob in memory BEFORE attempting the (possibly failing) localStorage
+  // write, so a quota failure can never lose the edit and the cloud push can still read it.
+  rememberBackupInMemory(key, owned)
+  _latestGenerationByKey.set(key, generation)
   try {
-    const owned = userId ? attachTenantOwner(data, userId) : data
-    const key = getEffectiveStorageKey(userId)
     localStorage.setItem(key, JSON.stringify(owned))
+    // localStorage held the blob again: drop any stale overflow mirror (bounded, no growth).
+    clearBackupOverflow(key, generation)
 
     // Global save trigger:
     // Any normal user-facing save inside a fully hydrated tenant marks data dirty
     // so startPeriodicSync() can push it to Supabase.
     // Bootstrap/remote-load saves must not mark dirty before tenantDataReady.
     if (userId && _activeTenantUserId === userId && _tenantDataReady) {
+      _pendingGenerationByKey.set(key, generation)
       _dataChanged = true
     }
   } catch (err) {
     const failure = err instanceof BackupStorageWriteError ? err : new BackupStorageWriteError(err)
+    const quota = isStorageQuotaError(err)
+    const at = new Date().toISOString()
     console.error('[backupDataService] Failed to save:', failure)
+    if (quota) {
+      // Non-destructive quota handling: the edit stays in memory, is mirrored to IndexedDB
+      // (durable, far larger quota), and the tenant is marked dirty so the authoritative
+      // Supabase push still fires (reading the in-memory copy via getBackupData). We STILL
+      // rethrow so callers keep their existing contract and no path falsely reports a plain
+      // localStorage save. The banner does NOT yet claim durable recovery: it is upgraded only
+      // when `poweron:storage-overflow-persisted` (IndexedDB confirmed) or a correlated
+      // `poweron:sync-success` (cloud confirmed) fires. The generation correlates the exact blob.
+      _localStorageOverflowKeys.add(key)
+      overflowBackupToIdb(key, owned, generation, userId)
+      if (userId && _activeTenantUserId === userId) {
+        _pendingGenerationByKey.set(key, generation)
+        _dataChanged = true
+      }
+    }
     try {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('poweron:storage-write-failed', {
-          detail: { error: failure.message },
+          // `quota` picks the cautious vs catastrophic banner. No `preserved: true` here —
+          // durability is not yet confirmed; generation correlates later confirmation.
+          detail: { error: failure.message, quota, at: quota ? at : undefined, generation: quota ? generation : undefined },
         }))
       }
     } catch {
@@ -991,7 +1406,9 @@ export function saveBackupData(
   // { notify: false } and dispatch poweron-data-saved only after confirming the write.
   if (options?.notify !== false) {
     try {
-      window.dispatchEvent(new CustomEvent('poweron-data-saved'))
+      window.dispatchEvent(new CustomEvent('poweron-data-saved', {
+        detail: { source: 'local-save', persistence: 'localStorage', generation },
+      }))
     } catch {
       /* ignore */
     }
@@ -1024,11 +1441,25 @@ export function saveBackupData(
  * to prevent re-triggering the sync loop.
  */
 function saveBackupDataSilent(data: BackupData, userId = _activeTenantUserId): void {
+  const generation = getBackupGeneration(data) || nextBackupGeneration()
+  const versioned = getBackupGeneration(data) ? data : withBackupGeneration(data, generation)
+  const owned = userId ? attachTenantOwner(versioned, userId) : versioned
+  const key = getEffectiveStorageKey(userId)
+  // Keep the in-memory authoritative copy current even for silent sync/hydration writes,
+  // so getBackupData stays correct while localStorage is overflowed.
+  // An older sync/hydration snapshot must never replace a newer user save.
+  if (!rememberBackupInMemory(key, owned)) return
   try {
-    const owned = userId ? attachTenantOwner(data, userId) : data
-    const key = getEffectiveStorageKey(userId)
     localStorage.setItem(key, JSON.stringify(owned))
-  } catch { /* ignore */ }
+    clearBackupOverflow(key, generation)
+  } catch (err) {
+    // Silent path: never throw, never re-trigger sync. On a quota failure still mirror to
+    // IndexedDB so the data is durable and getBackupData returns the in-memory latest.
+    if (isStorageQuotaError(err)) {
+      _localStorageOverflowKeys.add(key)
+      overflowBackupToIdb(key, owned, generation, userId)
+    }
+  }
 }
 
 /** Phase 6T: read session remote baseline without altering freshness guard behavior. */
@@ -1984,6 +2415,8 @@ export type SyncToSupabaseResult = {
   skipped?: boolean
   blocked?: boolean
   conflict?: boolean
+  /** Exact local snapshot acknowledged by the cloud write. */
+  generation?: string | null
 }
 
 export type ForceSyncToCloudOptions = {
@@ -3264,8 +3697,18 @@ export async function syncToSupabase(
       return { success: false, skipped: true, error: 'Authenticated user mismatch' }
     }
 
-    const data = freshnessMergedData || getBackupData(userId)
-    if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
+    let currentAtCapture = getBackupData(userId)
+    if (!currentAtCapture) return { success: false, skipped: true, error: 'No local tenant data to sync' }
+    const capturedGeneration = getBackupGeneration(currentAtCapture) || nextBackupGeneration()
+    if (!getBackupGeneration(currentAtCapture)) {
+      // One-time upgrade for browser caches created before generation identity existed. Adopt the
+      // identity before any async work so this same first sync is not mistaken for stale work.
+      currentAtCapture = withBackupGeneration(currentAtCapture, capturedGeneration)
+      rememberBackupInMemory(getEffectiveStorageKey(userId), currentAtCapture)
+    }
+    const data = capturedGeneration
+      ? withBackupGeneration(freshnessMergedData || currentAtCapture, capturedGeneration)
+      : (freshnessMergedData || currentAtCapture)
 
     // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B / 6S-F / 6S-G / 6R-C: narrow scoped-cache
     // preservation guards. For a save that is NOT a weeklyData save, fold newer
@@ -3346,15 +3789,30 @@ export async function syncToSupabase(
       }
     }
 
+    if (!(await isSnapshotGenerationCurrent(userId, capturedGeneration))) {
+      console.info('[Sync] Snapshot superseded before cloud write; newer local generation remains pending', {
+        source: options.source || 'sync', capturedGeneration,
+      })
+      return { success: false, skipped: true, error: 'Newer local save pending', generation: capturedGeneration }
+    }
+
     const now = new Date().toISOString()
     const deviceId = getDeviceId()
 
-    const payload = attachTenantOwner({
+    let payload = attachTenantOwner({
       ...(outgoing as any),
       _lastSavedAt: now,
       _syncMeta: { savedBy: deviceId, savedAt: now },
     } as BackupData, userId)
+    if (capturedGeneration) payload = withBackupGeneration(payload, capturedGeneration)
     saveBackupDataSilent(payload, userId)
+
+    if (!(await isSnapshotGenerationCurrent(userId, capturedGeneration))) {
+      console.info('[Sync] Snapshot superseded while preparing cloud write; newer local generation remains pending', {
+        source: options.source || 'sync', capturedGeneration,
+      })
+      return { success: false, skipped: true, error: 'Newer local save pending', generation: capturedGeneration }
+    }
 
     const { data: writtenRow, error } = await supabase
       .from('app_state')
@@ -3369,7 +3827,7 @@ export async function syncToSupabase(
 
     if (error) {
       console.error('[Sync] Supabase write failed:', error.message)
-      return { success: false, error: error.message }
+      return { success: false, error: error.message, generation: capturedGeneration }
     }
 
     // Phase 4B: baseline from the SERVER-authoritative updated_at returned by the
@@ -3381,8 +3839,18 @@ export async function syncToSupabase(
     // upsert did not return a row. Only the baseline uses serverUpdatedAt; the
     // payload's _lastSavedAt and _syncMeta.savedAt stay client `now`.
     const serverUpdatedAt = writtenRow?.updated_at ? String(writtenRow.updated_at) : now
-    _lastSyncMeta = { savedBy: deviceId, savedAt: now, direction: 'pushed' }
+    const stillCurrent = await isSnapshotGenerationCurrent(userId, capturedGeneration)
+    if (stillCurrent && capturedGeneration) {
+      await markOverflowGenerationCloudAcknowledged(getEffectiveStorageKey(userId), capturedGeneration)
+    }
+    if (!stillCurrent) {
+      console.info('[Sync] Cloud acknowledged an older generation; latest edit remains pending', {
+        source: options.source || 'sync', capturedGeneration,
+      })
+      return { success: true, generation: capturedGeneration }
+    }
     setKnownRemoteBaseline(serverUpdatedAt, now)
+    _lastSyncMeta = { savedBy: deviceId, savedAt: now, direction: 'pushed' }
     // A real success resolves any prior sync-guard failure -- let the next
     // one (if any) dispatch immediately rather than staying throttled.
     _lastConflictDispatch = null
@@ -3392,9 +3860,11 @@ export async function syncToSupabase(
       // sync error can clear.
       // Phase 4: the verified-save path suppresses this and re-dispatches only
       // after a successful cloud read-back, so success is never shown on write-ACK.
-      window.dispatchEvent(new CustomEvent('poweron:sync-success', { detail: { savedBy: deviceId, savedAt: now } }))
+      window.dispatchEvent(new CustomEvent('poweron:sync-success', {
+        detail: { savedBy: deviceId, savedAt: now, generation: capturedGeneration },
+      }))
     }
-    return { success: true }
+    return { success: true, generation: capturedGeneration }
   } catch (err: any) {
     console.error('[Sync] Supabase sync error:', err)
     return { success: false, error: err?.message || 'Unknown error' }
@@ -3420,9 +3890,7 @@ export function reconcilePendingLocalSaveForHydration(
   const attempt = syncToSupabase(userId, { source: 'post-pin-hydration-reconcile' })
     .then((result) => {
       if (result.success) {
-        _dataChanged = false
-        _lastSyncedAt = Date.now()
-        _changedKeys.clear()
+        clearDirtyStateForGeneration(result.generation)
       }
       return result
     })
@@ -3512,6 +3980,11 @@ export async function loadFromSupabase(
       console.error('[Sync] loadFromSupabase blocked: user mismatch', { requested: userId, sessionUser: user.id })
       return { success: false, merged: false, status: 'failed', error: 'Authenticated user mismatch' }
     }
+
+    // HOTFIX: if a prior session overflowed the localStorage blob to IndexedDB (quota full),
+    // pull it back into memory first so the freshness/merge logic below sees the latest local
+    // edit and pushes it to the cloud instead of losing it. Never overrides a newer copy.
+    await recoverLocalOverflowBackup(userId)
 
     const sameTenant = _activeTenantUserId === userId
     const preApplyKnownRemoteBaselineMs = sameTenant ? getKnownRemoteBaselineMs() : 0
@@ -3701,9 +4174,7 @@ export async function saveBackupDataAndSyncNow(
   const result = await syncToSupabase(_activeTenantUserId, resolvedOptions)
 
   if (result.success) {
-    _dataChanged = false
-    _lastSyncedAt = Date.now()
-    _changedKeys.clear()
+    clearDirtyStateForGeneration(result.generation)
   } else if (result.blocked || result.conflict) {
     console.warn('[sync] Immediate sync blocked — local changes preserved', result.error)
   }
@@ -3763,9 +4234,7 @@ export async function saveBackupWithRemoteBaselineSync(
   })
 
   if (result.success) {
-    _dataChanged = false
-    _lastSyncedAt = Date.now()
-    _changedKeys.clear()
+    clearDirtyStateForGeneration(result.generation)
   } else {
     if (result.blocked || result.conflict) {
       console.warn('[sync] Remote-baseline merge sync blocked — local merged backup preserved', result.error)
@@ -3897,9 +4366,7 @@ export function saveAndImmediateSync(data: BackupData, changedKey?: string): voi
   syncToSupabase(_activeTenantUserId, { source: changedKey || 'immediate-sync' })
     .then((result) => {
       if (result.success) {
-        _dataChanged = false
-        _lastSyncedAt = Date.now()
-        _changedKeys.clear()
+        clearDirtyStateForGeneration(result.generation)
       } else if (result.blocked || result.conflict) {
         console.warn('[sync] Immediate sync blocked — local changes preserved', result.error)
       }
@@ -4175,9 +4642,7 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
   const result = await syncToSupabase(_activeTenantUserId, syncOptions)
 
   if (result.success) {
-    _dataChanged = false
-    _lastSyncedAt = Date.now()
-    _changedKeys.clear()
+    clearDirtyStateForGeneration(result.generation)
     // Phase 4D: do NOT re-baseline here. syncToSupabase already set the session
     // baseline from the SERVER-authoritative updated_at returned by the upsert
     // (Phase 4B). The old `setKnownRemoteBaseline(data._lastSavedAt, ...)` call
@@ -4604,13 +5069,22 @@ export async function saveLiveDataVerified(
 
   const remote = verifiedRemote
   const actual = lastComparison.actual
+  const verifiedGeneration = getBackupGeneration(remote.remoteData)
+
+  if (!(await isSnapshotGenerationCurrent(userId, verifiedGeneration))) {
+    return {
+      status: 'readback-failed',
+      error: 'A newer local edit is still pending; the older cloud save was not reported as current.',
+      comparison: lastComparison,
+      expected,
+      actual,
+    }
+  }
 
   // m. Verified: advance baseline from the READ-BACK row (authoritative), clear
   //    dirty state, and dispatch the success event now (not on write-ACK).
   setKnownRemoteBaseline(remote.remoteUpdatedAt, remote.remoteDataLastSavedAt)
-  _dataChanged = false
-  _lastSyncedAt = Date.now()
-  _changedKeys.clear()
+  clearDirtyStateForGeneration(verifiedGeneration)
   _lastConflictDispatch = null
   if (typeof window !== 'undefined') {
     window.dispatchEvent(
@@ -4618,6 +5092,7 @@ export async function saveLiveDataVerified(
         detail: {
           savedBy: (remote.remoteData as any)?._syncMeta?.savedBy,
           savedAt: remote.remoteDataLastSavedAt || remote.remoteUpdatedAt,
+          generation: verifiedGeneration,
           verified: true,
         },
       }),
