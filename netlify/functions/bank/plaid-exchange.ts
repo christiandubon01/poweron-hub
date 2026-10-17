@@ -7,6 +7,7 @@
  * The access token is encrypted server-side and is NEVER returned. The browser only receives a sanitized connection summary.
  */
 import { completeUpdateMode, exchangePublicToken } from '../../../src/services/bankProvider/bankConnectionService'
+import { exchangeHistoryRecoveryPublicToken } from '../../../src/services/bankProvider/historyRecoveryService'
 import { corsPreflight, errorResponse, jsonResponse, parseJsonBody, resolveBankContext } from './plaidAuth'
 
 export function buildHandler(overrides = {}) {
@@ -18,6 +19,7 @@ export function buildHandler(overrides = {}) {
     try {
       const body = parseJsonBody(event)
       if (body.mode === 'update_complete') return jsonResponse(200, await completeUpdateMode(auth.deps, auth.actor, { itemId: body.itemId }))
+      if (body.mode === 'history_recovery') return jsonResponse(200, await exchangeHistoryRecoveryPublicToken(auth.deps, auth.actor, { recoveryId: body.recoveryId, publicToken: body.publicToken, institutionId: body.institutionId }))
       return jsonResponse(200, await exchangePublicToken(auth.deps, auth.actor, { publicToken: body.publicToken, institutionId: body.institutionId }))
     } catch (error) {
       return errorResponse(error)

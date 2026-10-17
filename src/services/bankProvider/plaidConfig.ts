@@ -36,8 +36,8 @@ export interface PlaidConfig {
    * is created only when the owner starts Link, never automatically.
    */
   products: ['transactions']
-  /** Locked owner decision: 90-day history, set at Link initialization (transactions.days_requested in /link/token/create); Plaid fixes it once Transactions is added to an Item. */
-  transactionsDaysRequested: 90
+  /** Maximum Plaid Transactions history, fixed when Transactions is initialized on a new Item. Existing Items are not changed. */
+  transactionsDaysRequested: 730
   /** Optional (BANK-4): where Plaid sends Transactions webhooks for NEW Items. A webhook is only a nudge; /transactions/sync is the truth. */
   webhookUrl: string | null
   /** Where an OAuth bank sends the owner back to Cash OS. Null = not configured (non-OAuth banks still work). */
@@ -69,5 +69,5 @@ export function loadPlaidConfig(env: Record<string, string | undefined>): PlaidC
   const redirectRaw = (env[PLAID_REDIRECT_URI_VAR] ?? '').trim()
   if (redirectRaw && !/^https:\/\/[^\s?#]{4,500}$/.test(redirectRaw)) throw new PlaidConfigError(PLAID_REDIRECT_URI_VAR, 'invalid')
   return { environment, clientId, secret, clientName: 'Power On Hub', countryCodes: ['US'], language: 'en',
-    products: ['transactions'], transactionsDaysRequested: 90, webhookUrl: webhookRaw || null, redirectUri: redirectRaw || null }
+    products: ['transactions'], transactionsDaysRequested: 730, webhookUrl: webhookRaw || null, redirectUri: redirectRaw || null }
 }

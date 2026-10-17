@@ -30,6 +30,8 @@ export interface PositionDeps extends SpendingDeps {
   accounts: BalanceReadDeps['accounts']
   balances: BalanceReadDeps['balances']
   connections: { listItems(organizationId: string): Promise<BankConnectionView[]> }
+  historyRecoveryEnabled?: boolean
+  recovery?: BalanceReadDeps['recovery']
 }
 
 export const POSITION_WINDOWS = [30, 60, 90] as const
@@ -50,7 +52,7 @@ export async function getConsolidatedPosition(deps: PositionDeps, actor: BankAct
 
   const balancesOn = deps.balancesEnabled === true
   const [balanceResult, items, evidence] = await Promise.all([
-    balancesOn ? guarded('balances', () => getBalances({ accounts: deps.accounts, balances: deps.balances, balancesEnabled: true, environment, now: deps.now }, actor)) : Promise.resolve({ accounts: [] as AccountBalanceView[], enabled: false }),
+    balancesOn ? guarded('balances', () => getBalances({ accounts: deps.accounts, balances: deps.balances, balancesEnabled: true, environment, now: deps.now, historyRecoveryEnabled: deps.historyRecoveryEnabled, recovery: deps.recovery }, actor)) : Promise.resolve({ accounts: [] as AccountBalanceView[], enabled: false }),
     guarded('connections', () => deps.connections.listItems(org)),
     // pairs are at most a week apart, so two weeks before the window is enough to see both legs of anything that touches it
     guarded('activity', () => loadContextForRange(deps, org, { completeSince: addDays(window.from, -14), explorerSince: addDays(window.from, -14) })),

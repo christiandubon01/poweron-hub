@@ -39,7 +39,7 @@ export function loadPlaidLink(): Promise<PlaidGlobal> {
  */
 const OAUTH_KEY = 'poweron.plaid.oauth.link'
 const OAUTH_MAX_AGE_MS = 30 * 60 * 1000
-export interface PendingOauth { linkToken: string; mode: 'new' | 'update' | 'add_accounts'; itemId: string | null }
+export interface PendingOauth { linkToken: string; mode: 'new' | 'update' | 'add_accounts' | 'history_recovery'; itemId: string | null; recoveryId?: string | null }
 
 export function rememberLinkToken(pending: PendingOauth, now = Date.now()): void {
   try { window.sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ ...pending, at: now })) } catch { /* storage may be blocked: non-OAuth banks do not need it */ }
@@ -55,7 +55,7 @@ export function readPendingOauth(search: string = typeof window === 'undefined' 
     if (!raw) return null
     const v = JSON.parse(raw) as Partial<PendingOauth> & { at?: number }
     if (typeof v.linkToken !== 'string' || !v.linkToken || typeof v.at !== 'number' || now - v.at > OAUTH_MAX_AGE_MS || now < v.at) { clearPendingOauth(); return null }
-    return { linkToken: v.linkToken, mode: v.mode === 'update' || v.mode === 'add_accounts' ? v.mode : 'new', itemId: typeof v.itemId === 'string' ? v.itemId : null }
+    return { linkToken: v.linkToken, mode: v.mode === 'update' || v.mode === 'add_accounts' || v.mode === 'history_recovery' ? v.mode : 'new', itemId: typeof v.itemId === 'string' ? v.itemId : null, recoveryId: typeof v.recoveryId === 'string' ? v.recoveryId : null }
   } catch { clearPendingOauth(); return null }
 }
 

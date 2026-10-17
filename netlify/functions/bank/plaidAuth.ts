@@ -23,6 +23,7 @@ import { createBankAccountRepo } from '../../../src/services/bankProvider/bankAc
 import { createBankSyncRepo } from '../../../src/services/bankProvider/bankSyncRepo'
 import { createPendingContinuityRepo } from '../../../src/services/bankProvider/pendingContinuityRepo'
 import { createSyncStagingRepo } from '../../../src/services/bankProvider/syncStagingRepo'
+import { createHistoryRecoveryRepo } from '../../../src/services/bankProvider/historyRecoveryRepo'
 import { BACKGROUND_SYNC_LEASE_MS, SYNC_LEASE_MS } from '../../../src/services/bankProvider/bankSyncService'
 
 /** PLAID-1B server switches (configuration only, never request values; off unless exactly "true"). */
@@ -34,6 +35,7 @@ export const balancesEnabled = (env: Record<string, string | undefined> = proces
 export const reconciliationEnabled = (env: Record<string, string | undefined> = process.env) => (env.CASH_OS_RECONCILIATION_ENABLED ?? '').trim() === 'true'
 export const positionEnabled = (env: Record<string, string | undefined> = process.env) => (env.CASH_OS_POSITION_ENABLED ?? '').trim() === 'true'
 export const syncAuditEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_SYNC_AUDIT_ENABLED ?? '').trim() === 'true'
+export const historyRecoveryEnabled = (env: Record<string, string | undefined> = process.env) => (env.PLAID_HISTORY_RECOVERY_ENABLED ?? '').trim() === 'true'
 import { BankConnectionError } from '../../../src/services/bankProvider/bankConnectionService'
 
 export const CORS_HEADERS = {
@@ -138,7 +140,9 @@ export async function resolveBankContext(event, overrides = {}) {
       autoSyncEnabled: (process.env.PLAID_AUTO_SYNC_ENABLED ?? '').trim() === 'true',
       resumableSyncEnabled: resumableSyncEnabled(), staging: (overrides.stagingRepo ?? createSyncStagingRepo)(svc),
       // PLAID-2A: pending-to-posted decision continuity; its SQL is uninstalled, so it stays unused until the owner switches it on.
-      pendingContinuityEnabled: pendingContinuityEnabled(), continuity: (overrides.continuityRepo ?? createPendingContinuityRepo)(svc) },
+      pendingContinuityEnabled: pendingContinuityEnabled(), continuity: (overrides.continuityRepo ?? createPendingContinuityRepo)(svc),
+      // PLAID-730: requires the reviewed recovery SQL. Off until the schema is installed and the owner enables it.
+      historyRecoveryEnabled: historyRecoveryEnabled(), recovery: (overrides.historyRecoveryRepo ?? createHistoryRecoveryRepo)(svc) },
   }
 }
 

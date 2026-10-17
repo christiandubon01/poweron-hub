@@ -143,7 +143,7 @@ export function createPlaidSdkPort(config: PlaidConfig, apiOverride?: PlaidApi):
       // cannot be changed once Transactions is on an Item). Account Select is only ever requested together with an existing access token.
       const request = accessToken
         ? { ...base, access_token: accessToken, ...(accountSelection ? { update: { account_selection_enabled: true } } : {}) }
-        : { ...base, products: [Products.Transactions], transactions: { days_requested: config.transactionsDaysRequested }, ...(config.webhookUrl ? { webhook: config.webhookUrl } : {}) } // Transactions is initialized at Link; the optional webhook URL is only a nudge (BANK-4)
+        : { ...base, products: [Products.Transactions], transactions: { days_requested: config.transactionsDaysRequested }, ...(config.webhookUrl ? { webhook: config.webhookUrl } : {}) } // New Items request the configured 730-day maximum; update mode never tries to alter an existing Item.
       const { data } = await call(() => api.linkTokenCreate(request))
       return { linkToken: data.link_token, expiration: data.expiration }
     },
