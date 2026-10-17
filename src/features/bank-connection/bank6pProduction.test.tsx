@@ -90,7 +90,7 @@ describe('BANK-6P Production connection card', () => {
     expect(readPendingOauth('?oauth_state_id=a', 1_000 + 31 * 60 * 1000)).toBeNull() // older than 30 minutes
     expect(window.sessionStorage.getItem('poweron.plaid.oauth.link')).toBeNull() // and it was discarded
     rememberLinkToken({ linkToken: 'link-y', mode: 'update', itemId: 'i9' }, 5_000)
-    expect(readPendingOauth('?oauth_state_id=a', 6_000)).toEqual({ linkToken: 'link-y', mode: 'update', itemId: 'i9' })
+    expect(readPendingOauth('?oauth_state_id=a', 6_000)).toEqual({ linkToken: 'link-y', mode: 'update', itemId: 'i9', recoveryId: null })
     clearPendingOauth(); expect(readPendingOauth('?oauth_state_id=a', 6_000)).toBeNull()
     window.sessionStorage.setItem('poweron.plaid.oauth.link', '{not json'); expect(readPendingOauth('?oauth_state_id=a')).toBeNull()
   })
